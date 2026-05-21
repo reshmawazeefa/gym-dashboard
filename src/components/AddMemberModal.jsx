@@ -15,7 +15,7 @@ const getEmptyForm = () => ({
   postalCode: "",
   gender: "",
   dateOfBirth: "",
-  profileImage: "",
+  // profileImage: "",
   planId: "",
   planName: "",
   duration: "",

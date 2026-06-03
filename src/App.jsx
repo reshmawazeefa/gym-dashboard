@@ -6,8 +6,6 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Trainers from "./pages/Trainers";
-import TrainerSchedule from "./pages/TrainerSchedule";
-import TrainerCalendar from "./pages/TrainerCalendar";
 import Plans from "./pages/Plans";
 import Payments from "./pages/Payments";
 import ModuleManager from "./pages/ModuleManager";
@@ -84,22 +82,6 @@ export default function App() {
           element={
             <ProtectedPage moduleKey="permissions">
               <Permissions />
-            </ProtectedPage>
-          }
-        />
-        <Route
-          path="/schedule"
-          element={
-            <ProtectedPage moduleKey="schedule">
-              <TrainerSchedule />
-            </ProtectedPage>
-          }
-        />
-        <Route
-          path="/calendar"
-          element={
-            <ProtectedPage moduleKey="calendar">
-              <TrainerCalendar />
             </ProtectedPage>
           }
         />

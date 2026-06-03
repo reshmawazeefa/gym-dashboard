@@ -49,20 +49,21 @@ export const AuthProvider = ({ children }) => {
     if (!token) return null;
 
     const responseUser = unwrapObject(response);
-    const userId = responseUser.id || responseUser._id || responseUser.userId || "";
+    const userId = responseUser.id || responseUser._id || responseUser.userId || responseUser.user?.id || "";
     const storedPermissions = userId ? readJson(`userPermissions:${userId}`, []) : [];
     const responsePermissions = normalizePermissions(
-      responseUser.permissions || responseUser.userPermissions || response.permissions
+      responseUser.permissions || responseUser.userPermissions || responseUser.user?.permissions || response.permissions
     );
     const role =
       loginType === "platform"
         ? "Platform Admin"
         : getRoleLabel(
-            responseUser.role || (loginType === "owner" ? "Gym Owner" : loginType),
+            responseUser.role || responseUser.user?.roles?.[0] || (loginType === "owner" ? "Gym Owner" : loginType),
             loginType
           );
     const session = {
       token,
+      accessToken: token,
       id: userId,
       email,
       gymId: responseUser.gymId || responseUser.gym?.id || gymId || "",

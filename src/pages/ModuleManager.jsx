@@ -2,15 +2,18 @@ import React, { useMemo, useState, useEffect } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { Box, ChevronLeft, ChevronRight, Download, Edit, Minus, Plus, Search, Tag, Trash } from "lucide-react";
 import toast from "react-hot-toast";
-import { moduleDefinitions, securityCards, statusTone } from "../data/moduleDefinitions";
+import { moduleDefinitions, statusTone } from "../data/moduleDefinitions";
 import { useAuth } from "../context/AuthContext";
 import { canAccess } from "../utils/rbac";
 import AttendanceStatus from "../components/AttendanceStatus";
 import AdminAttendance from "../components/AdminAttendance";
+import AdminFacilities from "../components/AdminFacilities";
 import AdminWorkouts from "../components/AdminWorkouts";
+import FacilityMaintenance from "../components/FacilityMaintenance";
+import TrainerSchedule from "./TrainerSchedule";
 import {
   getApiError,
-  getTenantUsers,
+  getMembershipPlans,
   subscribeToPlan,
   unwrapList,
   getAllCategories,
@@ -42,17 +45,76 @@ function getDisplayFields(definition) {
   return definition.fields.slice(0, 5);
 }
 
-function getUserId(user) {
-  return user?.id || user?._id || user?.userId || user?.email || "";
+function idOf(item) {
+  return item?.id || item?._id || item?.planId || item?.userId || "";
 }
 
-function getUserName(user) {
-  return user?.name || user?.fullName || user?.email || getUserId(user);
+function normalizePlan(plan = {}) {
+  return {
+    ...plan,
+    id: idOf(plan) || plan.name,
+    name: plan.name || plan.planName || plan.title || "Unnamed plan",
+  };
 }
 
-function renderField(field, value, setForm, moduleKey, members, plans, trainers) {
+const PLAN_TYPE_DURATIONS = {
+  DAILY: 1,
+  WEEKLY: 7,
+  MONTHLY: 30,
+  QUARTERLY: 90,
+  YEARLY: 365,
+};
+
+function formatDateInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getPlanDurationDays(plan) {
+  const duration = Number(plan?.duration ?? plan?.durationDays ?? plan?.validityDays);
+  if (Number.isFinite(duration) && duration > 0) return duration;
+
+  return PLAN_TYPE_DURATIONS[String(plan?.planType || "").toUpperCase()] || 0;
+}
+
+function getSubscriptionEndDate(plan, startDate) {
+  const durationDays = getPlanDurationDays(plan);
+  if (!startDate || !durationDays) return "";
+
+  const [year, month, day] = String(startDate).split("-").map(Number);
+  if (!year || !month || !day) return "";
+
+  const endDate = new Date(year, month - 1, day);
+  endDate.setDate(endDate.getDate() + durationDays);
+
+  return formatDateInput(endDate);
+}
+
+function updateSubscriptionDateFields(currentForm, fieldName, value, plans) {
+  const nextForm = { ...currentForm, [fieldName]: value };
+
+  if (fieldName === "plan" || fieldName === "startDate") {
+    const selectedPlan = plans.find((plan) => String(idOf(plan)) === String(nextForm.plan));
+    nextForm.endDate = getSubscriptionEndDate(selectedPlan, nextForm.startDate);
+  }
+
+  return nextForm;
+}
+
+function renderField(field, value, setForm, moduleKey, members, plans) {
   const baseClass =
     "w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  const isSubscriptionDateSource = moduleKey === "subscriptions" && (field.name === "plan" || field.name === "startDate");
+  const isSubscriptionEndDate = moduleKey === "subscriptions" && field.name === "endDate";
+  const updateField = (fieldValue) =>
+    setForm((form) =>
+      isSubscriptionDateSource
+        ? updateSubscriptionDateFields(form, field.name, fieldValue, plans)
+        : { ...form, [field.name]: fieldValue }
+    );
 
   if (field.type === "select") {
     if (moduleKey === "subscriptions" && field.name === "member") {
@@ -60,11 +122,11 @@ function renderField(field, value, setForm, moduleKey, members, plans, trainers)
         <select
           className={baseClass}
           value={value}
-          onChange={(event) => setForm((form) => ({ ...form, [field.name]: event.target.value }))}
+          onChange={(event) => updateField(event.target.value)}
         >
           <option value="">Select Member</option>
           {members.map((member) => (
-            <option key={member.id} value={member.id}>
+            <option key={idOf(member)} value={idOf(member)}>
               {member.name}
             </option>
           ))}
@@ -76,28 +138,12 @@ function renderField(field, value, setForm, moduleKey, members, plans, trainers)
         <select
           className={baseClass}
           value={value}
-          onChange={(event) => setForm((form) => ({ ...form, [field.name]: event.target.value }))}
+          onChange={(event) => updateField(event.target.value)}
         >
           <option value="">Select Plan</option>
           {plans.map((plan) => (
-            <option key={plan.id} value={plan.id}>
+            <option key={idOf(plan)} value={idOf(plan)}>
               {plan.name}
-            </option>
-          ))}
-        </select>
-      );
-    }
-    if (moduleKey === "classes" && field.name === "trainer") {
-      return (
-        <select
-          className={baseClass}
-          value={value}
-          onChange={(event) => setForm((form) => ({ ...form, [field.name]: event.target.value }))}
-        >
-          <option value="">Select Trainer</option>
-          {trainers.map((trainer) => (
-            <option key={getUserId(trainer)} value={getUserId(trainer)}>
-              {getUserName(trainer)}
             </option>
           ))}
         </select>
@@ -107,7 +153,7 @@ function renderField(field, value, setForm, moduleKey, members, plans, trainers)
       <select
         className={baseClass}
         value={value}
-        onChange={(event) => setForm((form) => ({ ...form, [field.name]: event.target.value }))}
+        onChange={(event) => updateField(event.target.value)}
       >
         {field.options.map((option) => (
           <option key={option} value={option}>
@@ -124,18 +170,19 @@ function renderField(field, value, setForm, moduleKey, members, plans, trainers)
         className={`${baseClass} min-h-24 resize-y`}
         placeholder={field.placeholder}
         value={value}
-        onChange={(event) => setForm((form) => ({ ...form, [field.name]: event.target.value }))}
+        onChange={(event) => updateField(event.target.value)}
       />
     );
   }
 
   return (
     <input
-      className={baseClass}
+      className={`${baseClass} ${isSubscriptionEndDate ? "bg-gray-100 text-gray-700" : ""}`}
       type={field.type}
       placeholder={field.placeholder}
       value={value}
-      onChange={(event) => setForm((form) => ({ ...form, [field.name]: event.target.value }))}
+      readOnly={isSubscriptionEndDate}
+      onChange={(event) => updateField(event.target.value)}
     />
   );
 }
@@ -165,6 +212,18 @@ export default function ModuleManager() {
 
   if (moduleKey === "workouts") {
     return <AdminWorkouts />;
+  }
+
+  if (moduleKey === "classes") {
+    return <TrainerSchedule />;
+  }
+
+  if (moduleKey === "facilities") {
+    return <AdminFacilities />;
+  }
+
+  if (moduleKey === "facility-maintenance") {
+    return <FacilityMaintenance />;
   }
 
   return (
@@ -1072,6 +1131,7 @@ function ProductModule({ user }) {
 
 function ModuleWorkspace({ moduleKey, definition }) {
   const { user } = useAuth();
+  const loggedUserAccessToken = user?.accessToken || user?.token;
   const [records, setRecords] = useState(() => getStoredRecords(definition));
   const [form, setForm] = useState(() => getEmptyForm(definition.fields));
   const [editId, setEditId] = useState(null);
@@ -1079,52 +1139,39 @@ function ModuleWorkspace({ moduleKey, definition }) {
   const [members] = useState(() =>
     moduleKey === "subscriptions" ? getStoredRecords({ storageKey: "members" }) : []
   );
-  const [plans] = useState(() =>
-    moduleKey === "subscriptions" ? getStoredRecords({ storageKey: "plans" }) : []
-  );
-  const [trainers, setTrainers] = useState(() =>
-    moduleKey === "classes" ? getStoredRecords({ storageKey: "trainers" }) : []
-  );
+  const [plans, setPlans] = useState([]);
 
   useEffect(() => {
-    if (moduleKey === "classes") {
-      let isCurrent = true;
+    if (moduleKey !== "subscriptions") return;
 
-      const loadTrainers = async () => {
-        try {
-          const response = await getTenantUsers("trainer", user?.token);
-          const apiTrainers = unwrapList(response).filter((trainer) => getUserId(trainer));
+    const loadPlans = async () => {
+      try {
+        const response = await getMembershipPlans(loggedUserAccessToken);
+        setPlans(unwrapList(response).map(normalizePlan));
+      } catch (error) {
+        console.warn("Unable to load subscription plans:", error);
+        setPlans([]);
+      }
+    };
 
-          if (isCurrent) {
-            setTrainers(apiTrainers.length ? apiTrainers : getStoredRecords({ storageKey: "trainers" }));
-          }
-        } catch (error) {
-          console.warn("Unable to load trainers:", getApiError(error));
-          if (isCurrent) setTrainers(getStoredRecords({ storageKey: "trainers" }));
-        }
-      };
-
-      void loadTrainers();
-
-      return () => {
-        isCurrent = false;
-      };
-    }
-  }, [moduleKey, user?.token]);
+    void loadPlans();
+  }, [loggedUserAccessToken, moduleKey]);
 
   const getMemberName = (id) => {
-    const member = members.find(m => m.id === id);
+    const member = members.find(m => idOf(m) === id);
     return member ? member.name : id;
   };
 
   const getPlanName = (id) => {
-    const plan = plans.find(p => p.id === id);
+    const plan = plans.find(p => idOf(p) === id);
     return plan ? plan.name : id;
   };
 
-  const getTrainerName = (id) => {
-    const trainer = trainers.find(t => getUserId(t) === id || getUserName(t) === id);
-    return trainer ? getUserName(trainer) : id;
+  const getPlanPrice = (id) => {
+    const plan = plans.find(p => String(idOf(p)) === String(id));
+    const price = Number(plan?.price ?? plan?.amount ?? plan?.fee);
+
+    return Number.isFinite(price) ? price : 0;
   };
 
   const displayFields = getDisplayFields(definition);
@@ -1147,12 +1194,16 @@ function ModuleWorkspace({ moduleKey, definition }) {
     }, {});
 
     const amountTotal = records.reduce((total, record) => {
+      if (moduleKey === "subscriptions") {
+        return total + getPlanPrice(record.plan);
+      }
+
       const amount = Number(record.amount);
       return Number.isFinite(amount) ? total + amount : total;
     }, 0);
 
     return { statusCounts, amountTotal };
-  }, [records]);
+  }, [moduleKey, plans, records]);
 
   if (moduleKey === "attendance") {
     return (
@@ -1180,9 +1231,20 @@ function ModuleWorkspace({ moduleKey, definition }) {
         toast.error("Member and Plan are required");
         return;
       }
+
+      if (editId) {
+        const nextRecords = records.map((record) =>
+          record.id === editId ? { ...record, ...form } : record
+        );
+        saveRecords(nextRecords);
+        setForm(getEmptyForm(definition.fields));
+        setEditId(null);
+        toast.success("Subscription updated");
+        return;
+      }
+
       try {
-        await subscribeToPlan(form.member, form.plan, user.token);
-        // Save locally for display
+        await subscribeToPlan(form.member, form.plan, loggedUserAccessToken);
         const nextRecords = [{ id: Date.now(), ...form }, ...records];
         saveRecords(nextRecords);
         setForm(getEmptyForm(definition.fields));
@@ -1307,7 +1369,7 @@ function ModuleWorkspace({ moduleKey, definition }) {
             {definition.fields.map((field) => (
               <label key={field.name} className="grid gap-1 text-sm font-medium text-gray-700">
                 {field.label}
-                {renderField(field, form[field.name] || "", setForm, moduleKey, members, plans, trainers)}
+                {renderField(field, form[field.name] || "", setForm, moduleKey, members, plans)}
               </label>
             ))}
           </div>
@@ -1371,8 +1433,6 @@ function ModuleWorkspace({ moduleKey, definition }) {
                           getMemberName(record[field.name])
                         ) : field.name === "plan" && moduleKey === "subscriptions" ? (
                           getPlanName(record[field.name])
-                        ) : field.name === "trainer" && moduleKey === "classes" ? (
-                          getTrainerName(record[field.name])
                         ) : (
                           record[field.name] || "-"
                         )}
@@ -1428,8 +1488,6 @@ function ModuleWorkspace({ moduleKey, definition }) {
                           getMemberName(record[field.name])
                         ) : field.name === "plan" && moduleKey === "subscriptions" ? (
                           getPlanName(record[field.name])
-                        ) : field.name === "trainer" && moduleKey === "classes" ? (
-                          getTrainerName(record[field.name])
                         ) : (
                           record[field.name] || "-"
                         )}
@@ -1480,20 +1538,6 @@ function ModuleWorkspace({ moduleKey, definition }) {
         ))}
       </section>
 
-      {moduleKey === "security" && (
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {securityCards.map((card) => {
-            const CardIcon = card.icon;
-            return (
-              <div key={card.title} className="rounded-lg bg-gray-950 p-4 text-white">
-                <CardIcon size={22} className="text-blue-300" />
-                <h3 className="mt-3 font-semibold">{card.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-gray-300">{card.detail}</p>
-              </div>
-            );
-          })}
-        </section>
-      )}
     </div>
   );
 }

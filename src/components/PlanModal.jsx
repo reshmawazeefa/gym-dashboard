@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 const PLAN_TYPE_DURATIONS = {
   DAILY: 1,
@@ -10,39 +10,34 @@ const PLAN_TYPE_DURATIONS = {
 
 const DEFAULT_PLAN_TYPE = "QUARTERLY";
 
-export default function PlanModal({ isOpen, onClose, onSave, editData }) {
-  const [form, setForm] = useState({
+function emptyPlanForm() {
+  return {
     name: "",
     price: "",
     duration: PLAN_TYPE_DURATIONS[DEFAULT_PLAN_TYPE],
     description: "",
     planType: DEFAULT_PLAN_TYPE,
     features: "",
-  });
+  };
+}
 
-  useEffect(() => {
-    if (editData) {
-      const planType = editData.planType || DEFAULT_PLAN_TYPE;
+function planFormFromEditData(editData) {
+  if (!editData) return emptyPlanForm();
 
-      setForm({
-        ...editData,
-        duration: PLAN_TYPE_DURATIONS[planType] || editData.duration || "",
-        features: Array.isArray(editData.features)
-          ? editData.features.join(", ")
-          : editData.features || "",
-        planType,
-      });
-    } else {
-      setForm({
-        name: "",
-        price: "",
-        duration: PLAN_TYPE_DURATIONS[DEFAULT_PLAN_TYPE],
-        description: "",
-        planType: DEFAULT_PLAN_TYPE,
-        features: "",
-      });
-    }
-  }, [editData]);
+  const planType = editData.planType || DEFAULT_PLAN_TYPE;
+
+  return {
+    ...editData,
+    duration: PLAN_TYPE_DURATIONS[planType] || editData.duration || "",
+    features: Array.isArray(editData.features)
+      ? editData.features.join(", ")
+      : editData.features || "",
+    planType,
+  };
+}
+
+export default function PlanModal({ isOpen, onClose, onSave, editData }) {
+  const [form, setForm] = useState(() => planFormFromEditData(editData));
 
   if (!isOpen) return null;
 

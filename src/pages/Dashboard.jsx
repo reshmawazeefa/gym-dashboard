@@ -33,7 +33,6 @@ import {
   Settings,
   ShieldCheck,
   ShoppingBag,
-  UserRoundCheck,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -43,20 +42,20 @@ const membershipColors = ["#16a34a", "#f59e0b", "#ef4444"];
 const quickActions = [
   { label: "Add member", icon: Plus, to: "/members", moduleKey: "members" },
   { label: "Record payment", icon: ReceiptText, to: "/payments", moduleKey: "payments" },
-  { label: "Create class", icon: CalendarDays, to: "/schedule", moduleKey: "schedule" },
+  { label: "Classes", icon: CalendarDays, to: "/modules/classes", moduleKey: "classes" },
   { label: "Send message", icon: MessageSquare, to: "/modules/communication", moduleKey: "communication" },
 ];
 
 const modules = [
   { name: "Members", detail: "Profiles, plans, expiry, trainers", icon: Users, to: "/members", moduleKey: "members" },
-  { name: "Staff", detail: "Roles, schedules, class groups", icon: UserRoundCheck, to: "/modules/staff", moduleKey: "staff" },
-  { name: "Classes", detail: "Booking, trainer assignment, capacity", icon: CalendarDays, to: "/schedule", moduleKey: "schedule" },
+  { name: "Classes", detail: "Creation, schedules, bookings", icon: CalendarDays, to: "/modules/classes", moduleKey: "classes" },
   { name: "Payments", detail: "Plans, dues, receipts, reports", icon: CreditCard, to: "/payments", moduleKey: "payments" },
   { name: "Reports", detail: "Membership, income, attendance", icon: LineChartIcon, to: "/modules/reports", moduleKey: "reports" },
   { name: "Attendance", detail: "Daily log and QR check-in", icon: QrCode, to: "/modules/attendance", moduleKey: "attendance" },
   { name: "Finance", detail: "Income, expenses, transactions", icon: ClipboardList, to: "/modules/finance", moduleKey: "finance" },
   { name: "Store", detail: "Products, inventory, sales", icon: ShoppingBag, to: "/modules/products", moduleKey: "products" },
   { name: "Facilities", detail: "Rooms, halls, reservations", icon: Building2, to: "/modules/facilities", moduleKey: "facilities" },
+  { name: "Facility Maintenance", detail: "Service tasks, scheduling, and status updates", icon: ClipboardList, to: "/modules/facility-maintenance", moduleKey: "facility-maintenance" },
   { name: "Communication", detail: "Member and staff communication", icon: MessageSquare, to: "/modules/communication", moduleKey: "communication" },
   { name: "Settings", detail: "Language, currency, gym theme", icon: Settings, to: "/modules/localization", moduleKey: "localization" },
 ];
@@ -118,7 +117,6 @@ function getDashboardData() {
   const plans = readStorage("plans");
   const attendanceRecords = readStorage("attendanceRecords");
   const financeRecords = readStorage("financeRecords");
-  const staffResponsibilities = readStorage("staffResponsibilities");
   const trainers = readStorage("trainers");
   const today = new Date();
 
@@ -204,8 +202,8 @@ function getDashboardData() {
     },
     {
       label: "Staff & Trainers",
-      value: (trainers.length + staffResponsibilities.length).toString(),
-      change: `${staffResponsibilities.length} role records`,
+      value: trainers.length.toString(),
+      change: `${trainers.length} trainer records`,
       icon: Dumbbell,
       tone: "bg-sky-50 text-sky-700",
     },
@@ -486,7 +484,7 @@ export default function Dashboard() {
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="font-semibold text-gray-950">Notifications</h2>
-              <p className="text-sm text-gray-500">Renewals, dues, and schedule reminders</p>
+              <p className="text-sm text-gray-500">Renewals, dues, and reminders</p>
             </div>
             <Bell className="text-gray-400" size={22} />
           </div>

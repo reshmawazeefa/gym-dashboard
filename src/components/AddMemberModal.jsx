@@ -91,20 +91,22 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
     onClose();
   };
 
+  const fieldClass = "h-9 w-full rounded border px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl rounded bg-white p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="mb-4 text-lg font-bold">
+      <div className="w-full max-w-xl rounded bg-white p-4 shadow-xl">
+        <h2 className="mb-3 text-base font-bold">
           {editData ? "Member Detail" : "Add Member"}
         </h2>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2">
           <input
             name="name"
             value={form.name || ""}
             onChange={handleChange}
             placeholder="Name"
-            className="col-span-2 w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -113,7 +115,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.email || ""}
             onChange={handleChange}
             placeholder="Email"
-            className="col-span-2 w-full border p-2 rounded"
+            className={fieldClass}
             disabled={Boolean(editData)}
           />
 
@@ -124,7 +126,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
                 value={form.gymId || ""}
                 onChange={handleChange}
                 placeholder="Gym ID"
-                className="hidden w-full border p-2 rounded"
+                className="hidden"
                 readOnly
                 type="hidden"
               />
@@ -135,7 +137,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
                 value={form.password || ""}
                 onChange={handleChange}
                 placeholder="Password"
-                className="col-span-2 w-full border p-2 rounded"
+                className={fieldClass}
               />
             </>
           )}
@@ -145,14 +147,14 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.phoneNumber || ""}
             onChange={handleChange}
             placeholder="Phone Number"
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <select
             name="gender"
             value={form.gender || ""}
             onChange={handleChange}
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           >
             <option value="">Select Gender</option>
             <option value="MALE">Male</option>
@@ -166,7 +168,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.dateOfBirth || ""}
             onChange={handleChange}
             placeholder="Date of Birth"
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -174,7 +176,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.postalCode || ""}
             onChange={handleChange}
             placeholder="Postal Code"
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -182,7 +184,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.addressLine1 || ""}
             onChange={handleChange}
             placeholder="Address Line 1"
-            className="col-span-2 w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -190,7 +192,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.addressLine2 || ""}
             onChange={handleChange}
             placeholder="Address Line 2"
-            className="col-span-2 w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -198,7 +200,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.city || ""}
             onChange={handleChange}
             placeholder="City"
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -206,7 +208,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.state || ""}
             onChange={handleChange}
             placeholder="State"
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           />
 
           <input
@@ -214,15 +216,15 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
             value={form.country || ""}
             onChange={handleChange}
             placeholder="Country"
-            className="w-full border p-2 rounded"
+            className={fieldClass}
           />
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded px-4 py-2 text-sm hover:bg-gray-100">Cancel</button>
+        <div className="mt-3 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded px-3 py-1.5 text-sm hover:bg-gray-100">Cancel</button>
           <button
             onClick={handleSubmit}
-            className="rounded bg-blue-500 px-4 py-2 text-sm text-white"
+            className="rounded bg-blue-500 px-3 py-1.5 text-sm text-white"
           >
             {editData ? "Update" : "Save"}
           </button>

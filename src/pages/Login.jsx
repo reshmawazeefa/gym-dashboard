@@ -8,8 +8,8 @@ const loginModes = [
   {
     id: "owner",
     label: "Gym Owner",
-    email: "sanju@gmail.com",
-    gymId: "3c7960b9-b884-4f88-a8c0-af106d300c1f",
+    email: "gym1@gmail.com",
+    gymId: "504d9d9c-6c55-43be-a802-018693024a30",
   },
   {
     id: "staff",
@@ -33,9 +33,9 @@ const loginModes = [
 
 export default function Login() {
   const [loginType, setLoginType] = useState("owner");
-  const [email, setEmail] = useState("testgym@wazeefa.in");
-  const [gymId, setGymId] = useState("c695080e-3fb3-483b-9c1c-2ecb41d1ec8e");
-  const [password, setPassword] = useState("QWERTY1029384756");
+  const [email, setEmail] = useState("gym1@gmail.com");
+  const [gymId, setGymId] = useState("504d9d9c-6c55-43be-a802-018693024a30");
+  const [password, setPassword] = useState("123456");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();

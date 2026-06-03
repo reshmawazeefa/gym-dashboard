@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import {
   CalendarCheck,
@@ -10,43 +10,62 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   Users,
   XCircle,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { canAccess, normalizeRole } from "../utils/rbac";
 import {
   bookClass,
   cancelBooking,
   createClass,
+  deleteClass,
   getAllClasses,
   getApiError,
   getClassAttendance,
   getClassBookings,
   getClassById,
   getMyBookings,
+  getTenantUsers,
   getTrainerClasses,
+  getUserAttendance,
   markAttendance,
   scheduleClass,
   unwrapList,
   unwrapObject,
+  updateClass,
 } from "../services/api";
+import ClassModal from "../components/ClassModal";
+import ScheduleModal from "../components/ScheduleModal";
+import MarkAttendanceModal from "../components/MarkAttendanceModal";
 
 const emptyClassForm = {
-  title: "",
+  name: "",
   description: "",
+  capacity: "",
+  duration: "",
+  level: "BEGINNER",
   trainerId: "",
-  maxCapacity: "",
 };
 
 const emptyScheduleForm = {
   classId: "",
-  classDate: "",
+  dayOfWeek: "1",
   startTime: "",
   endTime: "",
-  trainerId: "",
   maxCapacity: "",
-  sessionDetails: "",
 };
+
+const dayOptions = [
+  { value: "0", label: "Sunday" },
+  { value: "1", label: "Monday" },
+  { value: "2", label: "Tuesday" },
+  { value: "3", label: "Wednesday" },
+  { value: "4", label: "Thursday" },
+  { value: "5", label: "Friday" },
+  { value: "6", label: "Saturday" },
+];
 
 const statusTone = {
   booked: "bg-blue-50 text-blue-700",
@@ -60,6 +79,14 @@ const statusTone = {
 
 function getId(item) {
   return item?.id || item?._id || item?.classId || item?.bookingId || item?.scheduleId || "";
+}
+
+function getUserId(user) {
+  return user?.id || user?._id || user?.userId || user?.email || "";
+}
+
+function getUserName(user) {
+  return user?.name || user?.fullName || user?.email || getUserId(user);
 }
 
 function titleCase(value) {
@@ -101,6 +128,28 @@ function formatTime(value) {
   });
 }
 
+function toDateInputValue(value) {
+  const parsedDate = value ? new Date(value) : new Date();
+  const date = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function toBookingDateIso(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  const date = year && month && day ? new Date(year, month - 1, day) : new Date();
+
+  return date.toISOString();
+}
+
+function dayName(value) {
+  const option = dayOptions.find((day) => String(day.value) === String(value));
+  return option?.label || "-";
+}
+
 function unwrapMaybeList(payload, keys = []) {
   const baseList = unwrapList(payload);
   if (baseList.length) return baseList;
@@ -135,11 +184,14 @@ function normalizeClass(item = {}) {
       "",
     trainerId:
       item.trainerId ||
+      item.trainer_id ||
       item.trainer?.id ||
       item.trainer?._id ||
       item.assignedTrainer?._id ||
       "",
     capacity: item.maxCapacity || item.capacity || item.memberCapacity || "",
+    duration: item.duration || item.durationMinutes || "",
+    level: item.level || "",
     bookedCount: item.bookedCount || item.totalBookings || item.bookingsCount || 0,
     schedules: Array.isArray(schedules) ? schedules.map(normalizeSchedule) : [],
     raw: item,
@@ -149,8 +201,9 @@ function normalizeClass(item = {}) {
 function normalizeSchedule(item = {}) {
   return {
     id: getId(item),
-    classId: item.classId || item.class?._id || item.class?.id || "",
+    classId: item.classId || item.gymClassId || item.class?._id || item.class?.id || "",
     date: item.classDate || item.date || item.scheduledDate || item.startDate || item.start,
+    dayOfWeek: item.dayOfWeek ?? item.weekDay ?? item.day ?? "",
     startTime: item.startTime || item.start || item.time || "",
     endTime: item.endTime || item.end || "",
     trainer:
@@ -172,7 +225,7 @@ function normalizeBooking(item = {}) {
 
   return {
     id: getId(item),
-    classId: item.classId || classItem.id || classItem._id || "",
+    classId: item.classId || item.gymClassId || classItem.id || classItem._id || "",
     classTitle: item.className || item.title || classItem.title || classItem.name || "Class booking",
     trainer:
       item.trainerName ||
@@ -180,7 +233,7 @@ function normalizeBooking(item = {}) {
       classItem.trainer?.name ||
       schedule.trainer?.name ||
       "",
-    date: item.classDate || item.date || schedule.classDate || schedule.date || schedule.start,
+    date: item.bookingDate || item.classDate || item.date || schedule.bookingDate || schedule.classDate || schedule.date || schedule.start,
     startTime: item.startTime || schedule.startTime || schedule.start,
     endTime: item.endTime || schedule.endTime || schedule.end,
     bookingStatus: item.bookingStatus || item.status || "Booked",
@@ -205,6 +258,11 @@ function getStatusClass(status) {
   return statusTone[String(status || "").toLowerCase()] || "bg-gray-100 text-gray-700";
 }
 
+function isAttendancePending(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized === "" || normalized === "pending" || normalized === "not marked" || normalized === "unmarked" || normalized === "none";
+}
+
 export default function TrainerSchedule() {
   const { user } = useAuth();
   const [classes, setClasses] = useState([]);
@@ -214,21 +272,30 @@ export default function TrainerSchedule() {
   const [classAttendance, setClassAttendance] = useState([]);
   const [selectedClass, setSelectedClass] = useState(null);
   const [classForm, setClassForm] = useState(emptyClassForm);
+  const [editingClassId, setEditingClassId] = useState("");
   const [scheduleForm, setScheduleForm] = useState(emptyScheduleForm);
-  const [attendanceForm, setAttendanceForm] = useState({ classId: "", scheduleId: "", status: "Attended" });
+  const [attendanceForm, setAttendanceForm] = useState({ bookingId: "", status: "PRESENT" });
+  const [bookingDates, setBookingDates] = useState({});
+  const [trainers, setTrainers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const selectedClassIdRef = useRef("");
+  const canCreateClass = canAccess(user, "classes", "create");
+  const canEditClass = canAccess(user, "classes", "edit");
+  const canDeleteClass = canAccess(user, "classes", "delete");
+  const canManageClasses = canCreateClass || canEditClass || canDeleteClass;
+  const isMember = normalizeRole(user?.role, user?.loginType) === "member";
+  const authToken = user?.accessToken || user?.token;
 
-  const trainers = useMemo(
+  const getLocalTrainers = useCallback(
     () =>
       readLocalList("staff")
-        .filter((staff) => String(staff.role || "").toLowerCase().includes("trainer"))
+        .filter((staff) => String(staff.role || staff.userRole || staff.type || "").toLowerCase().includes("trainer"))
         .concat(readLocalList("trainers"))
         .filter((trainer, index, list) => {
-          const key = trainer.id || trainer._id || trainer.email || trainer.name;
-          return key && list.findIndex((item) => (item.id || item._id || item.email || item.name) === key) === index;
+          const key = getUserId(trainer) || trainer.name;
+          return key && list.findIndex((item) => (getUserId(item) || item.name) === key) === index;
         }),
     []
   );
@@ -238,9 +305,9 @@ export default function TrainerSchedule() {
 
     try {
       const [detailResponse, bookingsResponse, attendanceResponse] = await Promise.allSettled([
-        getClassById(classId),
-        getClassBookings(classId),
-        getClassAttendance(classId),
+        getClassById(classId, authToken),
+        canManageClasses ? getClassBookings(classId, authToken) : Promise.resolve([]),
+        canManageClasses ? getClassAttendance(classId, authToken) : Promise.resolve([]),
       ]);
 
       if (detailResponse.status === "fulfilled") {
@@ -262,22 +329,23 @@ export default function TrainerSchedule() {
     } catch (error) {
       toast.error(getApiError(error, "Could not load class details"));
     }
-  }, []);
+  }, [authToken, canManageClasses]);
 
   const loadModuleData = useCallback(async () => {
     try {
       setLoading(true);
-      const [classesResponse, bookingsResponse, trainerResponse] = await Promise.allSettled([
-        getAllClasses(),
-        getMyBookings(),
-        getTrainerClasses(),
+      const [classesResponse, bookingsResponse, trainerResponse, attendanceResponse] = await Promise.allSettled([
+        getAllClasses(authToken),
+        isMember ? getMyBookings(authToken) : Promise.resolve([]),
+        canManageClasses ? getTrainerClasses(authToken) : Promise.resolve([]),
+        isMember ? getUserAttendance(user?.id || user?.userId, authToken) : Promise.resolve([]),
       ]);
 
       const nextClasses =
         classesResponse.status === "fulfilled"
           ? unwrapMaybeList(classesResponse.value, ["classes", "gymClasses"]).map(normalizeClass)
           : readLocalList("classes").map(normalizeClass);
-      const nextBookings =
+      let nextBookings =
         bookingsResponse.status === "fulfilled"
           ? unwrapMaybeList(bookingsResponse.value, ["bookings", "myBookings"]).map(normalizeBooking)
           : [];
@@ -285,6 +353,23 @@ export default function TrainerSchedule() {
         trainerResponse.status === "fulfilled"
           ? unwrapMaybeList(trainerResponse.value, ["classes", "trainerClasses"]).map(normalizeClass)
           : [];
+
+      // For members, match attendance records with bookings
+      if (isMember && attendanceResponse.status === "fulfilled") {
+        const attendanceRecords = unwrapList(attendanceResponse.value);
+        nextBookings = nextBookings.map((booking) => {
+          const attendanceRecord = attendanceRecords.find(
+            (record) => record.bookingId === booking.id || record.booking?.id === booking.id
+          );
+          if (attendanceRecord) {
+            return {
+              ...booking,
+              attendanceStatus: attendanceRecord.status || attendanceRecord.attendance || "Present",
+            };
+          }
+          return booking;
+        });
+      }
 
       setClasses(nextClasses);
       setMyBookings(nextBookings);
@@ -297,7 +382,6 @@ export default function TrainerSchedule() {
         selectedClassIdRef.current = nextClasses[0].id;
         setSelectedClass(nextClasses[0]);
         setScheduleForm((current) => ({ ...current, classId: nextClasses[0].id }));
-        setAttendanceForm((current) => ({ ...current, classId: nextClasses[0].id }));
         await loadClassDetails(nextClasses[0].id);
       } else if (currentSelectedClassId) {
         await loadClassDetails(currentSelectedClassId);
@@ -307,7 +391,28 @@ export default function TrainerSchedule() {
     } finally {
       setLoading(false);
     }
-  }, [loadClassDetails]);
+  }, [authToken, canManageClasses, isMember, loadClassDetails, user?.id]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    const loadTrainers = async () => {
+      try {
+        const response = await getTenantUsers("trainer", authToken);
+        const apiTrainers = unwrapMaybeList(response, ["users", "trainers"]).filter((trainer) => getUserId(trainer));
+        if (isCurrent) setTrainers(apiTrainers.length ? apiTrainers : getLocalTrainers());
+      } catch (error) {
+        console.warn("Unable to load trainers:", getApiError(error));
+        if (isCurrent) setTrainers(getLocalTrainers());
+      }
+    };
+
+    void loadTrainers();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [authToken, getLocalTrainers]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -333,27 +438,41 @@ export default function TrainerSchedule() {
 
   const handleCreateClass = async (event) => {
     event.preventDefault();
-    if (!classForm.title.trim()) {
-      toast.error("Class title is required");
+    if ((editingClassId && !canEditClass) || (!editingClassId && !canCreateClass)) {
+      toast.error("You do not have permission to save gym classes");
+      return;
+    }
+    if (!classForm.name.trim()) {
+      toast.error("Class name is required");
+      return;
+    }
+    if (!classForm.capacity || !classForm.duration) {
+      toast.error("Capacity and duration are required");
       return;
     }
 
     try {
       setSaving(true);
       const payload = {
-        title: classForm.title.trim(),
+        name: classForm.name.trim(),
         description: classForm.description.trim(),
-        trainerId: classForm.trainerId || undefined,
-        maxCapacity: classForm.maxCapacity ? Number(classForm.maxCapacity) : undefined,
+        capacity: Number(classForm.capacity),
+        duration: Number(classForm.duration),
+        level: classForm.level,
       };
-      const response = await createClass(payload);
-      const createdClass = normalizeClass(unwrapObject(response));
+      if (classForm.trainerId) payload.trainerId = classForm.trainerId;
+
+      const response = editingClassId
+        ? await updateClass(editingClassId, payload, authToken)
+        : await createClass(payload, authToken);
+      const savedClass = normalizeClass(unwrapObject(response));
       setClassForm(emptyClassForm);
-      toast.success("Class created");
+      setEditingClassId("");
+      toast.success(editingClassId ? "Class updated" : "Class created");
       await loadModuleData();
-      if (createdClass.id) await loadClassDetails(createdClass.id);
+      if (savedClass.id) await loadClassDetails(savedClass.id);
     } catch (error) {
-      toast.error(getApiError(error, "Could not create class"));
+      toast.error(getApiError(error, "Could not save class"));
     } finally {
       setSaving(false);
     }
@@ -361,22 +480,24 @@ export default function TrainerSchedule() {
 
   const handleCreateSchedule = async (event) => {
     event.preventDefault();
-    if (!scheduleForm.classId || !scheduleForm.classDate || !scheduleForm.startTime || !scheduleForm.endTime) {
-      toast.error("Class, date, start time, and end time are required");
+    if (!canCreateClass) {
+      toast.error("You do not have permission to schedule gym classes");
+      return;
+    }
+    if (!scheduleForm.classId || scheduleForm.dayOfWeek === "" || !scheduleForm.startTime || !scheduleForm.endTime || !scheduleForm.maxCapacity) {
+      toast.error("Class, day, start time, end time, and capacity are required");
       return;
     }
 
     try {
       setSaving(true);
       const payload = {
-        classDate: scheduleForm.classDate,
+        dayOfWeek: Number(scheduleForm.dayOfWeek),
         startTime: scheduleForm.startTime,
         endTime: scheduleForm.endTime,
-        trainerId: scheduleForm.trainerId || undefined,
-        maxCapacity: scheduleForm.maxCapacity ? Number(scheduleForm.maxCapacity) : undefined,
-        sessionDetails: scheduleForm.sessionDetails.trim(),
+        maxCapacity: Number(scheduleForm.maxCapacity),
       };
-      await scheduleClass(scheduleForm.classId, payload);
+      await scheduleClass(scheduleForm.classId, payload, authToken);
       toast.success("Class schedule created");
       setScheduleForm({ ...emptyScheduleForm, classId: scheduleForm.classId });
       await loadModuleData();
@@ -392,13 +513,148 @@ export default function TrainerSchedule() {
     selectedClassIdRef.current = classItem.id;
     setSelectedClass(classItem);
     setScheduleForm((current) => ({ ...current, classId: classItem.id }));
-    setAttendanceForm((current) => ({ ...current, classId: classItem.id }));
     await loadClassDetails(classItem.id);
   };
 
-  const handleBookClass = async (classId) => {
+  const handleEditClass = (classItem) => {
+    setClassModalEdit(classItem);
+    setClassModalOpen(true);
+  };
+
+  const handleCancelEditClass = () => {
+    setEditingClassId("");
+    setClassForm(emptyClassForm);
+  };
+
+  const handleDeleteClass = async (classId) => {
+    if (!canDeleteClass) {
+      toast.error("You do not have permission to delete gym classes");
+      return;
+    }
+
+    if (!window.confirm("Delete this class?")) return;
+
     try {
-      await bookClass(classId);
+      setSaving(true);
+      await deleteClass(classId, authToken);
+      toast.success("Class deleted");
+      if (selectedClassIdRef.current === classId) {
+        selectedClassIdRef.current = "";
+        setSelectedClass(null);
+        setClassBookings([]);
+        setClassAttendance([]);
+      }
+      await loadModuleData();
+    } catch (error) {
+      toast.error(getApiError(error, "Could not delete class"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const [isClassModalOpen, setClassModalOpen] = useState(false);
+  const [classModalEdit, setClassModalEdit] = useState(null);
+
+  const [isScheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleModalEdit, setScheduleModalEdit] = useState(null);
+
+  const [isAttendanceModalOpen, setAttendanceModalOpen] = useState(false);
+  const [attendanceModalEdit, setAttendanceModalEdit] = useState(null);
+
+  const handleClassModalSave = async (payload) => {
+    // Only trainer/owner/admin can create/edit classes
+    const userRole = normalizeRole(user?.role, user?.loginType);
+    const allowedRoles = ["gym_owner", "staff", "trainer"];
+    
+    if ((classModalEdit && !canEditClass) || (!classModalEdit && !canCreateClass) || !allowedRoles.includes(userRole)) {
+      toast.error("You do not have permission to save gym classes");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const response = classModalEdit
+        ? await updateClass(classModalEdit.id || classModalEdit._id, payload, authToken)
+        : await createClass(payload, authToken);
+      const savedClass = normalizeClass(unwrapObject(response));
+      toast.success(classModalEdit ? "Class updated" : "Class created");
+      setClassModalEdit(null);
+      setClassModalOpen(false);
+      await loadModuleData();
+      if (savedClass.id) await loadClassDetails(savedClass.id);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not save class"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleScheduleModalSave = async (payload) => {
+    // Only trainer/owner/admin can schedule classes
+    const userRole = normalizeRole(user?.role, user?.loginType);
+    const allowedRoles = ["gym_owner", "staff", "trainer"];
+    
+    if (!canCreateClass || !allowedRoles.includes(userRole)) {
+      toast.error("Only trainers, admins, and owners can schedule classes");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const body = {
+        dayOfWeek: Number(payload.dayOfWeek),
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        maxCapacity: Number(payload.maxCapacity),
+      };
+      await scheduleClass(payload.classId, body, authToken);
+      toast.success("Class schedule created");
+      setScheduleModalEdit(null);
+      setScheduleModalOpen(false);
+      await loadModuleData();
+      await loadClassDetails(payload.classId);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not create schedule"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAttendanceModalSave = async (payload) => {
+    if (!isMember) {
+      toast.error("Only members can mark class attendance");
+      return;
+    }
+
+    if (!payload.bookingId) {
+      toast.error("Select a booking before marking attendance");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await markAttendance({ bookingId: payload.bookingId, status: payload.status }, authToken);
+      toast.success("Attendance marked");
+      setAttendanceModalEdit(null);
+      setAttendanceModalOpen(false);
+      if (selectedClassIdRef.current) await loadClassDetails(selectedClassIdRef.current);
+      await loadModuleData();
+    } catch (error) {
+      toast.error(getApiError(error, "Could not mark attendance"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBookClass = async (classId) => {
+    if (!isMember) {
+      toast.error("Only members can book gym classes");
+      return;
+    }
+
+    try {
+      const bookingDate = toBookingDateIso(bookingDates[classId] || toDateInputValue());
+      await bookClass(classId, { bookingDate }, authToken);
       toast.success("Class booked");
       await loadModuleData();
     } catch (error) {
@@ -407,8 +663,13 @@ export default function TrainerSchedule() {
   };
 
   const handleCancelBooking = async (bookingId) => {
+    if (!isMember) {
+      toast.error("Only members can cancel booked gym classes");
+      return;
+    }
+
     try {
-      await cancelBooking(bookingId);
+      await cancelBooking(bookingId, authToken);
       toast.success("Booking cancelled");
       await loadModuleData();
     } catch (error) {
@@ -418,20 +679,27 @@ export default function TrainerSchedule() {
 
   const handleMarkAttendance = async (event) => {
     event.preventDefault();
-    if (!attendanceForm.classId) {
-      toast.error("Select a class before marking attendance");
+    if (!isMember) {
+      toast.error("Only members can mark class attendance");
+      return;
+    }
+
+    if (!attendanceForm.bookingId) {
+      toast.error("Select a booking before marking attendance");
       return;
     }
 
     try {
       setSaving(true);
-      await markAttendance({
-        classId: attendanceForm.classId,
-        scheduleId: attendanceForm.scheduleId || undefined,
-        status: attendanceForm.status,
-      });
+      await markAttendance(
+        {
+          bookingId: attendanceForm.bookingId,
+          status: attendanceForm.status,
+        },
+        authToken
+      );
       toast.success("Attendance marked");
-      await loadClassDetails(attendanceForm.classId);
+      if (selectedClassIdRef.current) await loadClassDetails(selectedClassIdRef.current);
       await loadModuleData();
     } catch (error) {
       toast.error(getApiError(error, "Could not mark attendance"));
@@ -444,10 +712,8 @@ export default function TrainerSchedule() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-950">Class Schedule & Booking</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Manage schedules, trainer sessions, member bookings, and attendance.
-          </p>
+          <h1 className="text-2xl font-bold text-gray-950">Classes</h1>
+          <p className="mt-1 text-sm text-gray-500">Browse classes, manage schedules, and keep booking records tidy.</p>
         </div>
         <button
           type="button"
@@ -460,13 +726,13 @@ export default function TrainerSchedule() {
         </button>
       </div>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
-            <div key={stat.label} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+            <div key={stat.label} className="rounded-lg bg-white p-3 shadow-sm ring-1 ring-gray-200 sm:p-4">
               <div className="flex items-center justify-between">
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm text-gray-500">{stat.label}</p>
                   <p className="mt-1 text-2xl font-bold text-gray-950">{stat.value}</p>
                 </div>
@@ -479,411 +745,360 @@ export default function TrainerSchedule() {
         })}
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.25fr_0.9fr]">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-semibold text-gray-950">Class Catalog</h2>
-              <p className="text-sm text-gray-500">Open a class to view bookings and attendance.</p>
-            </div>
-            <div className="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2">
-              <Search size={17} className="text-gray-400" />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Search classes"
-                className="w-full min-w-0 text-sm outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="p-3 text-sm font-semibold">Class</th>
-                  <th className="p-3 text-sm font-semibold">Trainer</th>
-                  <th className="p-3 text-sm font-semibold">Capacity</th>
-                  <th className="p-3 text-center text-sm font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClasses.map((classItem) => (
-                  <tr key={classItem.id || classItem.title} className="border-t hover:bg-gray-50">
-                    <td className="p-3">
-                      <p className="font-semibold text-gray-950">{classItem.title}</p>
-                      <p className="mt-1 max-w-md truncate text-sm text-gray-500">{classItem.description || "No description"}</p>
-                    </td>
-                    <td className="p-3 text-sm">{classItem.trainer || "-"}</td>
-                    <td className="p-3 text-sm">
-                      {classItem.bookedCount || 0}
-                      {classItem.capacity ? ` / ${classItem.capacity}` : ""}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex flex-wrap justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleSelectClass(classItem)}
-                          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                        >
-                          Details
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleBookClass(classItem.id)}
-                          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700"
-                        >
-                          Book
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {!filteredClasses.length && (
-                  <tr>
-                    <td colSpan="4" className="p-5 text-center text-sm text-gray-500">
-                      {loading ? "Loading classes..." : "No classes found"}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <form onSubmit={handleCreateClass} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-            <div className="mb-4 flex items-center justify-between">
+      <section className="space-y-6">
+        <div className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
+          <div className="p-4 pb-3">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="font-semibold text-gray-950">Create Class</h2>
-                <p className="text-sm text-gray-500">Add the class before creating sessions.</p>
+                <h2 className="font-semibold text-gray-950">Class Catalog</h2>
+                <p className="text-sm text-gray-500">{filteredClasses.length} class{filteredClasses.length === 1 ? "" : "es"} available</p>
               </div>
-              <Plus size={20} className="text-gray-400" />
-            </div>
-            <div className="grid gap-3">
-              <input
-                value={classForm.title}
-                onChange={(event) => setClassForm({ ...classForm, title: event.target.value })}
-                placeholder="Class title"
-                className="rounded-md border border-gray-300 p-2 text-sm"
-              />
-              <textarea
-                value={classForm.description}
-                onChange={(event) => setClassForm({ ...classForm, description: event.target.value })}
-                placeholder="Description"
-                rows="3"
-                className="rounded-md border border-gray-300 p-2 text-sm"
-              />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <select
-                  value={classForm.trainerId}
-                  onChange={(event) => setClassForm({ ...classForm, trainerId: event.target.value })}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                >
-                  <option value="">Assign trainer</option>
-                  {trainers.map((trainer) => (
-                    <option key={trainer.id || trainer._id || trainer.email} value={trainer.id || trainer._id || trainer.email}>
-                      {trainer.name || trainer.email}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2">
+                <Search size={17} className="text-gray-400" />
                 <input
-                  type="number"
-                  min="1"
-                  value={classForm.maxCapacity}
-                  onChange={(event) => setClassForm({ ...classForm, maxCapacity: event.target.value })}
-                  placeholder="Capacity"
-                  className="rounded-md border border-gray-300 p-2 text-sm"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Search classes"
+                  className="w-full min-w-0 text-sm outline-none"
                 />
               </div>
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                Create Class
-              </button>
             </div>
-          </form>
 
-          <form onSubmit={handleCreateSchedule} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-            <div className="mb-4">
-              <h2 className="font-semibold text-gray-950">Create Schedule</h2>
-              <p className="text-sm text-gray-500">POST /api/class/:id/schedules</p>
-            </div>
-            <div className="grid gap-3">
-              <select
-                value={scheduleForm.classId}
-                onChange={(event) => setScheduleForm({ ...scheduleForm, classId: event.target.value })}
-                className="rounded-md border border-gray-300 p-2 text-sm"
-              >
-                <option value="">Select class</option>
-                {classes.map((classItem) => (
-                  <option key={classItem.id || classItem.title} value={classItem.id}>
-                    {classItem.title}
-                  </option>
-                ))}
-              </select>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <input
-                  type="date"
-                  value={scheduleForm.classDate}
-                  onChange={(event) => setScheduleForm({ ...scheduleForm, classDate: event.target.value })}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                />
-                <input
-                  type="time"
-                  value={scheduleForm.startTime}
-                  onChange={(event) => setScheduleForm({ ...scheduleForm, startTime: event.target.value })}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                />
-                <input
-                  type="time"
-                  value={scheduleForm.endTime}
-                  onChange={(event) => setScheduleForm({ ...scheduleForm, endTime: event.target.value })}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <select
-                  value={scheduleForm.trainerId}
-                  onChange={(event) => setScheduleForm({ ...scheduleForm, trainerId: event.target.value })}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                >
-                  <option value="">Trainer allocation</option>
-                  {trainers.map((trainer) => (
-                    <option key={trainer.id || trainer._id || trainer.email} value={trainer.id || trainer._id || trainer.email}>
-                      {trainer.name || trainer.email}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  min="1"
-                  value={scheduleForm.maxCapacity}
-                  onChange={(event) => setScheduleForm({ ...scheduleForm, maxCapacity: event.target.value })}
-                  placeholder="Session capacity"
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                />
-              </div>
-              <textarea
-                value={scheduleForm.sessionDetails}
-                onChange={(event) => setScheduleForm({ ...scheduleForm, sessionDetails: event.target.value })}
-                placeholder="Session details"
-                rows="3"
-                className="rounded-md border border-gray-300 p-2 text-sm"
-              />
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                Add Schedule
-              </button>
-            </div>
-          </form>
-        </div>
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-gray-950">My Bookings</h2>
-              <p className="text-sm text-gray-500">GET /api/class/my-bookings</p>
-            </div>
-            <Users size={20} className="text-gray-400" />
-          </div>
-          <div className="space-y-3">
-            {myBookings.map((booking) => (
-              <div key={booking.id || `${booking.classTitle}-${booking.date}`} className="rounded-md border border-gray-200 p-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="font-semibold text-gray-950">{booking.classTitle}</p>
-                    <p className="mt-1 text-sm text-gray-500">
-                      {formatDate(booking.date)} · {formatTime(booking.startTime)} - {formatTime(booking.endTime)}
-                    </p>
-                    <p className="mt-1 text-sm text-gray-500">{booking.trainer || "Trainer not assigned"}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className={`rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                      {titleCase(booking.bookingStatus)}
-                    </span>
-                    <span className={`rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
-                      {titleCase(booking.attendanceStatus)}
-                    </span>
-                  </div>
-                </div>
-                {booking.id && !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
-                  <button
-                    type="button"
-                    onClick={() => handleCancelBooking(booking.id)}
-                    className="mt-3 inline-flex items-center gap-2 rounded-md border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50"
-                  >
-                    <XCircle size={16} />
-                    Cancel
-                  </button>
-                )}
-              </div>
-            ))}
-            {!myBookings.length && (
+            {filteredClasses.length === 0 ? (
               <p className="rounded-md bg-gray-50 p-4 text-center text-sm text-gray-500">
-                No bookings found for this account.
+                {loading ? "Loading classes..." : "No classes found"}
               </p>
+            ) : (
+              <div className="w-full overflow-x-auto">
+                <div className="inline-flex gap-3 pb-2" style={{ minWidth: 'max-content' }}>
+                  {filteredClasses.map((classItem) => {
+                    const isSelected = selectedClass?.id === classItem.id;
+                    return (
+                      <button
+                        type="button"
+                        key={classItem.id || classItem.title}
+                        onClick={() => handleSelectClass(classItem)}
+                        className={`flex-shrink-0 w-40 rounded-lg border p-3 text-center transition ${
+                          isSelected
+                            ? "border-blue-500 bg-blue-50 ring-2 ring-blue-300"
+                            : "border-gray-200 bg-white hover:border-blue-300 hover:bg-gray-50"
+                        }`}
+                      >
+                        <p className="font-semibold text-gray-950 truncate">{classItem.title}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
         </div>
 
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4">
-            <h2 className="font-semibold text-gray-950">Mark Attendance</h2>
-            <p className="text-sm text-gray-500">POST /api/class/attendance</p>
-          </div>
-          <form onSubmit={handleMarkAttendance} className="grid gap-3">
-            <select
-              value={attendanceForm.classId}
-              onChange={(event) => setAttendanceForm({ ...attendanceForm, classId: event.target.value })}
-              className="rounded-md border border-gray-300 p-2 text-sm"
-            >
-              <option value="">Select class</option>
-              {classes.map((classItem) => (
-                <option key={classItem.id || classItem.title} value={classItem.id}>
-                  {classItem.title}
-                </option>
-              ))}
-            </select>
-            <select
-              value={attendanceForm.scheduleId}
-              onChange={(event) => setAttendanceForm({ ...attendanceForm, scheduleId: event.target.value })}
-              className="rounded-md border border-gray-300 p-2 text-sm"
-            >
-              <option value="">Schedule/session (optional)</option>
-              {(selectedClass?.schedules || []).map((schedule) => (
-                <option key={schedule.id || `${schedule.date}-${schedule.startTime}`} value={schedule.id}>
-                  {formatDate(schedule.date)} · {formatTime(schedule.startTime)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={attendanceForm.status}
-              onChange={(event) => setAttendanceForm({ ...attendanceForm, status: event.target.value })}
-              className="rounded-md border border-gray-300 p-2 text-sm"
-            >
-              <option>Attended</option>
-              <option>Present</option>
-              <option>Late</option>
-              <option>Absent</option>
-            </select>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              <CheckCircle2 size={17} />
-              Mark Attendance
-            </button>
-          </form>
-
-          <div className="mt-6">
-            <h3 className="mb-3 text-sm font-semibold text-gray-950">Trainer Classes</h3>
-            <div className="space-y-2">
-              {trainerClasses.slice(0, 5).map((classItem) => (
+        <div className="space-y-6">
+          <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-500">Selected class</p>
+                <h2 className="mt-1 truncate text-xl font-bold text-gray-950">{selectedClass?.title || "Choose a class"}</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {selectedClass?.description || "Select a class from the catalog to see schedules and actions."}
+                </p>
+              </div>
+              {selectedClass?.id && (
                 <button
                   type="button"
-                  key={classItem.id || classItem.title}
-                  onClick={() => handleSelectClass(classItem)}
-                  className="flex w-full items-center justify-between rounded-md border border-gray-200 p-3 text-left hover:bg-gray-50"
+                  onClick={() => loadClassDetails(selectedClass.id)}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
-                  <span className="font-medium text-gray-900">{classItem.title}</span>
-                  <span className="text-sm text-gray-500">{classItem.bookedCount || 0} bookings</span>
+                  <RefreshCw size={15} />
+                  Reload
                 </button>
-              ))}
-              {!trainerClasses.length && (
-                <p className="rounded-md bg-gray-50 p-4 text-center text-sm text-gray-500">
-                  No trainer classes returned for {user?.name || "this user"}.
-                </p>
               )}
             </div>
-          </div>
-        </div>
-      </section>
 
-      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="font-semibold text-gray-950">
-              {selectedClass?.title || "Class Details"}
-            </h2>
-            <p className="text-sm text-gray-500">Details, schedules, bookings, and attendance for the selected class.</p>
-          </div>
-          {selectedClass?.id && (
-            <button
-              type="button"
-              onClick={() => loadClassDetails(selectedClass.id)}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              Reload Details
-            </button>
+            {selectedClass?.id && (
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-md bg-gray-50 p-3">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Trainer</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-950">{selectedClass.trainer || "Not assigned"}</p>
+                </div>
+                <div className="rounded-md bg-gray-50 p-3">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Capacity</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-950">
+                    {selectedClass.bookedCount || 0}
+                    {selectedClass.capacity ? ` / ${selectedClass.capacity}` : ""}
+                  </p>
+                </div>
+                <div className="rounded-md bg-gray-50 p-3">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Level</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-950">{selectedClass.level || "-"}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-950">Schedules</h3>
+                <span className="text-sm text-gray-500">{(selectedClass?.schedules || []).length} listed</span>
+              </div>
+              {(selectedClass?.schedules || []).length === 0 ? (
+                <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No schedules found for this class.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <div className="inline-flex gap-3" style={{ minWidth: 'max-content' }}>
+                    {(selectedClass?.schedules || []).slice(0, 6).map((schedule) => (
+                      <div key={schedule.id || `${schedule.date}-${schedule.startTime}`} className="flex-shrink-0 w-40 rounded-md border border-gray-200 p-3">
+                        <p className="font-medium text-gray-950 truncate">{schedule.dayOfWeek !== "" ? dayName(schedule.dayOfWeek) : formatDate(schedule.date)}</p>
+                        <p className="mt-1 text-sm text-gray-500">
+                          <Clock3 size={14} className="mr-1 inline" />
+                          {formatTime(schedule.startTime)} - {formatTime(schedule.endTime)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {selectedClass?.id && (
+              <div className="mt-5 flex flex-wrap gap-2">
+                {isMember && (
+                  <>
+                    <input
+                      type="date"
+                      value={bookingDates[selectedClass.id] || toDateInputValue()}
+                      onChange={(event) =>
+                        setBookingDates((current) => ({ ...current, [selectedClass.id]: event.target.value }))
+                      }
+                      className="h-10 rounded-md border border-gray-300 px-3 text-sm"
+                      aria-label={`Booking date for ${selectedClass.title}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleBookClass(selectedClass.id)}
+                      className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                    >
+                      <CalendarCheck size={16} />
+                      Book Class
+                    </button>
+                  </>
+                )}
+                {canEditClass && !isMember && (
+                  <button
+                    type="button"
+                    onClick={() => handleEditClass(selectedClass)}
+                    className="rounded-md border border-blue-200 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                  >
+                    Edit Class
+                  </button>
+                )}
+                {canDeleteClass && !isMember && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteClass(selectedClass.id)}
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-md border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+
+          {canManageClasses && !isMember && (
+            <section className="grid gap-6 lg:grid-cols-2">
+              {canCreateClass && (
+                <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <h2 className="font-semibold text-gray-950">Create Class</h2>
+                      <p className="text-sm text-gray-500">Add a new class to the catalog</p>
+                    </div>
+                    <Plus size={20} className="text-gray-400" />
+                  </div>
+                  <div>
+                    <button onClick={() => { setClassModalEdit(null); setClassModalOpen(true); }} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
+                      Create Class
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {canCreateClass && (
+                <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                  <div className="mb-4">
+                    <h2 className="font-semibold text-gray-950">Schedule Class</h2>
+                    <p className="text-sm text-gray-500">Choose the class, day, time, and capacity.</p>
+                  </div>
+                  <div>
+                    <button onClick={() => { setScheduleModalEdit(null); setScheduleModalOpen(true); }} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
+                      Schedule Class
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
           )}
         </div>
-
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div>
-            <h3 className="mb-3 text-sm font-semibold text-gray-950">Schedules</h3>
-            <div className="space-y-2">
-              {(selectedClass?.schedules || []).map((schedule) => (
-                <div key={schedule.id || `${schedule.date}-${schedule.startTime}`} className="rounded-md border border-gray-200 p-3">
-                  <p className="font-medium text-gray-950">{formatDate(schedule.date)}</p>
-                  <p className="mt-1 text-sm text-gray-500">
-                    <Clock3 size={14} className="mr-1 inline" />
-                    {formatTime(schedule.startTime)} - {formatTime(schedule.endTime)}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-500">{schedule.trainer || selectedClass?.trainer || "Trainer not assigned"}</p>
-                </div>
-              ))}
-              {!(selectedClass?.schedules || []).length && (
-                <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No schedules returned for this class.</p>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="mb-3 text-sm font-semibold text-gray-950">Class Bookings</h3>
-            <div className="space-y-2">
-              {classBookings.map((booking) => (
-                <div key={booking.id || booking.memberName || booking.classTitle} className="rounded-md border border-gray-200 p-3">
-                  <p className="font-medium text-gray-950">{booking.memberName || booking.classTitle}</p>
-                  <p className="mt-1 text-sm text-gray-500">{formatDate(booking.date)} · {formatTime(booking.startTime)}</p>
-                  <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                    {titleCase(booking.bookingStatus)}
-                  </span>
-                </div>
-              ))}
-              {!classBookings.length && (
-                <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No bookings returned for this class.</p>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="mb-3 text-sm font-semibold text-gray-950">Attendance</h3>
-            <div className="space-y-2">
-              {classAttendance.map((record) => (
-                <div key={record.id || `${record.memberName}-${record.timestamp}`} className="rounded-md border border-gray-200 p-3">
-                  <p className="font-medium text-gray-950">{record.memberName}</p>
-                  <p className="mt-1 text-sm text-gray-500">{record.timestamp ? formatTime(record.timestamp) : record.trainerName || "-"}</p>
-                  <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>
-                    {titleCase(record.status)}
-                  </span>
-                </div>
-              ))}
-              {!classAttendance.length && (
-                <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No attendance returned for this class.</p>
-              )}
-            </div>
-          </div>
-        </div>
       </section>
+
+      {!isMember && (
+        <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <div className="mb-4">
+            <h2 className="font-semibold text-gray-950">Trainer Classes</h2>
+            <p className="text-sm text-gray-500">
+              {`${trainerClasses.length} assigned class${trainerClasses.length === 1 ? "" : "es"}`}
+            </p>
+          </div>
+          <div className="space-y-2">
+            {trainerClasses.slice(0, 5).map((classItem) => (
+              <button
+                type="button"
+                key={classItem.id || classItem.title}
+                onClick={() => handleSelectClass(classItem)}
+                className="flex w-full items-center justify-between rounded-md border border-gray-200 p-3 text-left hover:bg-gray-50"
+              >
+                <span className="font-medium text-gray-900">{classItem.title}</span>
+                <span className="text-sm text-gray-500">{classItem.bookedCount || 0} bookings</span>
+              </button>
+            ))}
+            {!trainerClasses.length && (
+              <p className="rounded-md bg-gray-50 p-4 text-center text-sm text-gray-500">
+                No trainer classes returned for {user?.name || "this user"}.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {(isMember || canManageClasses) && (
+        <section className={`grid gap-6 ${isMember ? "lg:grid-cols-1" : "lg:grid-cols-3"}`}>
+          {isMember && (
+            <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-semibold text-gray-950">My Bookings</h2>
+                <span className="text-sm text-gray-500">{myBookings.length} records</span>
+              </div>
+              <div className="max-h-96 space-y-2 overflow-y-auto">
+                {myBookings.map((booking) => (
+                  <div key={booking.id || `${booking.classTitle}-${booking.date}`} className="rounded-md border border-gray-200 p-3">
+                    <p className="font-medium text-gray-950 truncate">{booking.classTitle}</p>
+                    <p className="mt-1 truncate text-sm text-gray-500">
+                      {formatDate(booking.date)} | {formatTime(booking.startTime)}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
+                        {titleCase(booking.bookingStatus)}
+                      </span>
+                      {booking.attendanceStatus && (
+                        <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
+                          {titleCase(booking.attendanceStatus)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {booking.id && !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => handleCancelBooking(booking.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                        >
+                          <XCircle size={14} />
+                          Cancel
+                        </button>
+                      )}
+                      {isAttendancePending(booking.attendanceStatus) && (
+                        <button
+                          type="button"
+                          onClick={() => { setAttendanceModalEdit(null); setAttendanceModalOpen(true); }}
+                          className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                        >
+                          <CheckCircle2 size={14} />
+                          Mark Attendance
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {!myBookings.length && (
+                  <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No bookings found.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {canManageClasses && (
+            <>
+              <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="font-semibold text-gray-950">Class Bookings</h2>
+                  <span className="text-sm text-gray-500">{classBookings.length} records</span>
+                </div>
+                <div className="max-h-96 space-y-2 overflow-y-auto">
+                  {classBookings.map((booking) => (
+                    <div key={booking.id || booking.memberName || booking.classTitle} className="rounded-md border border-gray-200 p-3">
+                      <p className="font-medium text-gray-950 truncate">{booking.memberName || booking.classTitle}</p>
+                      <p className="mt-1 truncate text-sm text-gray-500">{formatDate(booking.date)} | {formatTime(booking.startTime)}</p>
+                      <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
+                        {titleCase(booking.bookingStatus)}
+                      </span>
+                    </div>
+                  ))}
+                  {!classBookings.length && (
+                    <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No bookings returned for this class.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="font-semibold text-gray-950">Attendance</h2>
+                  <span className="text-sm text-gray-500">{classAttendance.length} records</span>
+                </div>
+                <div className="max-h-96 space-y-2 overflow-y-auto">
+                  {classAttendance.map((record) => (
+                    <div key={record.id || `${record.memberName}-${record.timestamp}`} className="rounded-md border border-gray-200 p-3">
+                      <p className="font-medium text-gray-950 truncate">{record.memberName}</p>
+                      <p className="mt-1 truncate text-sm text-gray-500">{record.timestamp ? formatTime(record.timestamp) : record.trainerName || "-"}</p>
+                      <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>
+                        {titleCase(record.status)}
+                      </span>
+                    </div>
+                  ))}
+                  {!classAttendance.length && (
+                    <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-500">No attendance returned for this class.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+      <ClassModal
+        isOpen={isClassModalOpen}
+        onClose={() => { setClassModalOpen(false); setClassModalEdit(null); }}
+        onSave={handleClassModalSave}
+        editData={classModalEdit}
+        trainers={trainers}
+      />
+
+      <ScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => { setScheduleModalOpen(false); setScheduleModalEdit(null); }}
+        onSave={handleScheduleModalSave}
+        editData={scheduleModalEdit}
+        classes={classes}
+      />
+
+      <MarkAttendanceModal
+        isOpen={isAttendanceModalOpen}
+        onClose={() => { setAttendanceModalOpen(false); setAttendanceModalEdit(null); }}
+        onSave={handleAttendanceModalSave}
+        editData={attendanceModalEdit}
+        bookings={myBookings}
+      />
     </div>
   );
 }

@@ -73,6 +73,8 @@ export default function AddTrainerModal({
 
   if (!isOpen) return null;
 
+  const fieldClass = "h-9 w-full rounded border px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+
   const handleSubmit = () => {
     if (!form.name || !form.email || (!editData && (!form.password || !form.role))) {
       alert("Please fill all required fields");
@@ -85,15 +87,15 @@ export default function AddTrainerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded bg-white p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="mb-4 text-lg font-bold">
+      <div className="w-full max-w-xl rounded bg-white p-4 shadow-xl">
+        <h2 className="mb-3 text-base font-bold">
           {editData ? "Edit Staff" : "Add Staff"}
         </h2>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2">
           <input
             placeholder="Name"
-            className="col-span-2 w-full rounded border p-2"
+            className={fieldClass}
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
@@ -101,7 +103,7 @@ export default function AddTrainerModal({
           <input
             type="email"
             placeholder="Email"
-            className="col-span-2 w-full rounded border p-2"
+            className={fieldClass}
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
           />
@@ -110,7 +112,7 @@ export default function AddTrainerModal({
             <input
               type="password"
               placeholder="Password"
-              className="col-span-2 w-full rounded border p-2"
+              className={fieldClass}
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
             />
@@ -118,7 +120,7 @@ export default function AddTrainerModal({
 
           {!editData && (
             <select
-              className="col-span-2 w-full rounded border p-2"
+              className={fieldClass}
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
             >
@@ -131,13 +133,13 @@ export default function AddTrainerModal({
 
           <input
             placeholder="Phone Number"
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.phoneNumber}
             onChange={(e) => setForm({ ...form, phoneNumber: e.target.value })}
           />
 
           <select
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.gender}
             onChange={(e) => setForm({ ...form, gender: e.target.value })}
           >
@@ -150,59 +152,59 @@ export default function AddTrainerModal({
           <input
             type="date"
             placeholder="Date of Birth"
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.dateOfBirth}
             onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
           />
 
           <input
             placeholder="Postal Code"
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.postalCode}
             onChange={(e) => setForm({ ...form, postalCode: e.target.value })}
           />
 
           <input
             placeholder="Address Line 1"
-            className="col-span-2 w-full rounded border p-2"
+            className={fieldClass}
             value={form.addressLine1}
             onChange={(e) => setForm({ ...form, addressLine1: e.target.value })}
           />
 
           <input
             placeholder="Address Line 2"
-            className="col-span-2 w-full rounded border p-2"
+            className={fieldClass}
             value={form.addressLine2}
             onChange={(e) => setForm({ ...form, addressLine2: e.target.value })}
           />
 
           <input
             placeholder="City"
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.city}
             onChange={(e) => setForm({ ...form, city: e.target.value })}
           />
 
           <input
             placeholder="State"
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.state}
             onChange={(e) => setForm({ ...form, state: e.target.value })}
           />
 
           <input
             placeholder="Country"
-            className="w-full rounded border p-2"
+            className={fieldClass}
             value={form.country}
             onChange={(e) => setForm({ ...form, country: e.target.value })}
           />
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded px-4 py-2 text-sm hover:bg-gray-100">Cancel</button>
+        <div className="mt-3 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded px-3 py-1.5 text-sm hover:bg-gray-100">Cancel</button>
           <button
             onClick={handleSubmit}
-            className="rounded bg-blue-500 px-4 py-2 text-sm text-white"
+            className="rounded bg-blue-500 px-3 py-1.5 text-sm text-white"
           >
             Save
           </button>

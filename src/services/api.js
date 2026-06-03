@@ -20,7 +20,8 @@ function getStoredSession() {
 }
 
 export function getAuthToken() {
-  return getStoredSession()?.token || null;
+  const session = getStoredSession();
+  return session?.accessToken || session?.token || session?.access_token || null;
 }
 
 export function getGymId() {
@@ -73,8 +74,10 @@ export function unwrapList(payload) {
   if (Array.isArray(payload?.data)) return payload.data;
   if (Array.isArray(payload?.users)) return payload.users;
   if (Array.isArray(payload?.members)) return payload.members;
+  if (Array.isArray(payload?.plans)) return payload.plans;
   if (Array.isArray(payload?.data?.users)) return payload.data.users;
   if (Array.isArray(payload?.data?.members)) return payload.data.members;
+  if (Array.isArray(payload?.data?.plans)) return payload.data.plans;
   if (Array.isArray(payload?.result)) return payload.result;
   return [];
 }
@@ -143,18 +146,23 @@ export async function createGymStaff(payload) {
   return response.data;
 }
 
-export async function createMembershipPlan(payload) {
-  const response = await api.post("/api/membership/plans", payload);
+export async function createMembershipPlan(payload, token = null) {
+  const response = await api.post("/api/membership/plans", payload, getAuthConfig(token));
   return response.data;
 }
 
-export async function updateMembershipPlan(planId, payload) {
-  const response = await api.patch(`/api/membership/plans/${planId}`, payload);
+export async function updateMembershipPlan(planId, payload, token = null) {
+  const response = await api.patch(`/api/membership/plans/${planId}`, payload, getAuthConfig(token));
   return response.data;
 }
 
-export async function getMembershipPlans() {
-  const response = await api.get("/api/membership/plans");
+export async function getMembershipPlans(token = null) {
+  const response = await api.get("/api/membership/plans", getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteMembershipPlan(planId, token = null) {
+  const response = await api.delete(`/api/membership/plans/${planId}`, getAuthConfig(token));
   return response.data;
 }
 
@@ -339,6 +347,23 @@ export async function getClassById(classId, token) {
   return response.data;
 }
 
+export async function updateClass(classId, classData, token) {
+  const response = await api.patch(
+    `/api/class/${classId}`,
+    classData,
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
+export async function deleteClass(classId, token = null) {
+  const response = await api.delete(
+    `/api/class/${classId}`,
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
 export async function scheduleClass(classId, scheduleData, token) {
   const response = await api.post(
     `/api/class/${classId}/schedules`,
@@ -348,17 +373,17 @@ export async function scheduleClass(classId, scheduleData, token) {
   return response.data;
 }
 
-export async function bookClass(classId, token) {
+export async function bookClass(classId, bookingData = {}, token) {
   const response = await api.post(
     `/api/class/${classId}/book`,
-    {},
+    bookingData,
     getAuthConfig(token)
   );
   return response.data;
 }
 
 export async function cancelBooking(bookingId, token) {
-  const response = await api.post(
+  const response = await api.patch(
     `/api/class/bookings/${bookingId}/cancel`,
     {},
     getAuthConfig(token)
@@ -374,7 +399,7 @@ export async function getMyBookings(token) {
   return response.data;
 }
 
-export async function markAttendance(attendanceData, token) {
+export async function markAttendance(attendanceData, token = null) {
   const response = await api.post(
     "/api/class/attendance",
     attendanceData,
@@ -614,6 +639,67 @@ export async function updateProduct(productId, payload, token = null) {
 
 export async function deleteProduct(productId, token = null) {
   const response = await api.delete(`/api/products/${productId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createFacility(payload, token = null) {
+  const response = await api.post("/api/facilities", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getFacilities(params = {}, token = null) {
+  const response = await api.get("/api/facilities", {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getFacilityById(facilityId, token = null) {
+  const response = await api.get(`/api/facilities/${facilityId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateFacility(facilityId, payload, token = null) {
+  const response = await api.patch(`/api/facilities/${facilityId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteFacility(facilityId, token = null) {
+  const response = await api.delete(`/api/facilities/${facilityId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function toggleFacilityStatus(facilityId, payload, token = null) {
+  const response = await api.patch(`/api/facilities/${facilityId}/status`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createFacilityMaintenance(payload, token = null) {
+  const response = await api.post(`/api/facilities/maintenance`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getFacilityMaintenances(params = {}, token = null) {
+  const response = await api.get(`/api/facilities/maintenance`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getFacilityMaintenanceById(maintenanceId, token = null) {
+  const response = await api.get(`/api/facilities/maintenance/${maintenanceId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateFacilityMaintenance(maintenanceId, payload, token = null) {
+  const response = await api.patch(`/api/facilities/maintenance/${maintenanceId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteFacilityMaintenance(maintenanceId, token = null) {
+  const response = await api.delete(`/api/facilities/maintenance/${maintenanceId}`, getAuthConfig(token));
   return response.data;
 }
 

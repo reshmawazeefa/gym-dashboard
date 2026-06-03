@@ -4,17 +4,15 @@ import {
   CalendarDays,
   ChartNoAxesCombined,
   ClipboardCheck,
+  ClipboardList,
   Code2,
   FileText,
   Languages,
-  LockKeyhole,
   Mail,
   QrCode,
   Salad,
-  ShieldCheck,
   ShoppingBag,
   UserCheck,
-  UserCog,
   WalletCards,
 } from "lucide-react";
 
@@ -84,35 +82,13 @@ export const moduleDefinitions = {
   },
   classes: {
     title: "Class Management",
-    description: "Create, schedule, and manage gym classes with member bookings and attendance.",
+    description: "Create gym classes, schedule sessions, manage bookings, and track attendance.",
     storageKey: "classes",
     icon: CalendarDays,
     primaryAction: "Create Class",
-    fields: [
-      { name: "name", label: "Class Name", type: "text", placeholder: "Yoga Morning" },
-      { name: "description", label: "Description", type: "textarea", placeholder: "Morning yoga session" },
-      { name: "capacity", label: "Capacity", type: "number", placeholder: "20" },
-      { name: "duration", label: "Duration (minutes)", type: "number", placeholder: "60" },
-      {
-        name: "level",
-        label: "Level",
-        type: "select",
-        options: ["BEGINNER", "INTERMEDIATE", "ADVANCED"],
-      },
-      { name: "trainer", label: "Trainer", type: "select", options: [] },
-    ],
-    seed: [
-      {
-        id: 1,
-        name: "Yoga Morning",
-        description: "Morning yoga session",
-        capacity: "20",
-        duration: "60",
-        level: "BEGINNER",
-        trainer: "Sergio",
-      },
-    ],
-    insights: ["Class creation and scheduling", "Member bookings and capacity tracking", "Attendance and trainer assignments"],
+    fields: [],
+    seed: [],
+    insights: ["Gym class creation", "Schedule and trainer assignments", "Bookings and attendance tracking"],
   },
   workouts: {
     title: "Workout & Activity",
@@ -333,69 +309,6 @@ export const moduleDefinitions = {
     ],
     insights: ["JSON REST API support", "Stripe payment integration", "Integration status tracking"],
   },
-  workflow: {
-    title: "System Workflow",
-    description: "Track the operational flow from plan creation to reports.",
-    storageKey: "workflowSteps",
-    icon: FileText,
-    primaryAction: "Add Workflow Step",
-    fields: [
-      { name: "step", label: "Step", type: "text", placeholder: "Admin creates membership plans" },
-      { name: "owner", label: "Owner", type: "text", placeholder: "Admin" },
-      {
-        name: "status",
-        label: "Status",
-        type: "select",
-        options: ["Ready", "In Progress", "Blocked", "Complete"],
-      },
-    ],
-    seed: [
-      { id: 1, step: "Admin creates membership plans", owner: "Admin", status: "Ready" },
-      { id: 2, step: "Payments are collected and tracked", owner: "Reception", status: "In Progress" },
-      { id: 3, step: "Reports generated for analysis", owner: "Admin", status: "Ready" },
-    ],
-    insights: ["Plans to registration", "Payments to attendance", "Trainer assignment to reports"],
-  },
-  security: {
-    title: "Security & Access",
-    description: "Configure role-based permissions, login access, and API authorization.",
-    storageKey: "securityRoles",
-    icon: LockKeyhole,
-    primaryAction: "Add Role",
-    fields: [
-      { name: "role", label: "Role", type: "text", placeholder: "Receptionist" },
-      { name: "permissions", label: "Permissions", type: "textarea", placeholder: "member:read, payments:write" },
-      {
-        name: "apiAccess",
-        label: "API Access",
-        type: "select",
-        options: ["Allowed", "Limited", "Blocked"],
-      },
-      {
-        name: "status",
-        label: "Status",
-        type: "select",
-        options: ["Active", "Review", "Disabled"],
-      },
-    ],
-    seed: [
-      {
-        id: 1,
-        role: "Admin",
-        permissions: "all modules",
-        apiAccess: "Allowed",
-        status: "Active",
-      },
-      {
-        id: 2,
-        role: "Trainer",
-        permissions: "member:read, workouts:write, schedules:read",
-        apiAccess: "Limited",
-        status: "Active",
-      },
-    ],
-    insights: ["Role-based access control", "Login authentication", "API-based access for integrations"],
-  },
   reminders: {
     title: "Expiration Reminders",
     description: "Queue membership expiry alerts and renewal follow-ups.",
@@ -454,73 +367,65 @@ export const moduleDefinitions = {
   },
   facilities: {
     title: "Facility Management",
-    description: "Manage halls, rooms, reservations, and facility bookings.",
-    storageKey: "facilityBookings",
+    description: "Create facilities, filter by type, and manage active or inactive availability.",
+    storageKey: "facilities",
     icon: FileText,
-    primaryAction: "Add Facility Booking",
+    primaryAction: "Create Facility",
     fields: [
-      { name: "facility", label: "Facility", type: "text", placeholder: "Yoga Hall" },
-      { name: "bookingFor", label: "Booked For", type: "text", placeholder: "Evening yoga class" },
-      { name: "date", label: "Date", type: "date" },
-      { name: "time", label: "Time", type: "time" },
+      { name: "name", label: "Facility Name", type: "text", placeholder: "Swimming Pool" },
+      { name: "description", label: "Description", type: "textarea", placeholder: "Olympic size pool" },
       {
-        name: "status",
-        label: "Status",
+        name: "type",
+        label: "Type",
         type: "select",
-        options: ["Reserved", "Available", "Maintenance"],
+        options: ["SWIMMING", "CARDIO", "STRENGTH", "YOGA", "SAUNA", "LOCKER", "OTHER"],
       },
+      { name: "capacity", label: "Capacity", type: "number", placeholder: "40" },
+      { name: "openingTime", label: "Opening Time", type: "time" },
+      { name: "closingTime", label: "Closing Time", type: "time" },
     ],
     seed: [
       {
         id: 1,
-        facility: "Yoga Hall",
-        bookingFor: "Evening yoga class",
-        date: "2026-05-04",
-        time: "18:00",
-        status: "Reserved",
+        name: "Swimming Pool",
+        description: "Olympic size pool",
+        type: "SWIMMING",
+        capacity: "40",
+        openingTime: "06:00",
+        closingTime: "22:00",
+        isActive: true,
       },
     ],
-    insights: ["Hall and room management", "Class and event bookings", "Reservation tracking"],
+    insights: ["Facility API integration", "Type and status filtering", "Active or inactive availability"],
   },
-  staff: {
-    title: "Staff Roles & Responsibilities",
-    description: "Add staff, assign roles, and define responsibilities.",
-    storageKey: "staffResponsibilities",
-    icon: UserCog,
-    primaryAction: "Add Staff Role",
+  "facility-maintenance": {
+    title: "Facility Maintenance",
+    description: "Track facility maintenance tasks, schedule repairs, and update completion status.",
+    storageKey: "facilityMaintenance",
+    icon: ClipboardList,
+    primaryAction: "Add Maintenance",
     fields: [
-      { name: "name", label: "Staff Name", type: "text", placeholder: "Sergio" },
-      {
-        name: "role",
-        label: "Role",
-        type: "select",
-        options: ["Trainer", "Receptionist", "Accountant", "Manager"],
-      },
-      { name: "responsibilities", label: "Responsibilities", type: "textarea", placeholder: "Morning classes, member assessment" },
+      { name: "facilityId", label: "Facility", type: "text", placeholder: "Select facility" },
+      { name: "title", label: "Maintenance Title", type: "text", placeholder: "Pump service" },
+      { name: "description", label: "Description", type: "textarea", placeholder: "Clean filters and check motors" },
+      { name: "startDate", label: "Start Date", type: "datetime-local" },
+      { name: "endDate", label: "End Date", type: "datetime-local" },
       {
         name: "status",
         label: "Status",
         type: "select",
-        options: ["Active", "On Leave", "Inactive"],
+        options: ["PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
       },
     ],
-    seed: [
-      {
-        id: 1,
-        name: "Sergio",
-        role: "Trainer",
-        responsibilities: "Strength classes, member assessments",
-        status: "Active",
-      },
-    ],
-    insights: ["Trainer and staff records", "Role assignment", "Responsibility tracking"],
+    seed: [],
+    insights: ["Scheduled maintenance tasks", "Facility repairs and updates", "Completion tracking"],
   },
 };
 
 export const moduleGroups = [
   {
     title: "Operations",
-    items: ["attendance", "subscriptions", "classes", "workouts", "nutrition", "staff", "products"],
+    items: ["attendance", "subscriptions", "classes", "workouts", "nutrition", "products", "facilities", "facility-maintenance"],
   },
   {
     title: "Business",
@@ -528,7 +433,7 @@ export const moduleGroups = [
   },
   {
     title: "System",
-    items: ["localization", "integrations", "workflow", "security"],
+    items: ["localization", "integrations"],
   },
 ];
 
@@ -556,26 +461,3 @@ export const statusTone = {
   Disabled: "bg-red-100 text-red-700",
   Inactive: "bg-red-100 text-red-700",
 };
-
-export const securityCards = [
-  {
-    title: "Role-based permissions",
-    detail: "Admin, staff, trainer, and member roles can be mapped to module-level actions.",
-    icon: ShieldCheck,
-  },
-  {
-    title: "Authenticated access",
-    detail: "Protected routes require login before users can access the management portal.",
-    icon: LockKeyhole,
-  },
-  {
-    title: "API integration access",
-    detail: "REST and webhook integrations can be tracked with status and endpoint labels.",
-    icon: Code2,
-  },
-  {
-    title: "Billing controls",
-    detail: "Stripe and invoice records are tracked separately from membership payments.",
-    icon: WalletCards,
-  },
-];

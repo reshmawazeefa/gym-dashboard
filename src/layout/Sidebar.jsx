@@ -4,7 +4,7 @@ import {
   Activity,
   Bell,
   Building2,
-  Calendar,
+  CalendarDays,
   ChartNoAxesCombined,
   ClipboardCheck,
   ClipboardList,
@@ -20,7 +20,6 @@ import {
   Settings,
   ShoppingBag,
   UserCheck,
-  UserCog,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -43,12 +42,12 @@ const moduleSections = [
     links: [
       { to: "/modules/attendance", label: "Attendance", icon: ClipboardCheck, moduleKey: "attendance" },
       { to: "/modules/subscriptions", label: "Subscriptions", icon: UserCheck, moduleKey: "subscriptions" },
-      { to: "/modules/classes", label: "Classes", icon: Calendar, moduleKey: "classes" },
+      { to: "/modules/classes", label: "Classes", icon: CalendarDays, moduleKey: "classes" },
       { to: "/modules/workouts", label: "Workouts", icon: Activity, moduleKey: "workouts" },
       { to: "/modules/nutrition", label: "Nutrition", icon: Salad, moduleKey: "nutrition" },
-      { to: "/modules/staff", label: "Staff Roles", icon: UserCog, moduleKey: "staff" },
       { to: "/modules/products", label: "Products", icon: ShoppingBag, moduleKey: "products" },
       { to: "/modules/facilities", label: "Facilities", icon: ClipboardList, moduleKey: "facilities" },
+      { to: "/modules/facility-maintenance", label: "Facility Maintenance", icon: ClipboardList, moduleKey: "facility-maintenance" },
     ],
   },
   {
@@ -65,8 +64,6 @@ const moduleSections = [
     links: [
       { to: "/modules/localization", label: "Languages", icon: Languages, moduleKey: "localization" },
       { to: "/modules/integrations", label: "API & Stripe", icon: Code2, moduleKey: "integrations" },
-      { to: "/modules/workflow", label: "Workflow", icon: ClipboardList, moduleKey: "workflow" },
-      { to: "/modules/security", label: "Security", icon: LockKeyhole, moduleKey: "security" },
     ],
   },
 ];

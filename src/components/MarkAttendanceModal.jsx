@@ -6,8 +6,14 @@ export default function MarkAttendanceModal({ isOpen, onClose, onSave, editData,
   const [form, setForm] = useState(empty);
 
   useEffect(() => {
-    if (editData) setForm({ bookingId: editData.bookingId || editData.bookingId || "", status: editData.status || "PRESENT" });
-    else setForm(empty);
+    if (editData) {
+      setForm({
+        bookingId: editData.bookingId || editData.id || editData._id || "",
+        status: editData.status || editData.attendanceStatus || "PRESENT",
+      });
+    } else {
+      setForm(empty);
+    }
   }, [editData, isOpen]);
 
   if (!isOpen) return null;

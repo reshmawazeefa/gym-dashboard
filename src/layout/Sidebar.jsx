@@ -24,12 +24,13 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { canAccess } from "../utils/rbac";
+import { canAccess, normalizeRole } from "../utils/rbac";
 
 const primaryLinks = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, moduleKey: "dashboard" },
+  { to: "/profile", label: "Profile", icon: UserCheck, moduleKey: "dashboard" },
   { to: "/members", label: "Members", icon: Users, moduleKey: "members" },
-  { to: "/plans", label: "Plans & Renewal", icon: ClipboardList, moduleKey: "plans" },
+  { to: "/plans", label: "Our Packages", icon: ClipboardList, moduleKey: "plans" },
   { to: "/payments", label: "Payments", icon: CreditCard, moduleKey: "payments" },
   { to: "/trainers", label: "Staff", icon: Dumbbell, moduleKey: "staff" },
   { to: "/permissions", label: "Permissions", icon: LockKeyhole, moduleKey: "permissions" },
@@ -59,19 +60,21 @@ const moduleSections = [
       { to: "/modules/reminders", label: "Reminders", icon: Bell, moduleKey: "reminders" },
     ],
   },
-  {
-    title: "System",
-    links: [
-      { to: "/modules/localization", label: "Languages", icon: Languages, moduleKey: "localization" },
-      { to: "/modules/integrations", label: "API & Stripe", icon: Code2, moduleKey: "integrations" },
-    ],
-  },
 ];
+
+const HIDDEN_MODULE_KEYS = new Set(["communication", "reminders", "finance"]);
 
 export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }) {
   const { user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const showFullNav = !collapsed || mobileOpen;
+  const isGymOwner = normalizeRole(user?.role, user?.loginType) === "gym_owner";
+
+  const primaryNavLinks = [];
+  primaryLinks.forEach((link) => {
+    if (link.moduleKey === "gyms" && isGymOwner) return;
+    primaryNavLinks.push(link);
+  });
 
   const menuItemClass = "flex items-center gap-3 rounded-md p-2 transition";
   const getLinkClass = ({ isActive }) =>
@@ -114,7 +117,12 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
         {showFullNav && (
           <div>
             <span className="block text-lg font-bold">Gym Master</span>
-            <span className="text-xs text-gray-400">Admin Portal</span>
+            <span className="block text-sm text-gray-300">
+              {user?.name || user?.email || "Guest"}
+            </span>
+            <span className="text-xs text-gray-400">
+              {user?.role || user?.staffRole || user?.loginType || "Portal User"}
+            </span>
           </div>
         )}
         <button
@@ -134,13 +142,13 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
 
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div className="space-y-2">
-          {primaryLinks.filter((link) => canAccess(user, link.moduleKey)).map(renderLink)}
+          {primaryNavLinks.filter((link) => canAccess(user, link.moduleKey)).map(renderLink)}
         </div>
 
         {moduleSections
           .map((section) => ({
             ...section,
-            links: section.links.filter((link) => canAccess(user, link.moduleKey)),
+            links: section.links.filter((link) => !HIDDEN_MODULE_KEYS.has(link.moduleKey) && canAccess(user, link.moduleKey)),
           }))
           .filter((section) => section.links.length)
           .map((section) => (
@@ -155,14 +163,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
           ))}
       </nav>
 
-      {showFullNav && (
-        <div className="border-t border-white/10 p-3 text-xs text-gray-400">
-          <div className="flex items-center gap-2">
-            <Settings size={15} />
-            Roles, API, Stripe, languages
-          </div>
-        </div>
-      )}
+      {/* Sidebar footer hidden */}
       </aside>
     </>
   );

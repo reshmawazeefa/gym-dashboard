@@ -361,7 +361,7 @@ export default function AdminFacilities() {
                   <th className="p-3">Facility</th>
                   <th className="p-3">Type</th>
                   <th className="p-3 text-center">Capacity</th>
-                  <th className="p-3 text-center">Hours</th>
+                  {/* <th className="p-3 text-center">Hours</th> */}
                   <th className="p-3 text-center">Status</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
@@ -390,9 +390,9 @@ export default function AdminFacilities() {
                       <span className="inline-flex h-7 items-center rounded-full bg-blue-50 px-3 text-xs font-semibold text-blue-700">{titleCase(facility.type || "-")}</span>
                     </td>
                     <td className="p-3 text-center font-semibold text-gray-800">{facility.capacity || "-"}</td>
-                    <td className="p-3 text-center text-xs font-medium text-gray-600">
+                    {/* <td className="p-3 text-center text-xs font-medium text-gray-600">
                       {facility.openingTime || "--:--"} - {facility.closingTime || "--:--"}
-                    </td>
+                    </td> */}
                     <td className="p-3 text-center">
                       <button
                         type="button"
@@ -422,8 +422,8 @@ export default function AdminFacilities() {
                   </tr>
                   {isExpanded && (
                     <tr className="bg-gray-50">
-                      <td colSpan={4} className="p-4 text-sm text-gray-600">
-                        <div className="mx-auto grid max-w-4xl gap-3 sm:grid-cols-[minmax(0,18rem)_minmax(0,18rem)]">
+                      <td colSpan={8} className="p-4 text-sm text-gray-600">
+                        <div className="mx-auto flex max-w-full justify-between gap-12">
                           <div>
                             <p className="text-xs font-semibold uppercase text-gray-500">Description</p>
                             <p className="mt-1 leading-6">{facility.description || "—"}</p>
@@ -431,6 +431,10 @@ export default function AdminFacilities() {
                           <div>
                             <p className="text-xs font-semibold uppercase text-gray-500">Rules</p>
                             <p className="mt-1 leading-6">{facility.rules || "—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold uppercase text-gray-500">Hours</p>
+                            <p className="mt-1 leading-6">  {facility.openingTime || "--:--"} - {facility.closingTime || "--:--"}</p>
                           </div>
                         </div>
                       </td>

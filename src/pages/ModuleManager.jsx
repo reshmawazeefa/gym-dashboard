@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { Box, ChevronLeft, ChevronRight, Download, Edit, Minus, Plus, Search, Tag, Trash } from "lucide-react";
+import { Box, ChevronLeft, ChevronRight, Download, Edit, Minus, Plus, Search, Tag, Trash, Users, RefreshCw, Eye, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { moduleDefinitions, statusTone } from "../data/moduleDefinitions";
 import { useAuth } from "../context/AuthContext";
@@ -11,6 +11,7 @@ import AdminFacilities from "../components/AdminFacilities";
 import AdminWorkouts from "../components/AdminWorkouts";
 import FacilityMaintenance from "../components/FacilityMaintenance";
 import TrainerSchedule from "./TrainerSchedule";
+import NutritionModule from "./NutritionModule";
 import {
   getApiError,
   getMembershipPlans,
@@ -24,6 +25,11 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  getTenantUsers,
+  createGymStaff,
+  updateTenantUser,
+  deleteUser,
+  unwrapObject,
 } from "../services/api";
 
 function getStoredRecords(definition) {
@@ -210,8 +216,16 @@ export default function ModuleManager() {
     return <ProductModule key={moduleKey} user={user} />;
   }
 
+  if (moduleKey === "staff") {
+    return <StaffModule key={moduleKey} user={user} />;
+  }
+
   if (moduleKey === "workouts") {
     return <AdminWorkouts />;
+  }
+
+  if (moduleKey === "nutrition") {
+    return <NutritionModule key={moduleKey} user={user} />;
   }
 
   if (moduleKey === "classes") {
@@ -1125,6 +1139,641 @@ function ProductModule({ user }) {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function StaffModule({ user }) {
+  const [staff, setStaff] = useState([]);
+  const [filteredStaff, setFilteredStaff] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [viewingStaff, setViewingStaff] = useState(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    role: "Trainer",
+    phoneNumber: "",
+    gender: "",
+    dateOfBirth: "",
+    city: "",
+  });
+  const itemsPerPage = 10;
+
+  const toStaffRoleLabel = (value, fallback = "Staff") => {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^role[_-]/, "")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    if (!normalized || normalized === "staff" || normalized === "user") return fallback;
+    if (normalized.includes("admin")) return "Admin";
+    if (normalized.includes("trainer")) return "Trainer";
+    if (normalized.includes("reception")) return "Receptionist";
+    if (normalized.includes("manager")) return "Manager";
+
+    return String(value)
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  };
+
+  const getStaffRole = (staffUser, fallbackRole = "Staff") => {
+    const nestedRoles = Array.isArray(staffUser.roles)
+      ? staffUser.roles
+          .map((assignment) => assignment?.role?.name || assignment?.name || assignment?.roleName)
+          .filter(Boolean)
+      : [];
+    const roleCandidates = [
+      ...nestedRoles,
+      staffUser.staffRole,
+      staffUser.roleName,
+      staffUser.designation,
+      staffUser.position,
+      staffUser.userRole,
+      staffUser.type,
+      staffUser.category,
+      staffUser.role,
+    ];
+
+    for (const candidate of roleCandidates) {
+      const label = toStaffRoleLabel(candidate, "");
+      if (label) return label;
+    }
+
+    return fallbackRole;
+  };
+
+  const normalizeStaff = (staffUser, fallbackRole = "Staff") => ({
+    id: staffUser.id || staffUser._id || staffUser.userId || staffUser.email,
+    name: staffUser.name || staffUser.fullName || "",
+    email: staffUser.email || "",
+    role: getStaffRole(staffUser, fallbackRole),
+    phoneNumber: staffUser.phoneNumber || "",
+    gender: staffUser.gender || "",
+    dateOfBirth: staffUser.dateOfBirth || "",
+    city: staffUser.city || "",
+  });
+
+  const loadStaff = async () => {
+    try {
+      setLoading(true);
+      const staffRequests = [
+        { queryRole: "staff", fallbackRole: "Staff" },
+        { queryRole: "admin", fallbackRole: "Admin" },
+        { queryRole: "trainer", fallbackRole: "Trainer" },
+        { queryRole: "receptionist", fallbackRole: "Receptionist" },
+      ];
+      const responses = await Promise.allSettled(
+        staffRequests.map(({ queryRole }) => getTenantUsers(queryRole, user?.token))
+      );
+      const staffById = new Map();
+
+      responses.forEach((result, index) => {
+        if (result.status !== "fulfilled") return;
+
+        const fallbackRole = staffRequests[index]?.fallbackRole || "Staff";
+        unwrapList(result.value).forEach((staffUser) => {
+          const normalizedStaff = normalizeStaff(staffUser, fallbackRole);
+          const key = normalizedStaff.id || normalizedStaff.email;
+          if (!key) return;
+
+          const existingStaff = staffById.get(key);
+          if (!existingStaff || existingStaff.role === "Staff") {
+            staffById.set(key, { ...existingStaff, ...normalizedStaff });
+          }
+        });
+      });
+
+      const nextStaff = Array.from(staffById.values());
+
+      setStaff(nextStaff);
+      updateFilteredStaff(nextStaff, searchTerm);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not load staff"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateFilteredStaff = (staffList, search) => {
+    const filtered = staffList.filter((s) =>
+      [s.name, s.email, s.role, s.phoneNumber, s.city]
+        .join(" ")
+        .toLowerCase()
+        .includes(search.toLowerCase())
+    );
+    setFilteredStaff(filtered);
+    setCurrentPage(1);
+  };
+
+  useEffect(() => {
+    void loadStaff();
+  }, []);
+
+  useEffect(() => {
+    updateFilteredStaff(staff, searchTerm);
+  }, [searchTerm]);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+
+    if (!formData.name.trim() || !formData.email.trim()) {
+      toast.error("Name and email are required");
+      return;
+    }
+
+    if (!editingId && !formData.password.trim()) {
+      toast.error("Password is required for new staff");
+      return;
+    }
+
+    try {
+      if (editingId) {
+        const payload = {
+          name: formData.name,
+          email: formData.email,
+          role: formData.role,
+          phoneNumber: formData.phoneNumber,
+          gender: formData.gender,
+          dateOfBirth: formData.dateOfBirth,
+          city: formData.city,
+        };
+        await updateTenantUser(editingId, payload);
+        const updated = staff.map((s) =>
+          s.id === editingId ? { ...s, ...formData } : s
+        );
+        setStaff(updated);
+        updateFilteredStaff(updated, searchTerm);
+        toast.success("Staff updated successfully");
+      } else {
+        const response = await createGymStaff({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          role: formData.role,
+          phoneNumber: formData.phoneNumber,
+          gender: formData.gender,
+          dateOfBirth: formData.dateOfBirth,
+          city: formData.city,
+        });
+        const newStaffMember = normalizeStaff(unwrapObject(response), formData.role);
+        const updated = [...staff, newStaffMember];
+        setStaff(updated);
+        updateFilteredStaff(updated, searchTerm);
+        toast.success("Staff created successfully");
+      }
+
+      setIsFormOpen(false);
+      setEditingId(null);
+      setFormData({
+        name: "",
+        email: "",
+        password: "",
+        role: "Trainer",
+        phoneNumber: "",
+        gender: "",
+        dateOfBirth: "",
+        city: "",
+      });
+    } catch (error) {
+      toast.error(getApiError(error, editingId ? "Update failed" : "Creation failed"));
+    }
+  };
+
+  const handleEdit = (staffMember) => {
+    setEditingId(staffMember.id);
+    setFormData({
+      name: staffMember.name,
+      email: staffMember.email,
+      password: "",
+      role: staffMember.role,
+      phoneNumber: staffMember.phoneNumber,
+      gender: staffMember.gender,
+      dateOfBirth: staffMember.dateOfBirth,
+      city: staffMember.city,
+    });
+    setIsFormOpen(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("Delete this staff member?")) return;
+
+    try {
+      await deleteUser(id);
+      const updated = staff.filter((s) => s.id !== id);
+      setStaff(updated);
+      updateFilteredStaff(updated, searchTerm);
+      toast.success("Staff deleted successfully");
+    } catch (error) {
+      toast.error(getApiError(error, "Could not delete staff"));
+    }
+  };
+
+  const handleCancel = () => {
+    setIsFormOpen(false);
+    setEditingId(null);
+    setFormData({
+      name: "",
+      email: "",
+      password: "",
+      role: "Trainer",
+      phoneNumber: "",
+      gender: "",
+      dateOfBirth: "",
+      city: "",
+    });
+  };
+
+  const handleViewDetails = (staffMember) => {
+    setViewingStaff(staffMember);
+  };
+
+  const totalPages = Math.ceil(filteredStaff.length / itemsPerPage);
+  const start = (currentPage - 1) * itemsPerPage;
+  const paginated = filteredStaff.slice(start, start + itemsPerPage);
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
+              <Users size={22} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-950">Staff Management</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">
+                Manage gym staff, trainers, and administrative personnel with role assignments.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
+        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-1 items-center gap-2 rounded bg-gray-50 p-3">
+            <Search size={18} className="text-gray-400" />
+            <input
+              placeholder="Search staff..."
+              className="flex-1 bg-transparent text-sm outline-none"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2 sm:w-auto">
+            <button
+              onClick={() => {
+                handleCancel();
+                setIsFormOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              <Plus size={18} />
+              Add Staff
+            </button>
+            <button
+              onClick={loadStaff}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <p className="text-sm font-medium text-gray-500">Total Staff</p>
+          <p className="mt-2 text-2xl font-bold text-gray-950">{staff.length}</p>
+        </div>
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <p className="text-sm font-medium text-gray-500">Trainers</p>
+          <p className="mt-2 text-2xl font-bold text-gray-950">{staff.filter(s => s.role?.toLowerCase() === "trainer").length}</p>
+        </div>
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <p className="text-sm font-medium text-gray-500">Administrators</p>
+          <p className="mt-2 text-2xl font-bold text-gray-950">{staff.filter(s => s.role?.toLowerCase() === "admin").length}</p>
+        </div>
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-[0.75fr_1.25fr]">
+        {isFormOpen && (
+          <form
+            onSubmit={handleSave}
+            className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200 lg:p-5"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-gray-950">
+                  {editingId ? "Edit Staff Member" : "Add New Staff"}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {editingId
+                    ? "Update staff member information"
+                    : "Create a new staff member account"}
+                </p>
+              </div>
+              <Plus className="text-gray-400" size={21} />
+            </div>
+
+            <div className="grid gap-3">
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                Full Name
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="John Doe"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                Email
+                <input
+                  type="email"
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="john@gym.com"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
+              </label>
+
+              {!editingId && (
+                <label className="grid gap-1 text-sm font-medium text-gray-700">
+                  Password
+                  <input
+                    type="password"
+                    className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    placeholder="••••••••"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  />
+                </label>
+              )}
+
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                Role
+                <select
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  value={formData.role}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                >
+                  <option value="Admin">Admin</option>
+                  <option value="Trainer">Trainer</option>
+                  <option value="Receptionist">Receptionist</option>
+                  <option value="Manager">Manager</option>
+                </select>
+              </label>
+
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                Phone Number
+                <input
+                  type="tel"
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="+1 (555) 000-0000"
+                  value={formData.phoneNumber}
+                  onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                Gender
+                <select
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  value={formData.gender}
+                  onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                >
+                  <option value="">Select Gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                Date of Birth
+                <input
+                  type="date"
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  value={formData.dateOfBirth}
+                  onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-medium text-gray-700">
+                City
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="New York"
+                  value={formData.city}
+                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <button
+                  type="submit"
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  {editingId ? "Update" : "Create"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        <div className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="p-3 text-sm font-semibold text-gray-950">Name</th>
+                  <th className="p-3 text-sm font-semibold text-gray-950">Email</th>
+                  <th className="p-3 text-sm font-semibold text-gray-950">Phone</th>
+                  <th className="p-3 text-sm font-semibold text-gray-950">Role</th>
+                  <th className="p-3 text-sm font-semibold text-gray-950">Gender</th>
+                  <th className="p-3 text-sm font-semibold text-gray-950">City</th>
+                  <th className="p-3 text-center text-sm font-semibold text-gray-950">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginated.map((s) => (
+                  <tr key={s.id} className="border-t transition hover:bg-gray-50">
+                    <td className="p-3 text-sm text-gray-950">{s.name}</td>
+                    <td className="p-3 text-sm text-gray-600">{s.email}</td>
+                    <td className="p-3 text-sm text-gray-600">{s.phoneNumber || "-"}</td>
+                    <td className="p-3 text-sm">
+                      <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                        {s.role}
+                      </span>
+                    </td>
+                    <td className="p-3 text-sm text-gray-600">{s.gender || "-"}</td>
+                    <td className="p-3 text-sm text-gray-600">{s.city || "-"}</td>
+                    <td className="p-3 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => handleViewDetails(s)}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-gray-600 hover:bg-gray-100"
+                          title="View Details"
+                        >
+                          <Eye size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleEdit(s)}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-blue-600 hover:bg-blue-50"
+                          title="Edit"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(s.id)}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-red-600 hover:bg-red-50"
+                          title="Delete"
+                        >
+                          <Trash size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {filteredStaff.length === 0 && (
+                  <tr>
+                    <td colSpan="7" className="p-6 text-center text-sm text-gray-500">
+                      {loading ? "Loading staff..." : "No staff found"}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-col items-center justify-between gap-3 border-t border-gray-200 p-4 sm:flex-row">
+            <p className="text-sm text-gray-600">
+              Page {currentPage} of {totalPages || 1} ({filteredStaff.length} total)
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Prev
+              </button>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages || 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {viewingStaff && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-200 p-6">
+              <h2 className="text-xl font-bold text-gray-950">Staff Details</h2>
+              <button
+                onClick={() => setViewingStaff(null)}
+                className="inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(100vh-200px)] overflow-y-auto p-6">
+              <div className="grid gap-4">
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Full Name</p>
+                  <p className="text-sm font-medium text-gray-950">{viewingStaff.name || "-"}</p>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Email</p>
+                  <p className="text-sm font-medium text-gray-950">{viewingStaff.email || "-"}</p>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Role</p>
+                  <span className="inline-flex w-max rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                    {viewingStaff.role || "-"}
+                  </span>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Phone Number</p>
+                  <p className="text-sm font-medium text-gray-950">{viewingStaff.phoneNumber || "-"}</p>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Gender</p>
+                  <p className="text-sm font-medium text-gray-950">{viewingStaff.gender || "-"}</p>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Date of Birth</p>
+                  <p className="text-sm font-medium text-gray-950">
+                    {viewingStaff.dateOfBirth ? new Date(viewingStaff.dateOfBirth).toLocaleDateString() : "-"}
+                  </p>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">City</p>
+                  <p className="text-sm font-medium text-gray-950">{viewingStaff.city || "-"}</p>
+                </div>
+
+                <div className="grid gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Staff ID</p>
+                  <p className="text-sm font-mono text-gray-600">{viewingStaff.id || "-"}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-gray-200 p-6">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => {
+                    handleEdit(viewingStaff);
+                    setViewingStaff(null);
+                  }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  <Edit size={16} />
+                  Edit
+                </button>
+                <button
+                  onClick={() => setViewingStaff(null)}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

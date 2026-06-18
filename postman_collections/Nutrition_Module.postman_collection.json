@@ -1,0 +1,709 @@
+{
+  "info": {
+    "_postman_id": "nutrition-module-api",
+    "name": "Nutrition Module API",
+    "description": "Complete Nutrition Module API endpoints for gym management system",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Food Management",
+      "item": [
+        {
+          "name": "Create Food Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Chicken Breast\",\n  \"category\": \"MEAT\",\n  \"brand\": \"Organic Farms\",\n  \"calories\": 165,\n  \"proteinG\": 31,\n  \"carbsG\": 0,\n  \"fatG\": 3.6,\n  \"fiberG\": 0,\n  \"sugarG\": 0,\n  \"sodiumMg\": 74,\n  \"cholesterolMg\": 85,\n  \"saturatedFatG\": 1,\n  \"transFatG\": 0,\n  \"servingSize\": \"1 breast\",\n  \"servingWeightG\": 174,\n  \"barcode\": \"1234567890123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods"]
+            }
+          }
+        },
+        {
+          "name": "List Foods",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods?name=chicken&category=MEAT&brand=Organic",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods"],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "chicken"
+                },
+                {
+                  "key": "category",
+                  "value": "MEAT"
+                },
+                {
+                  "key": "brand",
+                  "value": "Organic"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Food Details",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Food",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Chicken Breast Updated\",\n  \"calories\": 170\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Food",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Add Serving Size",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"1 Scoop\",\n  \"weightG\": 30\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods/:id/servings",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods", ":id", "servings"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Remove Serving Size",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/nutrition/foods/:id/servings/:servingId",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "foods", ":id", "servings", ":servingId"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                },
+                {
+                  "key": "servingId",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Meal Management",
+      "item": [
+        {
+          "name": "Create Meal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Post Workout Shake\",\n  \"description\": \"Quick recovery shake\",\n  \"mealType\": \"POST_WORKOUT\",\n  \"foodItems\": [\n    {\n      \"foodItemId\": \"\",\n      \"servings\": 1\n    },\n    {\n      \"foodItemId\": \"\",\n      \"servings\": 0.5\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/meals",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "meals"]
+            }
+          }
+        },
+        {
+          "name": "List Meals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/meals?name=shake&mealType=POST_WORKOUT",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "meals"],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "shake"
+                },
+                {
+                  "key": "mealType",
+                  "value": "POST_WORKOUT"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Meal",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/meals/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "meals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Meal",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Shake\",\n  \"foodItems\": [\n    {\n      \"foodItemId\": \"\",\n      \"servings\": 1.5\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/meals/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "meals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Meal",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/nutrition/meals/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "meals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Meal Plans",
+      "item": [
+        {
+          "name": "Create Meal Plan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cutting Diet - 7 Day\",\n  \"goal\": \"WEIGHT_LOSS\",\n  \"duration\": 7,\n  \"days\": [\n    {\n      \"dayNumber\": 1,\n      \"title\": \"Day 1\",\n      \"notes\": \"Hydration focus\",\n      \"meals\": [\n        {\n          \"mealId\": \"\",\n          \"mealType\": \"BREAKFAST\",\n          \"time\": \"08:00\"\n        },\n        {\n          \"mealId\": \"\",\n          \"mealType\": \"LUNCH\",\n          \"time\": \"13:00\"\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/plans",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "plans"]
+            }
+          }
+        },
+        {
+          "name": "List Meal Plans",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/plans",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "plans"]
+            }
+          }
+        },
+        {
+          "name": "Get Meal Plan",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/plans/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Meal Plan",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Cutting Diet\",\n  \"duration\": 14\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/plans/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Meal Plan",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/nutrition/plans/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Meal Plan Assignments",
+      "item": [
+        {
+          "name": "Assign Meal Plan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mealPlanId\": \"\",\n  \"userId\": \"\",\n  \"startDate\": \"2026-06-15\",\n  \"endDate\": \"2026-07-15\",\n  \"notes\": \"Follow-up after 2 weeks\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/assign",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "assign"]
+            }
+          }
+        },
+        {
+          "name": "List Assignments",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/assignments?userId=&mealPlanId=&isActive=true",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "assignments"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": ""
+                },
+                {
+                  "key": "mealPlanId",
+                  "value": ""
+                },
+                {
+                  "key": "isActive",
+                  "value": "true"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Assignment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"endDate\": \"2026-08-15\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/assignments/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "assignments", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get My Active Plan",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/my/plan",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "my", "plan"]
+            }
+          }
+        },
+        {
+          "name": "Get Member Plan",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/users/:userId/plan",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "users", ":userId", "plan"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Diet Logging",
+      "item": [
+        {
+          "name": "Create Diet Log",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-06-14\",\n  \"mealType\": \"BREAKFAST\",\n  \"notes\": \"Felt energetic\",\n  \"items\": [\n    {\n      \"foodItemId\": \"\",\n      \"servings\": 2\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/diet-log",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "diet-log"]
+            }
+          }
+        },
+        {
+          "name": "Get My Logs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/my/logs?dateFrom=2026-06-01&dateTo=2026-06-30",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "my", "logs"],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "2026-06-01"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "2026-06-30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Member Logs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/users/:userId/logs?dateFrom=2026-06-01&dateTo=2026-06-30",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "users", ":userId", "logs"],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "2026-06-01"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "2026-06-30"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Diet Log",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Updated notes\",\n  \"items\": [\n    {\n      \"foodItemId\": \"\",\n      \"servings\": 1.5\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/diet-log/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "diet-log", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Diet Log",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/nutrition/diet-log/:id",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "diet-log", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Nutritional Goals",
+      "item": [
+        {
+          "name": "Set Goals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"\",\n  \"caloriesPerDay\": 2200,\n  \"proteinGPerDay\": 150,\n  \"carbsGPerDay\": 200,\n  \"fatGPerDay\": 65,\n  \"fiberGPerDay\": 25,\n  \"sodiumMgPerDay\": 2300,\n  \"waterMlPerDay\": 3000,\n  \"startDate\": \"2026-06-01\",\n  \"endDate\": \"2026-08-01\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/nutrition/goals",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "goals"]
+            }
+          }
+        },
+        {
+          "name": "Get My Goals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/my/goals",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "my", "goals"]
+            }
+          }
+        },
+        {
+          "name": "Get Member Goals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/goals/:userId",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "goals", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Dashboard",
+      "item": [
+        {
+          "name": "Gym Dashboard",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Member Dashboard",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/nutrition/dashboard/member/:userId",
+              "host": ["{{base_url}}"],
+              "path": ["nutrition", "dashboard", "member", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

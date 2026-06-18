@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { normalizeRole } from "../utils/rbac";
 import { canAccess } from "../utils/rbac";
 import {
   Bar,
@@ -43,11 +44,11 @@ const quickActions = [
   { label: "Add member", icon: Plus, to: "/members", moduleKey: "members" },
   { label: "Record payment", icon: ReceiptText, to: "/payments", moduleKey: "payments" },
   { label: "Classes", icon: CalendarDays, to: "/modules/classes", moduleKey: "classes" },
-  { label: "Send message", icon: MessageSquare, to: "/modules/communication", moduleKey: "communication" },
 ];
 
 const modules = [
   { name: "Members", detail: "Profiles, plans, expiry, trainers", icon: Users, to: "/members", moduleKey: "members" },
+  { name: "Staff", detail: "Trainers, receptionists, administrators", icon: Users, to: "/trainers", moduleKey: "staff" },
   { name: "Classes", detail: "Creation, schedules, bookings", icon: CalendarDays, to: "/modules/classes", moduleKey: "classes" },
   { name: "Payments", detail: "Plans, dues, receipts, reports", icon: CreditCard, to: "/payments", moduleKey: "payments" },
   { name: "Reports", detail: "Membership, income, attendance", icon: LineChartIcon, to: "/modules/reports", moduleKey: "reports" },
@@ -118,7 +119,16 @@ function getDashboardData() {
   const attendanceRecords = readStorage("attendanceRecords");
   const financeRecords = readStorage("financeRecords");
   const trainers = readStorage("trainers");
+  const staff = readStorage("staff");
   const today = new Date();
+
+  // Calculate combined and deduplicated staff count
+  const combined = [...(staff || []), ...(trainers || [])];
+  const uniqueStaff = combined.filter((item, idx, arr) => {
+    const key = item?.id || item?.email || JSON.stringify(item);
+    return arr.findIndex((x) => (x?.id || x?.email || JSON.stringify(x)) === key) === idx;
+  });
+  const staffCount = uniqueStaff.length;
 
   const activeMembers = members.filter((member) => {
     if (member.status === "Inactive") return false;
@@ -202,8 +212,8 @@ function getDashboardData() {
     },
     {
       label: "Staff & Trainers",
-      value: trainers.length.toString(),
-      change: `${trainers.length} trainer records`,
+      value: staffCount.toString(),
+      change: `${staffCount} trainer records`,
       icon: Dumbbell,
       tone: "bg-sky-50 text-sky-700",
     },
@@ -225,6 +235,7 @@ function getDashboardData() {
 
   return {
     stats,
+    staffCount,
     revenueData,
     attendanceData,
     membershipData,
@@ -334,10 +345,24 @@ function getDashboardNotifications() {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const userRole = normalizeRole(user?.role, user?.loginType);
+  const isMember = userRole === "member";
   const alerts = getDashboardNotifications();
-  const { stats, revenueData, attendanceData, membershipData, planData } = getDashboardData();
-  const visibleQuickActions = quickActions.filter((action) => canAccess(user, action.moduleKey));
-  const visibleModules = modules.filter((module) => canAccess(user, module.moduleKey));
+  const { stats, staffCount, revenueData, attendanceData, membershipData, planData } = getDashboardData();
+
+  // replace stats for member portal: hide total members
+  const visibleStats = isMember
+    ? stats.filter((s) => s.label !== "Total Members")
+    : stats;
+
+  const visibleQuickActions = quickActions
+    .filter((action) => canAccess(user, action.moduleKey))
+    .filter((action) => !(isMember && action.moduleKey === "communication"));
+
+  const visibleModules = isMember
+    ? modules.filter((module) => ["products", "facilities"].includes(module.moduleKey) && canAccess(user, module.moduleKey))
+    : modules.filter((module) => canAccess(user, module.moduleKey) && !["finance", "payments", "communication", "localization"].includes(module.moduleKey));
+
 
   return (
     <div className="space-y-6">
@@ -345,14 +370,17 @@ export default function Dashboard() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="mt-2 text-blue-100">Welcome back to Gym Master</p>
+            <p className="mt-2 text-blue-100">Welcome back{user?.name ? `, ${user.name}` : ""} to Gym Master</p>
           </div>
-          <ShieldCheck size={48} className="opacity-20" />
+          <div className="flex items-center gap-4">
+            <Link to="/profile" className="rounded-md bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20">My Profile</Link>
+            <ShieldCheck size={48} className="opacity-20" />
+          </div>
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => {
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {visibleStats.map((stat) => {
           const Icon = stat.icon;
           return (
             <div key={stat.label} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
@@ -371,7 +399,7 @@ export default function Dashboard() {
         })}
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.5fr_1fr]">
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-[1.5fr_1fr]">
         <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -422,8 +450,8 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200 xl:col-span-2">
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-3 xl:grid-cols-3">
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200 lg:col-span-2 xl:col-span-2">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold text-gray-950">Attendance & Plan Distribution</h2>
@@ -457,7 +485,7 @@ export default function Dashboard() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold text-gray-950">Quick Actions</h2>
-              <p className="text-sm text-gray-500">Common admin tasks</p>
+              <p className="text-sm text-gray-500">{isMember ? "Common tasks for members" : "Common admin tasks"}</p>
             </div>
             <Plus className="text-gray-400" size={22} />
           </div>
@@ -479,7 +507,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_1.4fr]">
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-[1fr_1.4fr]">
         <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
           <div className="mb-4 flex items-center justify-between">
             <div>
@@ -502,11 +530,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="font-semibold text-gray-950">Admin Modules</h2>
-              <p className="text-sm text-gray-500">Gym Master portal coverage</p>
+              <h2 className="font-semibold text-gray-950">{isMember ? "Available Modules" : "Admin Modules"}</h2>
+              <p className="text-sm text-gray-500">{isMember ? "Modules available to you" : "Gym Master portal coverage"}</p>
             </div>
             <Package className="text-gray-400" size={22} />
           </div>
@@ -528,7 +556,7 @@ export default function Dashboard() {
               );
             })}
           </div>
-        </div>
+          </div>
       </section>
     </div>
   );

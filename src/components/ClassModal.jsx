@@ -3,11 +3,33 @@ import { useState, useEffect } from "react";
 const empty = {
   name: "",
   description: "",
-  capacity: "",
   duration: "",
-  level: "BEGINNER",
+  level: "ALL",
   trainerId: "",
+  type: "ONE_TIME",
+  startDate: "",
+  endDate: "",
 };
+
+function toDatetimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const pad = (num) => String(num).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function toIsoDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toISOString();
+}
 
 export default function ClassModal({ isOpen, onClose, onSave, editData, trainers = [] }) {
   const [form, setForm] = useState(empty);
@@ -17,10 +39,12 @@ export default function ClassModal({ isOpen, onClose, onSave, editData, trainers
       setForm({
         name: editData.title || editData.name || "",
         description: editData.description || "",
-        capacity: editData.capacity || "",
         duration: editData.duration || "",
-        level: editData.level || "BEGINNER",
+        level: editData.level || "ALL",
         trainerId: editData.trainerId || "",
+        type: editData.type || editData.classType || "ONE_TIME",
+        startDate: toDatetimeLocal(editData.startDate || editData.date || ""),
+        endDate: toDatetimeLocal(editData.endDate || ""),
       });
     } else {
       setForm(empty);
@@ -32,12 +56,27 @@ export default function ClassModal({ isOpen, onClose, onSave, editData, trainers
   const fieldClass = "h-9 w-full rounded border px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
   const handleSubmit = () => {
-    if (!form.name || !form.capacity || !form.duration) {
-      alert("Name, capacity and duration are required");
+    if (!form.name || !form.duration || !form.startDate) {
+      alert("Name, duration, and start date are required");
       return;
     }
 
-    onSave({ ...form });
+    if (form.type === "RECURRING" && !form.endDate) {
+      alert("End date is required for recurring classes");
+      return;
+    }
+
+    const payload = {
+      ...form,
+      level: form.level || "ALL",
+      duration: Number(form.duration),
+      startDate: toIsoDateTime(form.startDate),
+    };
+    if (form.type === "RECURRING") {
+      payload.endDate = toIsoDateTime(form.endDate);
+    }
+
+    onSave(payload);
     onClose();
   };
 
@@ -75,18 +114,6 @@ export default function ClassModal({ isOpen, onClose, onSave, editData, trainers
                 </option>
               ))}
             </select>
-
-            <input
-              type="number"
-              min="1"
-              value={form.capacity}
-              onChange={(e) => setForm({ ...form, capacity: e.target.value })}
-              placeholder="Capacity"
-              className={fieldClass}
-            />
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2">
             <input
               type="number"
               min="1"
@@ -100,11 +127,38 @@ export default function ClassModal({ isOpen, onClose, onSave, editData, trainers
               onChange={(e) => setForm({ ...form, level: e.target.value })}
               className={fieldClass}
             >
+              <option value="ALL">ALL</option>
               <option value="BEGINNER">BEGINNER</option>
               <option value="INTERMEDIATE">INTERMEDIATE</option>
               <option value="ADVANCED">ADVANCED</option>
             </select>
           </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <select
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value })}
+              className={fieldClass}
+            >
+              <option value="ONE_TIME">One-time</option>
+              <option value="RECURRING">Recurring</option>
+            </select>
+            <input
+              type="datetime-local"
+              value={form.startDate}
+              onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+              className={fieldClass}
+            />
+          </div>
+
+          {form.type === "RECURRING" && (
+            <input
+              type="datetime-local"
+              value={form.endDate}
+              onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+              className={fieldClass}
+            />
+          )}
         </div>
 
         <div className="mt-3 flex justify-end gap-2">

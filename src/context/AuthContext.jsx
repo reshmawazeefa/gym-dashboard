@@ -30,6 +30,10 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem("authSession", JSON.stringify(session));
   };
 
+  const updateUser = (nextUser) => {
+    persistSession(nextUser);
+  };
+
   const register = async ({ name, email, password, gymId }) => {
     const payload = { name, email, password, gymId };
     const response = await registerGymMember(payload);
@@ -105,7 +109,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, register }}>
+    <AuthContext.Provider value={{ user, login, logout, register, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

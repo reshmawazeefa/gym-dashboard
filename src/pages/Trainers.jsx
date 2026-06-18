@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Search, Trash, Edit3, RefreshCw } from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "../context/AuthContext";
+import { normalizeRole } from "../utils/rbac";
 import AddTrainerModal from "../components/AddTrainerModal";
 import {
   createGymStaff,
@@ -34,28 +36,25 @@ const formatDateTimeValue = (value) => {
   return dateValue ? `${dateValue}T00:00:00.000Z` : "";
 };
 
-const normalizeRole = (value) => {
-  if (!value) return "";
-
-  const roleValue =
-    typeof value === "object"
-      ? value.name || value.role || value.code || value.type || value.value || ""
-      : value;
-
-  const normalized = String(roleValue)
+const normalizeStaffRole = (role) => {
+  const normalized = String(role || "")
     .trim()
     .toLowerCase()
-    .replace(/^role[_-]/, "");
+    .replace(/^role[_-]/, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
+  if (!normalized || normalized === "user") return "";
   if (normalized.includes("admin")) return "admin";
   if (normalized.includes("trainer")) return "trainer";
   if (normalized.includes("reception")) return "receptionist";
+  if (normalized === "staff") return "staff";
 
   return normalized;
 };
 
 const formatRoleLabel = (role) => {
-  const normalized = normalizeRole(role);
+  const normalized = normalizeStaffRole(role);
   if (!normalized) return "Unknown";
   if (normalized.includes("reception")) return "Receptionist";
 
@@ -66,24 +65,45 @@ const formatRoleLabel = (role) => {
 };
 
 const getStaffRole = (user) => {
+  const assignedRoles = Array.isArray(user.roles)
+    ? user.roles
+        .map((assignment) => assignment?.role?.name || assignment?.name || assignment?.roleName)
+        .filter(Boolean)
+    : [];
+  const rawAssignedRoles = Array.isArray(user.raw?.roles)
+    ? user.raw.roles
+        .map((assignment) => assignment?.role?.name || assignment?.name || assignment?.roleName)
+        .filter(Boolean)
+    : [];
   const possibleRoles = [
-    user.role,
-    user.userRole,
+    ...assignedRoles,
+    ...rawAssignedRoles,
     user.staffRole,
     user.roleName,
-    user.userType,
-    user.type,
     user.designation,
     user.position,
+    user.userRole,
+    user.userType,
+    user.type,
     user.permissions?.role,
     user.profile?.role,
     user.staff?.role,
-    user.raw?.role,
-    user.raw?.userRole,
     user.raw?.staffRole,
+    user.raw?.roleName,
+    user.raw?.designation,
+    user.raw?.position,
+    user.raw?.userRole,
+    user.raw?.type,
+    user.role,
+    user.raw?.role,
   ];
 
-  return normalizeRole(possibleRoles.find(Boolean));
+  for (const role of possibleRoles) {
+    const normalized = normalizeStaffRole(role);
+    if (normalized) return normalized;
+  }
+
+  return "";
 };
 
 function normaliseStaff(user, fallbackRole = "") {
@@ -91,7 +111,7 @@ function normaliseStaff(user, fallbackRole = "") {
     id: user.id || user._id || user.userId || user.email,
     name: user.name || user.fullName || "",
     email: user.email || "",
-    role: getStaffRole(user) || normalizeRole(fallbackRole),
+    role: getStaffRole(user) || normalizeStaffRole(fallbackRole),
     phoneNumber: user.phoneNumber || "",
     gender: user.gender || "",
     dateOfBirth: formatDateValue(user.dateOfBirth || ""),
@@ -107,6 +127,9 @@ function normaliseStaff(user, fallbackRole = "") {
 }
 
 export default function Trainers() {
+  const { user } = useAuth();
+  const userRole = normalizeRole(user?.role, user?.loginType);
+  const isMemberPortal = userRole === "member";
   const [staff, setStaff] = useState(() =>
     (JSON.parse(localStorage.getItem("staff")) || []).map(normaliseStaff)
   );
@@ -240,8 +263,8 @@ export default function Trainers() {
     [
       t.name,
       t.email,
-      t.role,
       t.phoneNumber,
+      t.role,
       t.gender,
       t.city,
       t.state,
@@ -278,16 +301,18 @@ export default function Trainers() {
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              setEditData(null);
-              setIsModalOpen(true);
-            }}
-            className="flex w-full items-center justify-center gap-2 rounded bg-blue-500 px-4 py-2 text-sm text-white sm:w-auto"
-          >
-            <Plus size={18} />
-            Add Staff
-          </button>
+          {!isMemberPortal && (
+            <button
+              onClick={() => {
+                setEditData(null);
+                setIsModalOpen(true);
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded bg-blue-500 px-4 py-2 text-sm text-white sm:w-auto"
+            >
+              <Plus size={18} />
+              Add Staff
+            </button>
+          )}
 
           <button
             onClick={loadStaff}
@@ -306,8 +331,11 @@ export default function Trainers() {
             <tr>
               <th className="p-3 text-sm font-semibold">Name</th>
               <th className="p-3 text-sm font-semibold">Email</th>
+              <th className="p-3 text-sm font-semibold">Phone</th>
               <th className="p-3 text-sm font-semibold">Role</th>
-              <th className="p-3 text-center text-sm font-semibold">Actions</th>
+              {!isMemberPortal && (
+                <th className="p-3 text-center text-sm font-semibold">Actions</th>
+              )}
             </tr>
           </thead>
 
@@ -316,29 +344,32 @@ export default function Trainers() {
               <tr key={t.id} className="border-t transition hover:bg-gray-50">
                 <td className="p-3 text-sm">{t.name}</td>
                 <td className="p-3 text-sm">{t.email}</td>
+                <td className="p-3 text-sm">{t.phoneNumber || "-"}</td>
                 <td className="p-3 text-sm">{formatRoleLabel(t.role)}</td>
-                <td className="p-3">
-                  <div className="flex justify-center gap-3">
-                    <button
-                      onClick={() => handleEdit(t)}
-                      className="text-blue-500"
-                    >
-                      <Edit3 size={18} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(t.id)}
-                      className="text-red-500"
-                    >
-                      <Trash size={18} />
-                    </button>
-                  </div>
-                </td>
+                {!isMemberPortal && (
+                  <td className="p-3">
+                    <div className="flex justify-center gap-3">
+                      <button
+                        onClick={() => handleEdit(t)}
+                        className="text-blue-500"
+                      >
+                        <Edit3 size={18} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(t.id)}
+                        className="text-red-500"
+                      >
+                        <Trash size={18} />
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
 
             {filtered.length === 0 && (
               <tr>
-                <td colSpan="4" className="p-4 text-center text-gray-500">
+                <td colSpan={isMemberPortal ? "3" : "4"} className="p-4 text-center text-gray-500">
                   {loading ? "Loading staff..." : "No staff found"}
                 </td>
               </tr>

@@ -72,21 +72,31 @@ export function extractToken(payload) {
 export function unwrapList(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.classes)) return payload.classes;
+  if (Array.isArray(payload?.gymClasses)) return payload.gymClasses;
   if (Array.isArray(payload?.users)) return payload.users;
   if (Array.isArray(payload?.members)) return payload.members;
   if (Array.isArray(payload?.plans)) return payload.plans;
+  if (Array.isArray(payload?.goals)) return payload.goals;
+  if (Array.isArray(payload?.result)) return payload.result;
+  if (Array.isArray(payload?.data?.data)) return payload.data.data;
+  if (Array.isArray(payload?.data?.goals)) return payload.data.goals;
+  if (Array.isArray(payload?.data?.classes)) return payload.data.classes;
+  if (Array.isArray(payload?.data?.gymClasses)) return payload.data.gymClasses;
   if (Array.isArray(payload?.data?.users)) return payload.data.users;
   if (Array.isArray(payload?.data?.members)) return payload.data.members;
   if (Array.isArray(payload?.data?.plans)) return payload.data.plans;
-  if (Array.isArray(payload?.result)) return payload.result;
+  if (Array.isArray(payload?.result?.data)) return payload.result.data;
   return [];
 }
 
 export function unwrapObject(payload) {
   if (!payload || typeof payload !== "object") return {};
   if (payload.data && !Array.isArray(payload.data)) return payload.data;
+  if (payload.data?.data && !Array.isArray(payload.data.data)) return payload.data.data;
   if (payload.user) return payload.user;
   if (payload.gym) return payload.gym;
+  if (payload.result && !Array.isArray(payload.result)) return payload.result;
   return payload;
 }
 
@@ -114,8 +124,19 @@ export async function getPlatformGyms() {
   return response.data;
 }
 
+export async function getPlatformGym(id) {
+  const response = await api.get(`/api/platform/gyms/${id}`);
+  return response.data;
+}
+
+export async function getProfile(token = null) {
+  const response = await api.get(`/api/profile`, getAuthConfig(token));
+  // Return the inner `data` object expected from the profile endpoint
+  return response.data?.data || response.data;
+}
+
 export async function updateGym(id, payload) {
-  const response = await api.put(`/api/platform/gyms/${id}`, payload);
+  const response = await api.patch(`/api/gym/${id}`, payload);
   return response.data;
 }
 
@@ -321,10 +342,176 @@ export async function subscribeToPlan(userId, planId, token) {
   return response.data;
 }
 
+// Nutrition APIs
+export async function getFoods(token = null) {
+  const response = await api.get("/api/nutrition/foods", getAuthConfig(token));
+  return response.data;
+}
+
+export async function getFoodById(foodId, token = null) {
+  const response = await api.get(`/api/nutrition/foods/${foodId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createFood(payload, token = null) {
+  const response = await api.post("/api/nutrition/foods", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateFood(foodId, payload, token = null) {
+  const response = await api.patch(`/api/nutrition/foods/${foodId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteFood(foodId, token = null) {
+  const response = await api.delete(`/api/nutrition/foods/${foodId}`, getAuthConfig(token));
+  return response.data;
+}
+
+// Meals
+export async function getMeals(token = null) {
+  const response = await api.get("/api/nutrition/meals", getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMealById(mealId, token = null) {
+  const response = await api.get(`/api/nutrition/meals/${mealId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createMeal(payload, token = null) {
+  const response = await api.post("/api/nutrition/meals", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateMeal(mealId, payload, token = null) {
+  const response = await api.patch(`/api/nutrition/meals/${mealId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteMeal(mealId, token = null) {
+  const response = await api.delete(`/api/nutrition/meals/${mealId}`, getAuthConfig(token));
+  return response.data;
+}
+
+// Meal Plans
+export async function getPlans(token = null) {
+  const response = await api.get("/api/nutrition/plans", getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPlanById(planId, token = null) {
+  const response = await api.get(`/api/nutrition/plans/${planId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createPlan(payload, token = null) {
+  const response = await api.post("/api/nutrition/plans", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updatePlan(planId, payload, token = null) {
+  const response = await api.patch(`/api/nutrition/plans/${planId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deletePlan(planId, token = null) {
+  const response = await api.delete(`/api/nutrition/plans/${planId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getNutritionAssignments(token = null) {
+  const response = await api.get(`/api/nutrition/assignments`, getAuthConfig(token));
+  return response.data;
+}
+
+// Nutrition Dashboard
+/**
+ * Gym-level nutrition dashboard
+ * GET /nutrition/dashboard
+ */
+export async function getNutritionDashboard(token = null) {
+  const response = await api.get(`/api/nutrition/dashboard`, getAuthConfig(token));
+  return response.data;
+}
+
+/**
+ * Member-level nutrition dashboard
+ * GET /nutrition/dashboard/member/:userId
+ */
+export async function getNutritionMemberDashboard(userId, token = null) {
+  const response = await api.get(`/api/nutrition/dashboard/member/${userId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createNutritionAssignment(payload, token = null) {
+  const response = await api.post(`/api/nutrition/assign`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateNutritionAssignment(assignmentId, payload, token = null) {
+  const response = await api.patch(`/api/nutrition/assign/${assignmentId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteNutritionAssignment(assignmentId, token = null) {
+  const response = await api.delete(`/api/nutrition/assign/${assignmentId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyDietLogs(params = {}, token = null) {
+  const response = await api.get(`/api/nutrition/my/logs`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getUserDietLogs(userId, params = {}, token = null) {
+  const response = await api.get(`/api/nutrition/users/${userId}/logs`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function createDietLog(payload, token = null) {
+  const response = await api.post(`/api/nutrition/diet-log`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateDietLog(logId, payload, token = null) {
+  const response = await api.patch(`/api/nutrition/diet-log/${logId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteDietLog(logId, token = null) {
+  const response = await api.delete(`/api/nutrition/diet-log/${logId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyGoals(token = null) {
+  const response = await api.get(`/api/nutrition/my/goals`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getUserGoals(userId, token = null) {
+  const response = await api.get(`/api/nutrition/goals/${userId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createGoal(payload, token = null) {
+  const response = await api.post(`/api/nutrition/goals`, payload, getAuthConfig(token));
+  return response.data;
+}
+
 // Class Management APIs
+const CLASS_API_BASE = "/api/class";
+const CLASS_API_PREFIX = `${CLASS_API_BASE}/classes`;
+
 export async function createClass(classData, token) {
   const response = await api.post(
-    "/api/class/",
+    CLASS_API_PREFIX,
     classData,
     getAuthConfig(token)
   );
@@ -333,7 +520,7 @@ export async function createClass(classData, token) {
 
 export async function getAllClasses(token) {
   const response = await api.get(
-    "/api/class/",
+    CLASS_API_PREFIX,
     getAuthConfig(token)
   );
   return response.data;
@@ -341,7 +528,7 @@ export async function getAllClasses(token) {
 
 export async function getClassById(classId, token) {
   const response = await api.get(
-    `/api/class/${classId}`,
+    `${CLASS_API_PREFIX}/${classId}`,
     getAuthConfig(token)
   );
   return response.data;
@@ -349,7 +536,7 @@ export async function getClassById(classId, token) {
 
 export async function updateClass(classId, classData, token) {
   const response = await api.patch(
-    `/api/class/${classId}`,
+    `${CLASS_API_PREFIX}/${classId}`,
     classData,
     getAuthConfig(token)
   );
@@ -358,34 +545,101 @@ export async function updateClass(classId, classData, token) {
 
 export async function deleteClass(classId, token = null) {
   const response = await api.delete(
-    `/api/class/${classId}`,
+    `${CLASS_API_PREFIX}/${classId}`,
     getAuthConfig(token)
   );
   return response.data;
 }
 
-export async function scheduleClass(classId, scheduleData, token) {
+export async function createClassSchedule(classId, scheduleData, token) {
   const response = await api.post(
-    `/api/class/${classId}/schedules`,
+    `${CLASS_API_PREFIX}/${classId}/schedules`,
     scheduleData,
     getAuthConfig(token)
   );
   return response.data;
 }
 
+export async function getClassSchedules(classId, token = null) {
+  const response = await api.get(
+    `${CLASS_API_PREFIX}/${classId}/schedules`,
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
+export async function createClassSlot(classId, slotData, token) {
+  const response = await api.post(
+    `${CLASS_API_PREFIX}/${classId}/slots`,
+    slotData,
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
+export async function scheduleClass(classId, scheduleData, token) {
+  return createClassSlot(classId, scheduleData, token);
+}
+
 export async function bookClass(classId, bookingData = {}, token) {
   const response = await api.post(
-    `/api/class/${classId}/book`,
+    `${CLASS_API_PREFIX}/${classId}/book`,
     bookingData,
     getAuthConfig(token)
   );
   return response.data;
 }
 
-export async function cancelBooking(bookingId, token) {
+export async function bookOneTimeClass(classId, bookingData = {}, token = null) {
+  return bookClass(
+    classId,
+    {
+      ...bookingData,
+      isPermanent: false,
+    },
+    token
+  );
+}
+
+export async function bookRecurringClass(classId, bookingData = {}, token = null) {
+  const recurringBookingData = { ...bookingData };
+  delete recurringBookingData.isPermanent;
+  return bookClass(classId, recurringBookingData, token);
+}
+
+export async function cancelClassBooking(classId, token = null) {
   const response = await api.patch(
-    `/api/class/bookings/${bookingId}/cancel`,
+    `${CLASS_API_PREFIX}/${classId}/book`,
     {},
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
+export async function cancelBooking(classId, token) {
+  return cancelClassBooking(classId, token);
+}
+
+export async function getSlotsBySchedule(scheduleId, token = null) {
+  const response = await api.get(
+    `${CLASS_API_BASE}/schedules/${scheduleId}/slots`,
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
+export async function updateClassSlot(slotId, payload, token = null) {
+  const response = await api.patch(
+    `${CLASS_API_BASE}/slots/${slotId}`,
+    payload,
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
+export async function deleteClassSlot(slotId, token = null) {
+  const response = await api.delete(
+    `${CLASS_API_BASE}/slots/${slotId}`,
     getAuthConfig(token)
   );
   return response.data;
@@ -393,7 +647,7 @@ export async function cancelBooking(bookingId, token) {
 
 export async function getMyBookings(token) {
   const response = await api.get(
-    "/api/class/my-bookings",
+    `${CLASS_API_PREFIX}/my-bookings`,
     getAuthConfig(token)
   );
   return response.data;
@@ -418,7 +672,7 @@ export async function getTrainerClasses(token) {
 
 export async function getClassBookings(classId, token) {
   const response = await api.get(
-    `/api/class/${classId}/bookings`,
+    `${CLASS_API_PREFIX}/${classId}/bookings`,
     getAuthConfig(token)
   );
   return response.data;
@@ -426,7 +680,7 @@ export async function getClassBookings(classId, token) {
 
 export async function getClassAttendance(classId, token) {
   const response = await api.get(
-    `/api/class/${classId}/attendance`,
+    `${CLASS_API_PREFIX}/${classId}/attendance`,
     getAuthConfig(token)
   );
   return response.data;

@@ -10,6 +10,7 @@ import Plans from "./pages/Plans";
 import Payments from "./pages/Payments";
 import ModuleManager from "./pages/ModuleManager";
 import PlatformGyms from "./pages/PlatformGyms";
+import Profile from "./pages/Profile";
 import Permissions from "./pages/Permissions";
 
 function ProtectedPage({ moduleKey, children }) {
@@ -90,6 +91,14 @@ export default function App() {
           element={
             <ProtectedPage moduleKey="gyms">
               <PlatformGyms />
+            </ProtectedPage>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedPage moduleKey="dashboard">
+              <Profile />
             </ProtectedPage>
           }
         />

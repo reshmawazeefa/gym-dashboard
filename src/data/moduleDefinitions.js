@@ -13,6 +13,7 @@ import {
   Salad,
   ShoppingBag,
   UserCheck,
+  Users,
   WalletCards,
 } from "lucide-react";
 
@@ -140,16 +141,7 @@ export const moduleDefinitions = {
         options: ["Assigned", "Review Due", "Completed"],
       },
     ],
-    seed: [
-      {
-        id: 1,
-        member: "Alex",
-        plan: "High Protein",
-        calories: "2200",
-        dietChart: "Eggs, rice bowl, chicken, salad",
-        status: "Assigned",
-      },
-    ],
+    seed: [],
     insights: ["Diet chart assignment", "Nutrition plans", "Member-specific calorie targets"],
   },
   products: {
@@ -420,12 +412,98 @@ export const moduleDefinitions = {
     seed: [],
     insights: ["Scheduled maintenance tasks", "Facility repairs and updates", "Completion tracking"],
   },
+  staff: {
+    title: "Staff Management",
+    description: "Manage gym staff, trainers, and administrative personnel with role assignments.",
+    storageKey: "staffMembers",
+    icon: Users,
+    primaryAction: "Add Staff",
+    fields: [
+      { name: "name", label: "Full Name", type: "text", placeholder: "John Doe" },
+      { name: "email", label: "Email", type: "email", placeholder: "john@gym.com" },
+      {
+        name: "role",
+        label: "Role",
+        type: "select",
+        options: ["Admin", "Trainer", "Receptionist", "Manager"],
+      },
+      { name: "phoneNumber", label: "Phone Number", type: "text", placeholder: "+1 (555) 000-0000" },
+      { name: "gender", label: "Gender", type: "select", options: ["Male", "Female", "Other"] },
+      { name: "dateOfBirth", label: "Date of Birth", type: "date" },
+      { name: "city", label: "City", type: "text", placeholder: "New York" },
+    ],
+    seed: [],
+    insights: ["Staff management", "Role-based assignments", "Trainer and administrative staff tracking"],
+  },
+  "meal-plans": {
+    title: "Meal Plans",
+    description: "Create and manage nutrition meal plans with multi-day scheduling and meal composition.",
+    storageKey: "mealPlans",
+    icon: Salad,
+    primaryAction: "Create Meal Plan",
+    apiEndpoint: "/nutrition/plans",
+    fields: [
+      { name: "name", label: "Plan Name", type: "text", placeholder: "Cutting Diet - 7 Day" },
+      {
+        name: "goal",
+        label: "Goal",
+        type: "select",
+        options: ["WEIGHT_LOSS", "WEIGHT_GAIN", "MAINTAIN_WEIGHT"],
+      },
+      { name: "duration", label: "Duration (days)", type: "number", placeholder: "7" },
+      {
+        name: "days",
+        label: "Days",
+        type: "json",
+        placeholder: "Array of day configurations with meals",
+      },
+    ],
+    seed: [
+      {
+        id: 1,
+        name: "Cutting Diet - 7 Day",
+        goal: "WEIGHT_LOSS",
+        duration: 7,
+        days: [
+          {
+            dayNumber: 1,
+            title: "Day 1",
+            notes: "Hydration focus",
+            meals: [
+              { mealId: "", mealType: "BREAKFAST", time: "08:00" },
+              { mealId: "", mealType: "LUNCH", time: "13:00" },
+            ],
+          },
+        ],
+      },
+    ],
+    insights: [
+      "Multi-day meal planning",
+      "Nutrition calculations per day",
+      "Scheduled meal composition",
+      "Goal-based diet customization",
+    ],
+    apiOperations: {
+      create: {
+        endpoint: "POST /nutrition/plans",
+        validation: [
+          "duration === days.length",
+          "At least one meal per day",
+          "Unique dayNumber per day",
+        ],
+      },
+      list: "GET /nutrition/plans",
+      read: "GET /nutrition/plans/:id",
+      update: "PATCH /nutrition/plans/:id",
+      delete: "DELETE /nutrition/plans/:id",
+    },
+  },
 };
 
 export const moduleGroups = [
   {
     title: "Operations",
-    items: ["attendance", "subscriptions", "classes", "workouts", "nutrition", "products", "facilities", "facility-maintenance"],
+    items: ["attendance", "subscriptions", "classes", "workouts", "nutrition", "meal-plans", "products", "facilities", "facility-maintenance", "staff"],
   },
   {
     title: "Business",

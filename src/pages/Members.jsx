@@ -80,6 +80,7 @@ export default function Members() {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+  const [updatingStatus, setUpdatingStatus] = useState({});
 
   const loadMembers = useCallback(async () => {
     try {
@@ -175,8 +176,26 @@ export default function Members() {
     }
   };
 
+  const handleStatusChange = async (member, newStatus) => {
+    const id = member.id;
+    try {
+      setUpdatingStatus((s) => ({ ...s, [id]: true }));
+      const payload = { isActive: newStatus === "Active" };
+      const response = await updateTenantUser(id, payload);
+      const updated = normaliseMember(unwrapObject(response));
+      const nextMembers = members.map((u) => (u.id === updated.id ? updated : u));
+      setMembers(nextMembers);
+      localStorage.setItem("members", JSON.stringify(nextMembers));
+      toast.success("Member status updated");
+    } catch (error) {
+      toast.error(getApiError(error, "Could not update status"));
+    } finally {
+      setUpdatingStatus((s) => ({ ...s, [id]: false }));
+    }
+  };
+
   const filteredMembers = members.filter((m) =>
-    [m.name, m.email, m.plan, m.status, m.role]
+    [m.name, m.email, m.phoneNumber, m.plan, m.status, m.role]
       .join(" ")
       .toLowerCase()
       .includes(searchTerm.toLowerCase())
@@ -228,6 +247,7 @@ export default function Members() {
             <tr>
               <th className="p-3">Name</th>
               <th className="p-3">Email</th>
+              <th className="p-3">Phone</th>
               <th className="hidden p-3 sm:table-cell">Join Date</th>
               <th className="p-3">Status</th>
               <th className="p-3 text-center text-sm font-semibold">Actions</th>
@@ -238,17 +258,22 @@ export default function Members() {
               <tr key={m.id} className="border-t">
                 <td className="p-3 text-sm">{m.name}</td>
                 <td className="p-3 text-sm">{m.email}</td>
+                <td className="p-3 text-sm">{m.phoneNumber || "-"}</td>
                 <td className="hidden p-3 sm:table-cell text-sm">{m.joinDate}</td>
                 <td className="p-3">
-                  <span
-                    className={`rounded px-2 py-1 text-sm ${
+                  <select
+                    value={m.status}
+                    onChange={(e) => handleStatusChange(m, e.target.value)}
+                    disabled={!!updatingStatus[m.id]}
+                    className={`rounded px-2 py-1 text-sm border focus:outline-none ${
                       m.status === "Active"
-                        ? "bg-green-100 text-green-600"
-                        : "bg-red-100 text-red-600"
+                        ? "bg-green-50 text-green-700"
+                        : "bg-red-50 text-red-700"
                     }`}
                   >
-                    {m.status}
-                  </span>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
                 </td>
                 <td className="p-3">
                   <div className="flex justify-center gap-3">

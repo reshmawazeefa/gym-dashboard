@@ -2,7 +2,6 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CalendarDays,
-  CheckCircle2,
   ChevronDown,
   ClipboardList,
   Dumbbell,
@@ -31,11 +30,9 @@ import {
   getUserWorkouts,
   getWorkoutDays,
   getWorkoutPlans,
-  getWorkoutProgress,
   getWorkoutTrainers,
   removeWorkoutDayExercise,
   removeWorkoutTrainerAssignment,
-  submitWorkoutProgress,
   updateExercise,
   updateWorkoutDay,
   updateWorkoutDayExercise,
@@ -43,11 +40,12 @@ import {
   unwrapList,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { canAccess, getStaffCategory, normalizeRole } from "../utils/rbac";
 
 const goals = ["WEIGHT_LOSS", "MUSCLE_GAIN", "STRENGTH", "ENDURANCE", "FAT_BURN"];
 const difficulties = ["BEGINNER", "INTERMEDIATE", "ADVANCED"];
+const muscleGroupOptions = ["CHEST", "BACK", "LEGS", "SHOULDERS", "ARMS", "CORE", "FULL_BODY"];
 const trainerRoles = ["PRIMARY", "ASSISTANT", "SUBSTITUTE"];
-const completionStatuses = ["IN_PROGRESS", "COMPLETED", "SKIPPED"];
 const inputClass =
   "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
 const textareaClass =
@@ -58,15 +56,22 @@ const primaryButtonClass =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
 const iconButtonClass =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
-const memberPlanGridClass = "lg:grid-cols-[2rem_minmax(12rem,1fr)_8rem_8rem_8rem_8rem_5rem]";
-const adminPlanGridClass = "lg:grid-cols-[2rem_minmax(12rem,1fr)_9rem_9rem_6rem_6rem_5rem]";
+const adminPlanGridClass = "lg:grid-cols-[2rem_minmax(12rem,1fr)_9rem_9rem_6rem_5rem]";
 
 function workoutRole(user) {
+  const normalizedRole = normalizeRole(user?.role, user?.loginType);
   const text = `${user?.loginType || ""} ${user?.role || ""} ${user?.staffRole || ""} ${user?.userRole || ""}`.toLowerCase();
-  if (text.includes("owner")) return "owner";
+
+  if (normalizedRole === "gym_owner" || normalizedRole === "platform_admin" || text.includes("owner")) return "owner";
+  if (normalizedRole === "staff") {
+    const staffCategory = getStaffCategory(user);
+    if (staffCategory === "admin") return "admin";
+    if (staffCategory === "trainer") return "trainer";
+    return staffCategory;
+  }
   if (text.includes("admin")) return "admin";
   if (text.includes("trainer")) return "trainer";
-  if (text.includes("member")) return "member";
+  if (normalizedRole === "member" || text.includes("member")) return "member";
   return "member";
 }
 
@@ -230,17 +235,6 @@ function planExerciseCount(plan) {
   return planDays(plan).reduce((total, day) => total + countOf(day.exercises || day.workoutExercises || day.items), 0);
 }
 
-function workoutExerciseName(item) {
-  return (
-    item?.workoutExercise?.exercise?.name ||
-    item?.exercise?.name ||
-    item?.workoutExercise?.exerciseName ||
-    item?.exerciseName ||
-    item?.name ||
-    "-"
-  );
-}
-
 function isMemberAssignment(assignment) {
   return Boolean(
     assignment?.member ||
@@ -302,10 +296,6 @@ function emptyConfig() {
   return { exerciseId: "", sets: "", reps: "", duration: "", restTime: "" };
 }
 
-function emptyProgress() {
-  return { workoutExerciseId: "", completedSets: "", completedReps: "", caloriesBurned: "", status: completionStatuses[0], notes: "" };
-}
-
 function Card({ children, className = "" }) {
   return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
 }
@@ -338,16 +328,17 @@ function SectionTitle({ icon, title, detail }) {
 export default function AdminWorkouts() {
   const { user } = useAuth();
   const role = workoutRole(user);
-  const canManage = role === "owner" || role === "admin" || role === "trainer";
-  const canManageAssignments = role === "owner" || role === "admin";
-  const canDelete = role === "owner" || role === "admin";
   const isMember = role === "member";
+  const isWorkoutManager = role === "owner" || role === "admin" || role === "trainer";
+  const canManage = !isMember && (isWorkoutManager || canAccess(user, "workouts", "create"));
+  const canEdit = !isMember && (canManage || canAccess(user, "workouts", "edit") || canAccess(user, "workouts", "update"));
+  const canManageAssignments = !isMember && (role === "owner" || role === "admin");
+  const canDelete = !isMember && (canAccess(user, "workouts", "delete") || canAccess(user, "workouts", "remove"));
 
   const [activeTab, setActiveTab] = useState("plans");
   const [plans, setPlans] = useState([]);
   const [days, setDays] = useState([]);
   const [exercises, setExercises] = useState([]);
-  const [progress, setProgress] = useState([]);
   const [members, setMembers] = useState([]);
   const [trainers, setTrainers] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -374,13 +365,12 @@ export default function AdminWorkouts() {
   const [configForm, setConfigForm] = useState(emptyConfig);
   const [trainerForm, setTrainerForm] = useState({ trainerId: "", role: trainerRoles[0] });
   const [memberForm, setMemberForm] = useState({ memberId: "", startDate: "", endDate: "" });
-  const [progressForm, setProgressForm] = useState(emptyProgress);
 
   const selectedPlan = plans.find((plan) => idOf(plan) === selectedPlanId);
   const selectedMember = members.find((member) => idOf(member) === memberForm.memberId);
   const selectedDay = days.find((day) => idOf(day) === selectedDayId);
   const dayExercises = selectedDay?.exercises || selectedDay?.workoutExercises || selectedDay?.items || [];
-  const muscleGroups = [...new Set(exercises.map((exercise) => exercise.muscleGroup).filter(Boolean))];
+  const muscleGroups = muscleGroupOptions;
   const selectedMemberAssignments = useMemo(() => {
     const explicitPlanAssignments = [
       ...listOf(selectedPlan, ["assignments"]),
@@ -490,7 +480,13 @@ export default function AdminWorkouts() {
       goal: goalFilter || undefined,
       difficulty: difficultyFilter || undefined,
     };
-    const response = isMember ? await getMyWorkoutAssignments(user?.token) : await getWorkoutPlans(params, user?.token);
+    let response;
+    try {
+      response = await getWorkoutPlans(params, user?.token);
+    } catch (error) {
+      if (!isMember) throw error;
+      response = await getMyWorkoutAssignments(user?.token);
+    }
     const nextPlans = listOf(response, ["plans", "workouts", "assignments"]).map(normalizeWorkoutPlan);
     const nextAssignments = listOf(response, ["assignments", "members", "memberAssignments", "workoutAssignments"]);
     setPlans(nextPlans);
@@ -503,14 +499,7 @@ export default function AdminWorkouts() {
     setExercises(listOf(response, ["exercises"]));
   };
 
-  const loadProgress = async () => {
-    if (!isMember) {
-      setProgress([]);
-      return;
-    }
-    const response = await getWorkoutProgress({}, user?.token);
-    setProgress(listOf(response, ["progress", "history", "records"]));
-  };
+
 
   const loadUsers = async () => {
     if (isMember) return;
@@ -546,8 +535,13 @@ export default function AdminWorkouts() {
     const loadInitial = async () => {
       try {
         setLoading(true);
-        const tasks = [loadPlans(), loadExercises(), loadProgress(), loadUsers()];
-        await Promise.all(tasks);
+        const results = await Promise.allSettled([loadPlans(), loadExercises(), loadUsers()]);
+        const plansResult = results[0];
+        if (plansResult.status === "rejected") throw plansResult.reason;
+        const sideLoadError = results.slice(1).find((result) => result.status === "rejected");
+        if (sideLoadError && isCurrent && !isMember) {
+          toast.error(getApiError(sideLoadError.reason, "Some workout module data could not be loaded"));
+        }
       } catch (error) {
         if (isCurrent) toast.error(getApiError(error, "Unable to load workout module"));
       } finally {
@@ -677,8 +671,8 @@ export default function AdminWorkouts() {
 
   const saveExercise = async (event) => {
     event.preventDefault();
-    if (!canManage || !exerciseForm.name.trim()) {
-      toast.error("Exercise name is required");
+    if (!canManage || !exerciseForm.name.trim() || !exerciseForm.muscleGroup) {
+      toast.error("Exercise name and muscle group are required");
       return;
     }
 
@@ -788,32 +782,6 @@ export default function AdminWorkouts() {
     }
   };
 
-  const saveProgress = async (event) => {
-    event.preventDefault();
-    if (!progressForm.workoutExerciseId) {
-      toast.error("Select a workout exercise");
-      return;
-    }
-
-    const payload = {
-      workoutExerciseId: progressForm.workoutExerciseId,
-      completedSets: progressForm.completedSets ? Number(progressForm.completedSets) : undefined,
-      completedReps: progressForm.completedReps ? Number(progressForm.completedReps) : undefined,
-      caloriesBurned: progressForm.caloriesBurned ? Number(progressForm.caloriesBurned) : undefined,
-      notes: progressForm.notes || undefined,
-      completed: progressForm.status === "COMPLETED",
-    };
-
-    try {
-      await submitWorkoutProgress(payload, user?.token);
-      setProgressForm(emptyProgress());
-      toast.success("Workout progress submitted");
-      await loadProgress();
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to submit progress"));
-    }
-  };
-
   const editPlan = (plan) => {
     setEditingPlanId(idOf(plan));
     setPlanForm({
@@ -860,16 +828,15 @@ export default function AdminWorkouts() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <SectionTitle
             icon={Dumbbell}
-            title={isMember ? "My Workouts" : "Workout Management"}
-            detail={isMember ? "View assigned workout plans, workout days, and progress tracking." : "Plans, workout days, exercise configuration, trainer assignment, member assignment, and progress tracking."}
+            title="Workout Management"
+            detail="Plans, workout days, exercise configuration, trainer assignment, and member assignment."
           />
           <div className="grid grid-cols-2 gap-2 sm:flex">
             {[
-              { key: "plans", label: isMember ? "Assigned" : "Plans" },
+              { key: "plans", label: "Plans" },
               { key: "days", label: "Days" },
-              { key: "exercises", label: "Exercises", hidden: isMember },
+              { key: "exercises", label: "Exercises" },
               { key: "assignments", label: "Assignments", hidden: isMember },
-              { key: "progress", label: "Progress" },
             ]
               .filter((tab) => !tab.hidden)
               .map((tab) => (
@@ -889,20 +856,12 @@ export default function AdminWorkouts() {
       </Card>
 
       <section className="grid gap-3 md:grid-cols-4">
-        {(isMember
-          ? [
-              { label: "Assigned Workouts", value: plans.length, icon: ClipboardList },
-              { label: "Workout Days", value: memberWorkoutDaysCount, icon: CalendarDays },
-              { label: "Plan Exercises", value: memberWorkoutExercisesCount, icon: Activity },
-              { label: "Progress Logs", value: progress.length, icon: CheckCircle2 },
-            ]
-          : [
-              { label: "Total Workouts", value: plans.length, icon: ClipboardList },
-              { label: "Total Exercises", value: exercises.length, icon: Activity },
-              { label: "Assigned Members", value: assignedMemberCount, icon: Users },
-              { label: "Active Trainers", value: assignedTrainerCount, icon: Dumbbell },
-            ]
-        ).map((card) => (
+        {[
+          { label: "Total Workouts", value: plans.length, icon: ClipboardList },
+          { label: "Total Exercises", value: exercises.length || memberWorkoutExercisesCount, icon: Activity },
+          { label: "Assigned Members", value: isMember ? plans.length : assignedMemberCount, icon: Users },
+          { label: "Active Trainers", value: assignedTrainerCount, icon: Dumbbell },
+        ].map((card) => (
           <Card key={card.label} className="p-4">
             <card.icon size={20} className="text-blue-600" />
             <div className="mt-3 flex items-center justify-between gap-3">
@@ -914,18 +873,18 @@ export default function AdminWorkouts() {
       </section>
 
       {activeTab === "plans" && (
-        <section className={isMember ? "space-y-4" : "grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]"}>
-          {!isMember && (
+        <section className={canManage ? "grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]" : "space-y-4"}>
+          {canManage && (
             <Card className="self-start p-3">
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold text-gray-950">{editingPlanId ? "Edit Plan" : "Create Plan"}</h3>
+                  <h3 className="font-semibold text-gray-950">{editingPlanId ? "Edit Workout" : "Create Workout"}</h3>
                   <p className="mt-1 text-xs leading-5 text-gray-500">Add workout basics.</p>
                 </div>
                 <Plus size={18} className="mt-0.5 text-gray-400" />
               </div>
               <form onSubmit={savePlan} className="grid gap-2">
-                <Field label="Plan Name">
+                <Field label="Workout Name">
                   <input className={inputClass} value={planForm.name} onChange={(event) => setPlanForm({ ...planForm, name: event.target.value })} placeholder="Strength Builder" />
                 </Field>
                 <div className="grid gap-2">
@@ -974,23 +933,21 @@ export default function AdminWorkouts() {
               </select>
             </div>
             <div className="divide-y divide-gray-100">
-              <div className={`hidden gap-3 bg-gray-100 px-4 py-3 text-xs font-semibold uppercase text-gray-500 lg:grid ${isMember ? memberPlanGridClass : adminPlanGridClass} lg:items-center`}>
+              <div className={`hidden gap-3 bg-gray-100 px-0 py-3 text-xs font-semibold uppercase text-gray-500 lg:grid ${adminPlanGridClass} lg:items-center`}>
                 <span aria-hidden="true"></span>
                 <span>Workout</span>
                 <span className="text-center">Goal</span>
                 <span className="text-center">Difficulty</span>
-                <span className="text-center">{isMember ? "Start" : "Duration"}</span>
-                <span className="text-center">{isMember ? "End" : "Trainers"}</span>
+                <span className="text-center">Duration</span>
                 <span className="text-center">Days</span>
               </div>
               {filteredPlans.map((plan) => {
                 const planId = idOf(plan);
-                const trainerCount = countOf(plan.trainers || plan.trainerAssignments);
                 const totalDays = countOf(plan.days || plan.workoutDays || plan.totalDays);
                 const isExpanded = expandedPlanId === planId;
                 return (
                   <div key={planId} className={selectedPlanId === planId ? "bg-blue-50/40" : "bg-white"}>
-                    <div className={`grid gap-3 px-4 py-3 ${isMember ? memberPlanGridClass : adminPlanGridClass} lg:items-center`}>
+                    <div className={`grid gap-3 px-0 py-3 ${adminPlanGridClass} lg:items-center`}>
                       <button
                         type="button"
                         onClick={() => { setSelectedPlanId(planId); setExpandedPlanId(isExpanded ? "" : planId); }}
@@ -1005,12 +962,8 @@ export default function AdminWorkouts() {
                       <span className="inline-flex h-7 items-center justify-center rounded-full bg-gray-100 px-3 text-xs font-semibold text-gray-700">{titleCase(metricValue(plan.goal))}</span>
                       <span className="inline-flex h-7 items-center justify-center rounded-full bg-blue-50 px-3 text-xs font-semibold text-blue-700">{titleCase(metricValue(plan.difficulty))}</span>
                       <div className="text-sm text-center">
-                        <span className="text-gray-500 lg:hidden">{isMember ? "Start: " : "Duration: "}</span>
-                        <span className="font-semibold text-gray-950">{isMember ? displayDate(assignmentStartDate(plan)) : metricValue(plan.duration)}</span>
-                      </div>
-                      <div className="text-sm text-center">
-                        <span className="text-gray-500 lg:hidden">{isMember ? "End: " : "Trainers: "}</span>
-                        <span className="font-semibold text-gray-950">{isMember ? displayDate(assignmentEndDate(plan)) : trainerCount}</span>
+                        <span className="text-gray-500 lg:hidden">Duration: </span>
+                        <span className="font-semibold text-gray-950">{metricValue(plan.duration)}</span>
                       </div>
                       <div className="text-sm text-center">
                         <span className="text-gray-500 lg:hidden">Days: </span>
@@ -1019,30 +972,58 @@ export default function AdminWorkouts() {
                     </div>
                     {isExpanded && (
                       <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
-                        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-                          <div>
-                            <p className="text-xs font-semibold uppercase text-gray-500">Description</p>
-                            <p className="mt-1 text-sm leading-6 text-gray-600">{plan.description || "No description added."}</p>
-                          </div>
-                          {!isMember && (
-                            <div className="flex flex-wrap gap-2 lg:justify-end">
-                            <button type="button" onClick={() => { setSelectedPlanId(planId); setActiveTab("days"); }} className={buttonClass}>
-                              View
-                            </button>
-                            <button type="button" onClick={() => editPlan(plan)} className={buttonClass}>
-                              <Pencil size={16} />
-                              Edit
-                            </button>
-                            <button type="button" onClick={() => { setSelectedPlanId(planId); setActiveTab("assignments"); }} className={buttonClass}>
-                              Assign Member
-                            </button>
-                            {canDelete && (
-                              <button type="button" onClick={() => void deleteWorkoutPlan(planId, user?.token).then(loadPlans).then(() => toast.success("Workout plan deleted")).catch((error) => toast.error(getApiError(error, "Unable to delete plan")))} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-50">
-                                <Trash size={16} />
-                                Delete
-                              </button>
+                        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+                          <div className="flex justify-between gap-5 lg:pe-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase text-gray-500">Description</p>
+                              <p className="mt-1 text-sm leading-6 text-gray-600">{plan.description || "No description added."}</p>
+                            </div>
+                            <div className="mt-0">
+                              <p className="text-xs font-semibold uppercase text-gray-500">Assigned Dates</p>
+                              <p className="mt-2 text-sm text-gray-500">
+                                {assignmentStartDate(plan) || assignmentEndDate(plan)
+                                  ? `${displayDate(assignmentStartDate(plan))} - ${displayDate(assignmentEndDate(plan))}`
+                                  : "No assignment window"}
+                              </p>
+                            </div>
+                            {!isMember && (
+                              <div className="mt-0">
+                                <p className="text-xs font-semibold uppercase text-gray-500">Trainers</p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {(plan.trainers || plan.trainerAssignments || []).length ? (
+                                    (plan.trainers || plan.trainerAssignments || []).map((t) => (
+                                      <span key={idOf(t)} className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700">{trainerAssignmentName(t)}</span>
+                                    ))
+                                  ) : (
+                                    <p className="text-sm text-gray-500">No trainers assigned</p>
+                                  )}
+                                </div>
+                              </div>
                             )}
                           </div>
+                          {!isMember && (
+                            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                              <button type="button" onClick={() => { setSelectedPlanId(planId); setActiveTab("days"); }} className="inline-flex h-8 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
+                                View
+                              </button>
+                              {canEdit && (
+                                <button type="button" onClick={() => editPlan(plan)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
+                                  <Pencil size={14} />
+                                  Edit
+                                </button>
+                              )}
+                              {canManage && (
+                                <button type="button" onClick={() => { setSelectedPlanId(planId); setActiveTab("assignments"); }} className="inline-flex h-8 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
+                                  Assign Member
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button type="button" onClick={() => void deleteWorkoutPlan(planId, user?.token).then(loadPlans).then(() => toast.success("Workout plan deleted")).catch((error) => toast.error(getApiError(error, "Unable to delete plan")))} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 px-3 text-xs font-medium text-red-700 transition hover:bg-red-50">
+                                  <Trash size={14} />
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1202,7 +1183,14 @@ export default function AdminWorkouts() {
               <SectionTitle icon={Activity} title={editingExerciseId ? "Edit Exercise" : "Create Exercise"} detail="Build the exercise library used by workout days." />
               <form onSubmit={saveExercise} className="mt-4 grid gap-3">
                 <Field label="Exercise Name"><input className={inputClass} value={exerciseForm.name} onChange={(event) => setExerciseForm({ ...exerciseForm, name: event.target.value })} placeholder="Bench Press" /></Field>
-                <Field label="Muscle Group"><input className={inputClass} value={exerciseForm.muscleGroup} onChange={(event) => setExerciseForm({ ...exerciseForm, muscleGroup: event.target.value })} placeholder="Chest" /></Field>
+                <Field label="Muscle Group">
+                  <select className={inputClass} value={exerciseForm.muscleGroup} onChange={(event) => setExerciseForm({ ...exerciseForm, muscleGroup: event.target.value })}>
+                    <option value="">Select muscle group</option>
+                    {muscleGroupOptions.map((group) => (
+                      <option key={group} value={group}>{titleCase(group)}</option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label="Video URL"><input className={inputClass} value={exerciseForm.videoUrl} onChange={(event) => setExerciseForm({ ...exerciseForm, videoUrl: event.target.value })} placeholder="https://..." /></Field>
                 <Field label="Calories"><input className={inputClass} type="number" value={exerciseForm.calories} onChange={(event) => setExerciseForm({ ...exerciseForm, calories: event.target.value })} /></Field>
                 <Field label="Instructions"><textarea className={textareaClass} value={exerciseForm.instructions} onChange={(event) => setExerciseForm({ ...exerciseForm, instructions: event.target.value })} /></Field>
@@ -1231,21 +1219,21 @@ export default function AdminWorkouts() {
                 </div>
                 <select className={inputClass} value={muscleFilter} onChange={(event) => setMuscleFilter(event.target.value)}>
                   <option value="">All Muscle Groups</option>
-                  {muscleGroups.map((muscle) => <option key={muscle}>{muscle}</option>)}
+                  {muscleGroups.map((muscle) => <option key={muscle} value={muscle}>{titleCase(muscle)}</option>)}
                 </select>
               </div>
             </div>
             <div className="p-4">
               <div className="overflow-x-auto rounded-md border border-gray-200">
-                <table className="min-w-[44rem] w-full text-left text-sm">
+                <table className="min-w-[32rem] w-full text-left text-xs">
                   <thead className="bg-gray-100 text-xs uppercase text-gray-500">
                     <tr>
-                      <th className="w-10 p-3"></th>
-                      <th className="p-3">Exercise</th>
-                      <th className="p-3">Muscle Group</th>
-                      <th className="p-3 text-center">Calories</th>
-                      <th className="p-3 text-center">Video</th>
-                      {canManage && <th className="p-3 text-right">Actions</th>}
+                      <th className="w-6 p-2"></th>
+                      <th className="p-2">Exercise</th>
+                      <th className="p-2 text-center">Group</th>
+                      <th className="p-2 text-center">Cal</th>
+                      <th className="p-2 text-center">Video</th>
+                      {canManage && <th className="p-2 text-right">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
@@ -1255,50 +1243,50 @@ export default function AdminWorkouts() {
                       return (
                         <Fragment key={exerciseId}>
                           <tr key={exerciseId} className="hover:bg-gray-50">
-                            <td className="p-3">
+                            <td className="p-2">
                               <button
                                 type="button"
-                                className={iconButtonClass}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
                                 onClick={() => setExpandedExerciseId(isExpanded ? "" : exerciseId)}
                                 aria-label={isExpanded ? "Collapse exercise details" : "Expand exercise details"}
                               >
-                                <ChevronDown size={17} className={`transition ${isExpanded ? "rotate-180" : ""}`} />
+                                <ChevronDown size={14} className={`transition ${isExpanded ? "rotate-180" : ""}`} />
                               </button>
                             </td>
-                            <td className="p-3">
-                              <p className="max-w-64 truncate font-semibold text-gray-950">{exercise.name || "Untitled exercise"}</p>
-                              <p className="mt-1 max-w-64 truncate text-xs text-gray-500">{exercise.instructions || "No instructions added."}</p>
+                            <td className="p-2">
+                              <p className="max-w-40 truncate font-medium text-gray-950">{exercise.name || "Untitled"}</p>
+                              <p className="truncate text-xs text-gray-400">{exercise.instructions ? exercise.instructions.slice(0, 30) : "-"}</p>
                             </td>
-                            <td className="p-3">
-                              <span className="inline-flex h-7 items-center rounded-full bg-gray-100 px-2 text-xs font-semibold text-gray-700">{metricValue(exercise.muscleGroup)}</span>
+                            <td className="p-2 text-center">
+                              <span className="inline-flex h-6 items-center rounded-full bg-gray-100 px-1.5 text-xs font-medium text-gray-700">{metricValue(exercise.muscleGroup)}</span>
                             </td>
-                            <td className="p-3 text-center font-medium text-gray-700">{metricValue(exercise.calories || exercise.caloriesBurned)}</td>
-                            <td className="p-3 text-center">
-                              <span className={`inline-flex h-7 items-center rounded-full px-2 text-xs font-semibold ${exercise.videoUrl ? "bg-blue-50 text-blue-700" : "bg-gray-100 text-gray-500"}`}>
-                                {exercise.videoUrl ? "Added" : "None"}
+                            <td className="p-2 text-center text-xs font-medium text-gray-700">{metricValue(exercise.calories || exercise.caloriesBurned)}</td>
+                            <td className="p-2 text-center">
+                              <span className={`inline-flex h-6 items-center rounded-full px-1.5 text-xs font-medium ${exercise.videoUrl ? "bg-blue-50 text-blue-700" : "bg-gray-100 text-gray-400"}`}>
+                                {exercise.videoUrl ? "Yes" : "No"}
                               </span>
                             </td>
                             {canManage && (
-                              <td className="p-3">
-                                <div className="flex justify-end gap-1">
-                                  <button type="button" className={iconButtonClass} onClick={() => editExercise(exercise)} aria-label="Edit exercise"><Pencil size={16} /></button>
-                                  {canDelete && <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50" onClick={() => void deleteExercise(exerciseId, user?.token).then(loadExercises).then(() => toast.success("Exercise deleted")).catch((error) => toast.error(getApiError(error, "Unable to delete exercise")))} aria-label="Delete exercise"><Trash size={16} /></button>}
+                              <td className="p-2">
+                                <div className="flex justify-end gap-0.5">
+                                  <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100" onClick={() => editExercise(exercise)} aria-label="Edit exercise"><Pencil size={14} /></button>
+                                  {canDelete && <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50" onClick={() => void deleteExercise(exerciseId, user?.token).then(loadExercises).then(() => toast.success("Exercise deleted")).catch((error) => toast.error(getApiError(error, "Unable to delete exercise")))} aria-label="Delete exercise"><Trash size={14} /></button>}
                                 </div>
                               </td>
                             )}
                           </tr>
                           {isExpanded && (
                             <tr key={`${exerciseId}-details`} className="bg-gray-50">
-                              <td className="p-3"></td>
-                              <td colSpan={canManage ? 5 : 4} className="p-4">
-                                <div className="grid gap-4 md:grid-cols-2">
+                              <td className="p-2"></td>
+                              <td colSpan={canManage ? 5 : 4} className="p-3">
+                                <div className="grid gap-3 md:grid-cols-2">
                                   <div>
                                     <p className="text-xs font-semibold uppercase text-gray-500">Instructions</p>
-                                    <p className="mt-1 text-sm leading-6 text-gray-600">{exercise.instructions || "No instructions added."}</p>
+                                    <p className="mt-1 text-xs leading-5 text-gray-600 line-clamp-2">{exercise.instructions || "No instructions added."}</p>
                                   </div>
                                   <div>
-                                    <p className="text-xs font-semibold uppercase text-gray-500">Video URL</p>
-                                    <p className="mt-1 break-all text-sm leading-6 text-gray-600">{exercise.videoUrl || "No video URL added."}</p>
+                                    <p className="text-xs font-semibold uppercase text-gray-500">Video</p>
+                                    <p className="mt-1 break-all text-xs leading-5 text-blue-600">{exercise.videoUrl ? <a href={exercise.videoUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">View video</a> : "None"}</p>
                                   </div>
                                 </div>
                               </td>
@@ -1308,7 +1296,7 @@ export default function AdminWorkouts() {
                       );
                     })}
                     {!filteredExercises.length && (
-                      <tr><td colSpan={canManage ? 6 : 5} className="p-8 text-center text-gray-500">No exercises found.</td></tr>
+                      <tr><td colSpan={canManage ? 6 : 5} className="p-4 text-center text-xs text-gray-500">No exercises found.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1429,65 +1417,7 @@ export default function AdminWorkouts() {
         </section>
       )}
 
-      {activeTab === "progress" && (
-        <section className={`grid gap-5 ${isMember ? "xl:grid-cols-[24rem_minmax(0,1fr)]" : ""}`}>
-          {isMember && (
-            <Card className="p-4">
-              <SectionTitle icon={CheckCircle2} title="Progress Tracking" detail="Submit completed sets, reps, calories, notes, and completion status." />
-              <form onSubmit={saveProgress} className="mt-4 grid gap-3">
-                <Field label="Workout Exercise">
-                  <select className={inputClass} value={progressForm.workoutExerciseId} onChange={(event) => setProgressForm({ ...progressForm, workoutExerciseId: event.target.value })}>
-                    <option value="">Select configured exercise</option>
-                    {days.flatMap((day) => day.exercises || day.workoutExercises || []).map((item) => <option key={idOf(item)} value={idOf(item)}>{workoutExerciseName(item)}</option>)}
-                  </select>
-                </Field>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Completed Sets"><input className={inputClass} type="number" value={progressForm.completedSets} onChange={(event) => setProgressForm({ ...progressForm, completedSets: event.target.value })} /></Field>
-                  <Field label="Completed Reps"><input className={inputClass} type="number" value={progressForm.completedReps} onChange={(event) => setProgressForm({ ...progressForm, completedReps: event.target.value })} /></Field>
-                </div>
-                <Field label="Calories Burned"><input className={inputClass} type="number" value={progressForm.caloriesBurned} onChange={(event) => setProgressForm({ ...progressForm, caloriesBurned: event.target.value })} /></Field>
-                <Field label="Completion Status"><select className={inputClass} value={progressForm.status} onChange={(event) => setProgressForm({ ...progressForm, status: event.target.value })}>{completionStatuses.map((status) => <option key={status} value={status}>{titleCase(status)}</option>)}</select></Field>
-                <Field label="Notes"><textarea className={textareaClass} value={progressForm.notes} onChange={(event) => setProgressForm({ ...progressForm, notes: event.target.value })} /></Field>
-                <button type="submit" className={primaryButtonClass}>Submit Progress</button>
-              </form>
-            </Card>
-          )}
 
-          <Card className="overflow-hidden">
-            <div className="border-b border-gray-200 p-4">
-              <h3 className="font-semibold text-gray-950">Progress History</h3>
-              <p className="mt-1 text-sm text-gray-500">Member workout progress entries returned by the API.</p>
-            </div>
-            <div className="overflow-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-gray-100 text-xs uppercase text-gray-500">
-                  <tr>
-                    <th className="p-3">Exercise</th>
-                    <th className="p-3">Sets</th>
-                    <th className="p-3">Reps</th>
-                    <th className="p-3">Calories</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {progress.map((item) => (
-                    <tr key={idOf(item)}>
-                      <td className="p-3 font-medium text-gray-950">{workoutExerciseName(item)}</td>
-                      <td className="p-3">{metricValue(item.completedSets)}</td>
-                      <td className="p-3">{metricValue(item.completedReps)}</td>
-                      <td className="p-3">{metricValue(item.caloriesBurned)}</td>
-                      <td className="p-3">{metricValue(item.status)}</td>
-                      <td className="p-3">{metricValue(item.notes)}</td>
-                    </tr>
-                  ))}
-                  {!progress.length && <tr><td colSpan={6} className="p-8 text-center text-gray-500">No progress history found.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </section>
-      )}
     </div>
   );
 }

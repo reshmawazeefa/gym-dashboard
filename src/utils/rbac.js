@@ -3,7 +3,7 @@ export const ACTIONS = ["view", "create", "edit", "delete"];
 export const MODULE_PERMISSIONS = [
   { key: "dashboard", label: "Dashboard", actions: ["view"] },
   { key: "members", label: "Members", actions: ["read", "create", "update", "delete"] },
-  { key: "plans", label: "Plans & Renewal", actions: ["read", "create", "update", "delete"] },
+  { key: "plans", label: "Our Packages", actions: ["read", "create", "update", "delete"] },
   { key: "payments", label: "Payments", actions: ["read", "create", "update"] },
   { key: "staff", label: "Staff", actions: ["read", "create", "update", "delete"] },
   { key: "permissions", label: "Permissions", actions: ["read", "assign", "remove"] },
@@ -149,7 +149,7 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       payments: ["view", "create", "edit"],
       attendance: ["view", "create"],
       subscriptions: ["view", "create", "edit"],
-      classes: ["view"],
+      classes: ["view", "create", "edit", "delete"],
       communication: ["view", "create"],
       reminders: ["view", "create", "edit"],
     }

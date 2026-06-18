@@ -22,9 +22,9 @@ function normaliseGym(gym) {
 
   return {
     id: gym.id || gym._id || gym.gymId || gym.email,
-    gymName: gym.gymName || gym.name || gym.gym?.name || "-",
+    gymName: gym.name || gym.gymName || gym.gym?.name || "-",
     ownerName:
-      gym.ownerName || gym.owner?.name || gym.owner || owner?.name || "-",
+      gym.ownerName || owner?.name || gym.owner?.name || gym.owner || "-",
     email:
       gym.email || gym.ownerEmail || gym.owner?.email || owner?.email || "-",
     status: gym.status || (gym.isActive === false ? "Inactive" : "Active"),

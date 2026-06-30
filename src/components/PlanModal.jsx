@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const PLAN_TYPE_DURATIONS = {
   DAILY: 1,
@@ -17,27 +17,44 @@ function emptyPlanForm() {
     duration: PLAN_TYPE_DURATIONS[DEFAULT_PLAN_TYPE],
     description: "",
     planType: DEFAULT_PLAN_TYPE,
-    features: "",
+    featureIds: [],
   };
 }
 
-function planFormFromEditData(editData) {
+function planFormFromEditData(editData, featuresList = []) {
   if (!editData) return emptyPlanForm();
 
   const planType = editData.planType || DEFAULT_PLAN_TYPE;
 
+  let featureIds = editData.featureIds;
+  if (!featureIds && editData.features) {
+    const featureNames = Array.isArray(editData.features)
+      ? editData.features
+      : String(editData.features || "")
+          .split(",")
+          .map((f) => f.trim())
+          .filter(Boolean);
+    featureIds = featuresList
+      .filter((f) => featureNames.includes(f.name))
+      .map((f) => f.id);
+  }
+
   return {
-    ...editData,
+    name: editData.name || "",
+    price: editData.price ?? "",
     duration: PLAN_TYPE_DURATIONS[planType] || editData.duration || "",
-    features: Array.isArray(editData.features)
-      ? editData.features.join(", ")
-      : editData.features || "",
+    description: editData.description || "",
     planType,
+    featureIds: featureIds || [],
   };
 }
 
-export default function PlanModal({ isOpen, onClose, onSave, editData }) {
-  const [form, setForm] = useState(() => planFormFromEditData(editData));
+export default function PlanModal({ isOpen, onClose, onSave, editData, featuresList = [] }) {
+  const [form, setForm] = useState(() => planFormFromEditData(editData, featuresList));
+
+  useEffect(() => {
+    setForm(planFormFromEditData(editData, featuresList));
+  }, [editData, featuresList]);
 
   if (!isOpen) return null;
 
@@ -45,19 +62,28 @@ export default function PlanModal({ isOpen, onClose, onSave, editData }) {
     if (!form.name || !form.price || !form.duration || !form.planType) return;
 
     onSave({
-      ...form,
-      duration: PLAN_TYPE_DURATIONS[form.planType],
-      features: form.features
-        .split(",")
-        .map((feature) => feature.trim())
-        .filter(Boolean),
+      name: form.name,
+      price: form.price,
+      duration: form.duration,
+      description: form.description,
+      planType: form.planType,
+      featureIds: form.featureIds,
     });
     onClose();
   };
 
+  const toggleFeature = (featureId) => {
+    setForm((prev) => ({
+      ...prev,
+      featureIds: prev.featureIds.includes(featureId)
+        ? prev.featureIds.filter((id) => id !== featureId)
+        : [...prev.featureIds, featureId],
+    }));
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
-      <div className="bg-white p-6 rounded w-full max-w-md">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white p-6 rounded w-full max-w-md max-h-[90vh] overflow-y-auto">
 
         <h2 className="text-lg font-bold mb-4">
           {editData ? "Edit Plan" : "Add Plan"}
@@ -122,20 +148,34 @@ export default function PlanModal({ isOpen, onClose, onSave, editData }) {
           <option value="YEARLY">YEARLY</option>
         </select>
 
-        <textarea
-          placeholder="Features (comma separated, e.g. trainer, diet, steam)"
-          className="w-full border p-2 mb-4"
-          value={form.features}
-          onChange={(e) =>
-            setForm({ ...form, features: e.target.value })
-          }
-        />
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Features
+        </label>
+        {featuresList.length === 0 ? (
+          <p className="mb-3 text-sm text-gray-500">No features available. Create features in the Features tab first.</p>
+        ) : (
+          <div className="mb-4 max-h-48 overflow-y-auto border rounded p-2 space-y-1">
+            {featuresList.map((feature) => (
+              <label key={feature.id} className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.featureIds.includes(feature.id)}
+                  onChange={() => toggleFeature(feature.id)}
+                  className="accent-blue-600"
+                />
+                {feature.name}
+              </label>
+            ))}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose}>Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded">
+            Cancel
+          </button>
           <button
             onClick={handleSubmit}
-            className="bg-blue-500 text-white px-4 py-1 rounded"
+            className="bg-blue-500 text-white px-4 py-2 text-sm rounded"
           >
             {editData ? "Update" : "Save"}
           </button>

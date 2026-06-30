@@ -35,6 +35,8 @@ const primaryLinks = [
   { to: "/trainers", label: "Staff", icon: Dumbbell, moduleKey: "staff" },
   { to: "/permissions", label: "Permissions", icon: LockKeyhole, moduleKey: "permissions" },
   { to: "/platform/gyms", label: "Gyms", icon: Building2, moduleKey: "gyms" },
+  { to: "/platform/saas-plans", label: "SaaS Plans", icon: ClipboardList, moduleKey: "saas-plans" },
+  { to: "/platform/saas-features", label: "SaaS Features", icon: Code2, moduleKey: "saas-features" },
 ];
 
 const moduleSections = [
@@ -49,6 +51,7 @@ const moduleSections = [
       { to: "/modules/products", label: "Products", icon: ShoppingBag, moduleKey: "products" },
       { to: "/modules/facilities", label: "Facilities", icon: ClipboardList, moduleKey: "facilities" },
       { to: "/modules/facility-maintenance", label: "Facility Maintenance", icon: ClipboardList, moduleKey: "facility-maintenance" },
+      { to: "/modules/equipments", label: "Equipments", icon: Dumbbell, moduleKey: "equipments" },
     ],
   },
   {
@@ -69,10 +72,12 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
   const [collapsed, setCollapsed] = useState(false);
   const showFullNav = !collapsed || mobileOpen;
   const isGymOwner = normalizeRole(user?.role, user?.loginType) === "gym_owner";
+  const isPlatformAdmin = normalizeRole(user?.role, user?.loginType) === "platform_admin";
 
   const primaryNavLinks = [];
   primaryLinks.forEach((link) => {
     if (link.moduleKey === "gyms" && isGymOwner) return;
+    if (link.moduleKey === "plans" && isPlatformAdmin) return;
     primaryNavLinks.push(link);
   });
 

@@ -349,6 +349,22 @@ export default function Dashboard() {
   const isMember = userRole === "member";
   const alerts = getDashboardNotifications();
   const { stats, staffCount, revenueData, attendanceData, membershipData, planData } = getDashboardData();
+  const [liveAttendance, setLiveAttendance] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { getAttendanceDashboard } = await import("../services/api");
+        const data = await getAttendanceDashboard(user?.token);
+        if (!cancelled) setLiveAttendance(data?.data || data);
+      } catch {
+        // silently fail
+      }
+    };
+    if (!isMember) void load();
+    return () => { cancelled = true; };
+  }, [user?.token, isMember]);
 
   // replace stats for member portal: hide total members
   const visibleStats = isMember
@@ -398,6 +414,57 @@ export default function Dashboard() {
           );
         })}
       </section>
+
+      {liveAttendance && (
+        <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+                <QrCode size={20} />
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-950">Live Attendance</h2>
+                <p className="text-sm text-gray-500">Today's check-in activity at a glance</p>
+              </div>
+            </div>
+            <Link to="/modules/attendance" className="text-sm font-medium text-blue-600 hover:text-blue-700">
+              View All &rarr;
+            </Link>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div>
+              <p className="text-xs font-medium text-gray-500">Today Check-Ins</p>
+              <p className="mt-1 text-2xl font-bold text-gray-950">{liveAttendance.today?.checkIns ?? "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">Active Sessions</p>
+              <p className="mt-1 text-2xl font-bold text-emerald-700">{liveAttendance.today?.activeSessions ?? "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">Week to Date</p>
+              <p className="mt-1 text-2xl font-bold text-gray-950">
+                {liveAttendance.weekToDate?.checkIns ?? "-"}
+                {liveAttendance.weekToDate?.vsLastWeek != null && (
+                  <span className={`ml-2 text-sm font-medium ${liveAttendance.weekToDate.vsLastWeek >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                    {liveAttendance.weekToDate.vsLastWeek >= 0 ? "+" : ""}{liveAttendance.weekToDate.vsLastWeek}%
+                  </span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">Month to Date</p>
+              <p className="mt-1 text-2xl font-bold text-gray-950">
+                {liveAttendance.monthToDate?.checkIns ?? "-"}
+                {liveAttendance.monthToDate?.vsLastMonth != null && (
+                  <span className={`ml-2 text-sm font-medium ${liveAttendance.monthToDate.vsLastMonth >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                    {liveAttendance.monthToDate.vsLastMonth >= 0 ? "+" : ""}{liveAttendance.monthToDate.vsLastMonth}%
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-[1.5fr_1fr]">
         <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">

@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowUpDown,
   BarChart3,
   CalendarDays,
   CheckCircle2,
@@ -13,18 +14,32 @@ import {
   LogOut,
   Pencil,
   Search,
-  SlidersHorizontal,
   ShieldCheck,
   Timer,
   Trash,
+  Upload,
   UserRoundX,
   Users,
   X,
 } from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  Legend,
+} from "recharts";
 import toast from "react-hot-toast";
 import {
   adminCheckIn,
   adminCheckOut,
+  bulkCheckIn,
+  bulkImportAttendance,
   deleteAttendance,
   exportAttendance,
   filterAttendance,
@@ -32,37 +47,57 @@ import {
   getActiveAttendance,
   getApiError,
   getAttendanceByDate,
+  getAttendanceComparison,
   getAttendanceMemberSummary,
   getAttendanceStats,
+  getAttendanceTrends,
   getLateCheckIns,
   getMonthlyAttendanceReport,
+  getOccupancyReport,
+  getPeakHours,
+  getQuarterlyAttendanceReport,
+  getRetentionMetrics,
   getTenantUsers,
   getTodayAttendance,
   getTrainerAttendance,
   getUserAttendance,
+  getWeeklyAttendanceReport,
+  getYearlyAttendanceReport,
   updateAttendance,
   unwrapList,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { canAccess } from "../utils/rbac";
 
 const today = new Date().toISOString().slice(0, 10);
 
-const endpoints = [
-  { key: "filter", owner: true, admin: true, trainer: true, member: false },
-  { key: "today", owner: true, admin: true, trainer: true, member: false },
-  { key: "user", owner: true, admin: true, trainer: true, member: true },
-  { key: "stats", owner: true, admin: true, trainer: false, member: false },
-  { key: "active", owner: true, admin: true, trainer: true, member: false },
-  { key: "update", owner: true, admin: true, trainer: false, member: false },
-  { key: "delete", owner: true, admin: false, trainer: false, member: false },
-  { key: "monthly", owner: true, admin: true, trainer: false, member: false },
-  { key: "summary", owner: true, admin: true, trainer: true, member: true },
-  { key: "absent", owner: true, admin: true, trainer: true, member: false },
-  { key: "export", owner: true, admin: true, trainer: false, member: false },
-  { key: "date", owner: true, admin: true, trainer: true, member: false },
-  { key: "trainer", owner: true, admin: true, trainer: true, member: false },
-  { key: "late", owner: true, admin: true, trainer: false, member: false },
-];
+const ATTENDANCE_PERMISSIONS = {
+  list: { action: "view", label: "All Records" },
+  filter: { action: "view", label: "Filter" },
+  today: { action: "view", label: "Today" },
+  user: { action: "view", label: "User History" },
+  stats: { action: "view", label: "Stats" },
+  active: { action: "view", label: "Active" },
+  update: { action: "update", label: "Update" },
+  delete: { action: "delete", label: "Delete" },
+  monthly: { action: "view", label: "Monthly Report" },
+  weekly: { action: "view", label: "Weekly Report" },
+  quarterly: { action: "view", label: "Quarterly Report" },
+  yearly: { action: "view", label: "Yearly Report" },
+  trends: { action: "view", label: "Trends" },
+  peakHours: { action: "view", label: "Peak Hours" },
+  comparison: { action: "view", label: "Comparison" },
+  retention: { action: "view", label: "Retention" },
+  occupancy: { action: "view", label: "Occupancy" },
+  summary: { action: "view", label: "Member Summary" },
+  absent: { action: "view", label: "Absent" },
+  export: { action: "export", label: "Export" },
+  mark: { action: "mark", label: "Mark Attendance" },
+  forceCheckout: { action: "force.checkout", label: "Force Checkout" },
+  date: { action: "view", label: "By Date" },
+  trainer: { action: "view", label: "Trainer" },
+  late: { action: "view", label: "Late" },
+};
 
 const inputClass =
   "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
@@ -77,18 +112,10 @@ const softButtonClass =
 const primaryButtonClass =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
 
-function attendanceRole(user) {
-  const text = `${user?.loginType || ""} ${user?.role || ""} ${user?.staffRole || ""} ${user?.userRole || ""}`.toLowerCase();
-  if (text.includes("owner")) return "owner";
-  if (text.includes("member")) return "member";
-  if (text.includes("trainer")) return "trainer";
-  if (text.includes("admin") || text.includes("staff")) return "admin";
-  return "member";
-}
-
-function canUse(role, key) {
-  const row = endpoints.find((item) => item.key === key);
-  return Boolean(row?.[role]);
+function can(user, key) {
+  const perm = ATTENDANCE_PERMISSIONS[key];
+  if (!perm) return false;
+  return canAccess(user, "attendance", perm.action);
 }
 
 function userIdOf(user) {
@@ -243,8 +270,17 @@ function EmptyState({ title, detail }) {
 
 export default function AdminAttendance() {
   const { user } = useAuth();
-  const role = attendanceRole(user);
   const ownUserId = userIdOf(user);
+
+  const canView = can(user, "list");
+  const canMark = can(user, "mark");
+  const canUpdate = can(user, "update");
+  const canDelete = can(user, "delete");
+  const canExport = can(user, "export");
+  const canForceCheckout = can(user, "forceCheckout");
+  const canViewReports = can(user, "monthly");
+  const canViewSummary = can(user, "summary");
+
   const [users, setUsers] = useState([]);
   const [records, setRecords] = useState([]);
   const [metrics, setMetrics] = useState({});
@@ -252,13 +288,22 @@ export default function AdminAttendance() {
   const [lateCount, setLateCount] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState({});
   const [memberSummary, setMemberSummary] = useState({});
-  const [activeTab, setActiveTab] = useState(role === "member" ? "self" : "records");
+  const [weeklyReport, setWeeklyReport] = useState(null);
+  const [quarterlyReport, setQuarterlyReport] = useState(null);
+  const [yearlyReport, setYearlyReport] = useState(null);
+  const [trendsData, setTrendsData] = useState(null);
+  const [peakHoursData, setPeakHoursData] = useState(null);
+  const [comparisonData, setComparisonData] = useState(null);
+  const [retentionData, setRetentionData] = useState(null);
+  const [occupancyData, setOccupancyData] = useState(null);
+  const [activeTab, setActiveTab] = useState("records");
+  const [reportsSubTab, setReportsSubTab] = useState("monthly");
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [tableSearch, setTableSearch] = useState("");
   const [expandedId, setExpandedId] = useState("");
-  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [userType, setUserType] = useState("MEMBER");
   const [filters, setFilters] = useState({
@@ -278,11 +323,32 @@ export default function AdminAttendance() {
     month: String(new Date().getMonth() + 1),
     year: String(new Date().getFullYear()),
   });
+  const [weeklyQuery, setWeeklyQuery] = useState({
+    year: String(new Date().getFullYear()),
+    week: String(Math.ceil((new Date().getDate() + new Date(new Date().getFullYear(), 0, 1).getDay()) / 7)),
+  });
+  const [quarterlyQuery, setQuarterlyQuery] = useState({
+    year: String(new Date().getFullYear()),
+    quarter: String(Math.ceil((new Date().getMonth() + 1) / 3)),
+  });
+  const [yearlyQuery, setYearlyQuery] = useState({ year: String(new Date().getFullYear()) });
+  const [trendsQuery, setTrendsQuery] = useState({ days: "30" });
+  const [peakHoursQuery, setPeakHoursQuery] = useState({ date: new Date().toISOString().slice(0, 10) });
+  const [comparisonQuery, setComparisonQuery] = useState({
+    period1Start: "",
+    period1End: "",
+    period2Start: "",
+    period2End: "",
+  });
+  const [retentionQuery, setRetentionQuery] = useState({ days: "90" });
+  const [occupancyQuery, setOccupancyQuery] = useState({ date: new Date().toISOString().slice(0, 10) });
   const [editRecord, setEditRecord] = useState(null);
   const [editForm, setEditForm] = useState({ checkIn: "", checkOut: "", status: "COMPLETED" });
+  const [bulkRecords, setBulkRecords] = useState("");
+  const [bulkImportResult, setBulkImportResult] = useState(null);
+  const [bulkCheckInUserIds, setBulkCheckInUserIds] = useState([]);
 
-  const canManageCheckIn = role === "owner";
-  const canShowReports = canUse(role, "monthly") || canUse(role, "summary") || canUse(role, "export");
+  const isMember = !canMark && canView;
   const filteredUsers = users.filter((item) =>
     [item.name, item.email, userIdOf(item)].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -300,7 +366,7 @@ export default function AdminAttendance() {
   const totalPages = Math.max(1, Math.ceil(records.length / (Number(filters.limit) || 10)));
 
   useEffect(() => {
-    if (!canManageCheckIn) return;
+    if (!canMark) return;
 
     let isCurrent = true;
     const loadUsers = async () => {
@@ -318,7 +384,7 @@ export default function AdminAttendance() {
     return () => {
       isCurrent = false;
     };
-  }, [canManageCheckIn, user?.token, userType]);
+  }, [canMark, user?.token, userType]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -326,10 +392,10 @@ export default function AdminAttendance() {
     const loadInitialAttendance = async () => {
       try {
         setLoading(true);
-        if (canUse(role, "today")) {
+        if (canView) {
           const response = await getTodayAttendance(user?.token);
           if (isCurrent) setRecords(unwrapAttendance(response));
-        } else if (role === "member" && ownUserId) {
+        } else if (ownUserId) {
           const [historyResponse, summaryResponse] = await Promise.all([
             getUserAttendance(ownUserId, user?.token),
             getAttendanceMemberSummary(ownUserId, user?.token),
@@ -340,17 +406,17 @@ export default function AdminAttendance() {
           }
         }
 
-        if (canUse(role, "stats")) {
+        if (canView) {
           const statsResponse = await getAttendanceStats(user?.token);
           if (isCurrent) setMetrics(unwrapMetrics(statsResponse));
         }
 
-        if (canUse(role, "absent")) {
+        if (canView) {
           const absentResponse = await getAbsentMembers(user?.token);
           if (isCurrent) setAbsentCount(unwrapAttendance(absentResponse).length);
         }
 
-        if (canUse(role, "late")) {
+        if (canView) {
           const lateResponse = await getLateCheckIns({ afterHour: lateAfterHour || undefined }, user?.token);
           if (isCurrent) setLateCount(unwrapAttendance(lateResponse).length);
         }
@@ -365,14 +431,14 @@ export default function AdminAttendance() {
     return () => {
       isCurrent = false;
     };
-  }, [role, ownUserId, user?.token, lateAfterHour]);
+  }, [canView, ownUserId, user?.token, lateAfterHour]);
 
   const loadToday = async () => {
     try {
       setLoading(true);
       const response = await getTodayAttendance(user?.token);
       setRecords(unwrapAttendance(response));
-      setActiveTab(role === "member" ? "self" : "records");
+      setActiveTab("records");
     } catch (error) {
       toast.error(getApiError(error, "Unable to load today's attendance"));
     } finally {
@@ -381,7 +447,7 @@ export default function AdminAttendance() {
   };
 
   const loadFiltered = async () => {
-    if (!canUse(role, "filter")) return;
+    if (!canView) return;
     const params = Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ""));
 
     try {
@@ -397,8 +463,8 @@ export default function AdminAttendance() {
     }
   };
 
-  const loadList = async (key) => {
-    if (!canUse(role, key)) return;
+  const loadList = useCallback(async (key) => {
+    if (!canView) return;
 
     try {
       setLoading(true);
@@ -406,7 +472,7 @@ export default function AdminAttendance() {
         active: () => getActiveAttendance(user?.token),
         absent: () => getAbsentMembers(user?.token),
         date: () => getAttendanceByDate(filters.startDate || today, user?.token),
-        trainer: () => getTrainerAttendance(role === "trainer" ? ownUserId : trainerId, user?.token),
+        trainer: () => getTrainerAttendance(trainerId || ownUserId, user?.token),
         late: () => getLateCheckIns({ afterHour: lateAfterHour || undefined }, user?.token),
       };
       const response = await loaders[key]();
@@ -420,11 +486,11 @@ export default function AdminAttendance() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [canView, user?.token, filters.startDate, trainerId, ownUserId, lateAfterHour]);
 
   const loadUserHistory = async () => {
-    const targetId = role === "member" ? ownUserId : filters.userId;
-    if (!targetId || !canUse(role, "user")) {
+    const targetId = isMember ? ownUserId : filters.userId;
+    if (!targetId || !canView) {
       toast.error("User id is required");
       return;
     }
@@ -433,7 +499,7 @@ export default function AdminAttendance() {
       setLoading(true);
       const response = await getUserAttendance(targetId, user?.token);
       setRecords(unwrapAttendance(response));
-      setActiveTab(role === "member" ? "self" : "records");
+      setActiveTab("records");
     } catch (error) {
       toast.error(getApiError(error, "Unable to load user attendance"));
     } finally {
@@ -442,8 +508,8 @@ export default function AdminAttendance() {
   };
 
   const loadMemberSummary = async () => {
-    const targetId = role === "member" ? ownUserId : summaryUserId;
-    if (!targetId || !canUse(role, "summary")) {
+    const targetId = isMember ? ownUserId : summaryUserId;
+    if (!targetId || !canViewSummary) {
       toast.error("Member id is required");
       return;
     }
@@ -451,7 +517,7 @@ export default function AdminAttendance() {
     try {
       const response = await getAttendanceMemberSummary(targetId, user?.token);
       setMemberSummary(unwrapMetrics(response));
-      if (role === "member") setActiveTab("self");
+      setActiveTab("reports");
       toast.success("Member summary loaded");
     } catch (error) {
       toast.error(getApiError(error, "Unable to load member summary"));
@@ -459,7 +525,7 @@ export default function AdminAttendance() {
   };
 
   const loadMonthlyReport = async () => {
-    if (!canUse(role, "monthly")) return;
+    if (!canViewReports) return;
     if (!monthlyQuery.month || !monthlyQuery.year) {
       toast.error("Month and year are required");
       return;
@@ -468,15 +534,116 @@ export default function AdminAttendance() {
     try {
       const response = await getMonthlyAttendanceReport(monthlyQuery, user?.token);
       setMonthlyReport(unwrapMetrics(response));
-      setActiveTab("reports");
+      setReportsSubTab("monthly");
       toast.success("Monthly report loaded");
     } catch (error) {
       toast.error(getApiError(error, "Unable to load monthly report"));
     }
   };
 
+  const loadWeeklyReport = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getWeeklyAttendanceReport(weeklyQuery, user?.token);
+      setWeeklyReport(unwrapMetrics(response));
+      setReportsSubTab("weekly");
+      toast.success("Weekly report loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load weekly report"));
+    }
+  };
+
+  const loadQuarterlyReport = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getQuarterlyAttendanceReport(quarterlyQuery, user?.token);
+      setQuarterlyReport(unwrapMetrics(response));
+      setReportsSubTab("quarterly");
+      toast.success("Quarterly report loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load quarterly report"));
+    }
+  };
+
+  const loadYearlyReport = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getYearlyAttendanceReport(yearlyQuery, user?.token);
+      setYearlyReport(unwrapMetrics(response));
+      setReportsSubTab("yearly");
+      toast.success("Yearly report loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load yearly report"));
+    }
+  };
+
+  const loadTrends = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getAttendanceTrends(trendsQuery, user?.token);
+      setTrendsData(response?.data || response);
+      setReportsSubTab("trends");
+      toast.success("Trends loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load trends"));
+    }
+  };
+
+  const loadPeakHours = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getPeakHours(peakHoursQuery, user?.token);
+      setPeakHoursData(response?.data || response);
+      setReportsSubTab("peakHours");
+      toast.success("Peak hours loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load peak hours"));
+    }
+  };
+
+  const loadComparison = async () => {
+    if (!canViewReports) return;
+    const { period1Start, period1End, period2Start, period2End } = comparisonQuery;
+    if (!period1Start || !period1End || !period2Start || !period2End) {
+      toast.error("All four date fields are required for comparison");
+      return;
+    }
+    try {
+      const response = await getAttendanceComparison(comparisonQuery, user?.token);
+      setComparisonData(response?.data || response);
+      setReportsSubTab("comparison");
+      toast.success("Comparison loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load comparison"));
+    }
+  };
+
+  const loadRetention = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getRetentionMetrics(retentionQuery, user?.token);
+      setRetentionData(response?.data || response);
+      setReportsSubTab("retention");
+      toast.success("Retention metrics loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load retention metrics"));
+    }
+  };
+
+  const loadOccupancy = async () => {
+    if (!canViewReports) return;
+    try {
+      const response = await getOccupancyReport(occupancyQuery, user?.token);
+      setOccupancyData(response?.data || response);
+      setReportsSubTab("occupancy");
+      toast.success("Occupancy report loaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load occupancy report"));
+    }
+  };
+
   const handleExport = async () => {
-    if (!canUse(role, "export")) return;
+    if (!canExport) return;
 
     try {
       const response = await exportAttendance({ format: exportFormat }, user?.token);
@@ -484,7 +651,8 @@ export default function AdminAttendance() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `attendance.${exportFormat === "excel" ? "xlsx" : "csv"}`;
+      const ext = exportFormat === "pdf" ? "pdf" : exportFormat === "excel" ? "xlsx" : "csv";
+      link.download = `attendance.${ext}`;
       link.click();
       URL.revokeObjectURL(url);
       toast.success("Attendance export downloaded");
@@ -502,18 +670,71 @@ export default function AdminAttendance() {
     try {
       setActionLoading(true);
       const selectedId = userIdOf(selectedUser);
-      const payload = { userId: selectedId, type: userType };
       if (mode === "in") {
-        await adminCheckIn(payload, user?.token);
+        await adminCheckIn({ userId: selectedId, type: userType }, user?.token);
         toast.success(`${userType} checked in successfully`);
       } else {
-        await adminCheckOut(payload, user?.token);
+        const fn = canForceCheckout ? adminCheckOut : adminCheckOut;
+        await fn({ userId: selectedId }, user?.token);
         toast.success(`${userType} checked out successfully`);
       }
       setSelectedUser(null);
       void loadToday();
     } catch (error) {
       toast.error(getApiError(error, "Attendance action failed"));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleBulkCheckIn = async () => {
+    if (!canMark || !bulkCheckInUserIds.length) {
+      toast.error("Select at least one user");
+      return;
+    }
+    try {
+      setActionLoading(true);
+      const records = bulkCheckInUserIds.map((uid) => ({ userId: uid, type: userType }));
+      const result = await bulkCheckIn(records, user?.token);
+      const data = result?.data || result;
+      toast.success(`Checked in ${data.succeeded || 0} users`);
+      if (data.failed?.length) {
+        data.failed.forEach((f) => toast.error(`${f.userId}: ${f.reason}`));
+      }
+      setBulkCheckInUserIds([]);
+      void loadToday();
+    } catch (error) {
+      toast.error(getApiError(error, "Bulk check-in failed"));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleBulkImport = async () => {
+    if (!canMark || !bulkRecords.trim()) {
+      toast.error("Paste historical records in JSON format");
+      return;
+    }
+    try {
+      setActionLoading(true);
+      let parsed;
+      try {
+        parsed = JSON.parse(bulkRecords);
+      } catch {
+        toast.error("Invalid JSON format");
+        return;
+      }
+      const records = Array.isArray(parsed) ? parsed : parsed.records || [];
+      if (!records.length) {
+        toast.error("No records found in JSON");
+        return;
+      }
+      const result = await bulkImportAttendance(records, user?.token);
+      const data = result?.data || result;
+      setBulkImportResult(data);
+      toast.success(`Imported ${data.imported || 0} records`);
+    } catch (error) {
+      toast.error(getApiError(error, "Bulk import failed"));
     } finally {
       setActionLoading(false);
     }
@@ -531,7 +752,7 @@ export default function AdminAttendance() {
   const handleUpdate = async (event) => {
     event.preventDefault();
     const id = recordId(editRecord);
-    if (!id || !canUse(role, "update")) return;
+    if (!id || !canUpdate) return;
 
     try {
       const payload = {
@@ -550,8 +771,8 @@ export default function AdminAttendance() {
 
   const handleDelete = async (record) => {
     const id = recordId(record);
-    if (!id || !canUse(role, "delete")) return;
-    if (!confirm("Delete this attendance record? This action is restricted to gym owners.")) return;
+    if (!id || !canDelete) return;
+    if (!confirm("Delete this attendance record?")) return;
 
     try {
       await deleteAttendance(id, user?.token);
@@ -569,9 +790,9 @@ export default function AdminAttendance() {
     setLateAfterHour("10");
     setExpandedId("");
 
-    if (canUse(role, "today")) {
+    if (canView) {
       await loadToday();
-    } else if (role === "member" && ownUserId) {
+    } else if (ownUserId) {
       await loadUserHistory();
     }
 
@@ -583,15 +804,15 @@ export default function AdminAttendance() {
   };
 
   const statCards = [
-    canUse(role, "today") && { label: "Today Check-Ins", value: metrics.todayCheckIns ?? records.length, icon: Users, tone: "blue" },
-    canUse(role, "active") && { label: "Active Sessions", value: metrics.activeSessions, icon: Clock, tone: "emerald" },
-    canUse(role, "stats") && { label: "Completed Sessions", value: metrics.completedSessions, icon: CheckCircle2, tone: "violet" },
-    canUse(role, "stats") && { label: "Auto Closed Sessions", value: metrics.autoClosedSessions, icon: Timer, tone: "amber" },
-    canUse(role, "absent") && { label: "Absent Members", value: absentCount, icon: UserRoundX, tone: "red" },
-    canUse(role, "late") && { label: "Late Check-Ins", value: lateCount, icon: CalendarDays, tone: "slate" },
+    canView && { label: "Today Check-Ins", value: metrics.todayCheckIns ?? records.length, icon: Users, tone: "blue" },
+    canView && { label: "Active Sessions", value: metrics.activeSessions, icon: Clock, tone: "emerald" },
+    canView && { label: "Completed Sessions", value: metrics.completedSessions, icon: CheckCircle2, tone: "violet" },
+    canView && { label: "Auto Closed Sessions", value: metrics.autoClosedSessions, icon: Timer, tone: "amber" },
+    canView && { label: "Absent Members", value: absentCount, icon: UserRoundX, tone: "red" },
+    canView && { label: "Late Check-Ins", value: lateCount, icon: CalendarDays, tone: "slate" },
   ].filter(Boolean);
 
-  const reportOutput = { ...monthlyReport, ...memberSummary };
+  const canShowReports = canViewReports || canViewSummary || canExport;
 
   return (
     <div className="space-y-5">
@@ -615,11 +836,11 @@ export default function AdminAttendance() {
         </section>
       )}
 
-      {canManageCheckIn && (
+      {canMark && (
         <Card className="overflow-hidden">
           <SectionHeader
             icon={LogIn}
-            title="Owner Check-in / Check-out"
+            title="Admin Check-in / Check-out"
             detail="Select a member or trainer, then mark attendance with one tap."
             action={
               <div className="inline-flex rounded-md border border-gray-200 bg-white p-1 shadow-sm">
@@ -662,7 +883,6 @@ export default function AdminAttendance() {
                 {filteredUsers.length ? (
                   filteredUsers.map((item) => {
                     const isSelected = userIdOf(selectedUser) === userIdOf(item);
-
                     return (
                       <button
                         key={userIdOf(item)}
@@ -674,17 +894,11 @@ export default function AdminAttendance() {
                       >
                         <span className="flex items-center justify-between gap-3">
                           <span className="flex min-w-0 items-center gap-3">
-                            <span
-                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-bold ${
-                                isSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"
-                              }`}
-                            >
+                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-bold ${isSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
                               {(item.name || item.email || userType[0]).slice(0, 1).toUpperCase()}
                             </span>
                             <span className="min-w-0">
-                              <span className="block truncate text-sm font-semibold text-gray-900">
-                                {item.name || item.email || userIdOf(item)}
-                              </span>
+                              <span className="block truncate text-sm font-semibold text-gray-900">{item.name || item.email || userIdOf(item)}</span>
                               <span className="block truncate text-sm text-gray-500">{item.email || userIdOf(item)}</span>
                             </span>
                           </span>
@@ -698,7 +912,6 @@ export default function AdminAttendance() {
                 )}
               </div>
             </div>
-
             <div className="flex flex-col justify-between rounded-md border border-gray-200 bg-gray-50 p-4">
               <div>
                 <p className="text-xs font-semibold uppercase text-gray-500">Current Selection</p>
@@ -708,21 +921,11 @@ export default function AdminAttendance() {
                 <p className="mt-1 break-all text-sm text-gray-500">{selectedUser ? userIdOf(selectedUser) : "Select a row to enable actions."}</p>
               </div>
               <div className="mt-5 grid gap-3">
-                <button
-                  type="button"
-                  onClick={() => void handleCheckInOut("in")}
-                  disabled={actionLoading || !selectedUser}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
+                <button type="button" onClick={() => void handleCheckInOut("in")} disabled={actionLoading || !selectedUser} className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
                   <LogIn size={17} />
                   {actionLoading ? "Processing..." : "Check In"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCheckInOut("out")}
-                  disabled={actionLoading || !selectedUser}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
+                <button type="button" onClick={() => void handleCheckInOut("out")} disabled={actionLoading || !selectedUser} className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
                   <LogOut size={17} />
                   {actionLoading ? "Processing..." : "Check Out"}
                 </button>
@@ -735,8 +938,9 @@ export default function AdminAttendance() {
       <Card className="p-2">
         <div className="flex flex-wrap gap-2">
           {[
-            { key: role === "member" ? "self" : "records", label: role === "member" ? "My Attendance" : "Attendance" },
+            { key: "records", label: "Attendance" },
             { key: "reports", label: "Reports", hidden: !canShowReports },
+            { key: "bulk", label: "Bulk Ops", hidden: !canMark },
           ]
             .filter((tab) => !tab.hidden)
             .map((tab) => (
@@ -754,183 +958,139 @@ export default function AdminAttendance() {
         </div>
       </Card>
 
-      {(activeTab === "records" || activeTab === "self") && (
+      {activeTab === "records" && (
         <section className="space-y-4">
           <Card className="p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h3 className="font-semibold text-gray-950">{activeTab === "self" ? "My Attendance" : "Attendance Records"}</h3>
+                <h3 className="font-semibold text-gray-950">Attendance Records</h3>
                 <p className="mt-1 text-xs leading-5 text-gray-500">
                   {loading ? "Loading records..." : `${filteredRecords.length} of ${records.length} records shown`}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {canUse(role, "today") && (
+                {canView && (
                   <button type="button" onClick={() => void loadToday()} className={compactButtonClass}>
                     Today
                   </button>
                 )}
-                {canUse(role, "active") && (
+                {canView && (
                   <button type="button" onClick={() => void loadList("active")} className={compactButtonClass}>
                     Active
                   </button>
                 )}
-                {canUse(role, "late") && (
+                {canView && (
                   <button type="button" onClick={() => void loadList("late")} className={compactButtonClass}>
                     Late
                   </button>
                 )}
-                {canUse(role, "trainer") && (
+                {canView && (
                   <button type="button" onClick={() => void loadList("trainer")} className={compactButtonClass}>
                     Trainers
                   </button>
                 )}
-                <button type="button" onClick={() => setIsFilterDrawerOpen(true)} className={primaryButtonClass}>
-                  <SlidersHorizontal size={17} />
-                  Filter
+                <button type="button" onClick={() => setShowFilterPanel((prev) => !prev)} className={primaryButtonClass}>
+                  <ArrowUpDown size={17} />
+                  {showFilterPanel ? "Hide Filters" : "Filters"}
                 </button>
               </div>
             </div>
           </Card>
 
-          {isFilterDrawerOpen && (
-            <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/40">
-              <button
-                type="button"
-                className="absolute inset-0 cursor-default"
-                onClick={() => setIsFilterDrawerOpen(false)}
-                aria-label="Close filter drawer"
-              />
-              <aside className="relative flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
-                <div className="flex items-start justify-between gap-3 border-b border-gray-200 p-4">
-                  <div>
-                    <h3 className="font-semibold text-gray-950">Advanced Filters</h3>
-                    <p className="mt-1 text-xs leading-5 text-gray-500">Refine attendance records without shrinking the table.</p>
-                  </div>
-                  <button type="button" onClick={() => setIsFilterDrawerOpen(false)} className={iconButtonClass} aria-label="Close filters">
-                    <X size={17} />
+          {showFilterPanel && (
+            <Card className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-gray-950">Advanced Filters</h3>
+                  <p className="mt-1 text-xs leading-5 text-gray-500">Refine attendance records.</p>
+                </div>
+                <button type="button" onClick={() => setShowFilterPanel(false)} className={iconButtonClass} aria-label="Close filters">
+                  <X size={17} />
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Type">
+                  <select className={compactInputClass} value={filters.type} onChange={(event) => updateFilter("type", event.target.value)}>
+                    <option value="">Any</option>
+                    <option value="MEMBER">MEMBER</option>
+                    <option value="TRAINER">TRAINER</option>
+                  </select>
+                </Field>
+                <Field label="Status">
+                  <select className={compactInputClass} value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}>
+                    <option value="">Any</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="COMPLETED">COMPLETED</option>
+                    <option value="AUTO_CLOSED">AUTO_CLOSED</option>
+                  </select>
+                </Field>
+                <Field label="Start Date">
+                  <input className={compactInputClass} type="date" value={filters.startDate} onChange={(event) => updateFilter("startDate", event.target.value)} />
+                </Field>
+                <Field label="End Date">
+                  <input className={compactInputClass} type="date" value={filters.endDate} onChange={(event) => updateFilter("endDate", event.target.value)} />
+                </Field>
+                <Field label="User Id">
+                  <input className={compactInputClass} value={filters.userId} onChange={(event) => updateFilter("userId", event.target.value)} placeholder="user_uuid" />
+                </Field>
+                <Field label="Late After Hour">
+                  <input className={compactInputClass} type="number" min="0" max="23" value={lateAfterHour} onChange={(event) => setLateAfterHour(event.target.value)} />
+                </Field>
+                <div className="flex items-end gap-2 sm:col-span-2">
+                  <button type="button" onClick={() => void loadFiltered()} className={primaryButtonClass}>
+                    Apply Filters
+                  </button>
+                  <button type="button" onClick={() => void loadList("absent")} className={compactButtonClass}>
+                    Absent
+                  </button>
+                  <button type="button" onClick={() => void loadList("date")} className={compactButtonClass}>
+                    By Date
+                  </button>
+                  <button type="button" onClick={() => void loadUserHistory()} className={compactButtonClass}>
+                    User History
+                  </button>
+                  <button type="button" onClick={() => void resetFilters()} className={compactButtonClass}>
+                    Reset
                   </button>
                 </div>
-
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="grid gap-3">
-                    {canUse(role, "filter") && (
-                      <>
-                        <Field label="Type">
-                          <select className={compactInputClass} value={filters.type} onChange={(event) => updateFilter("type", event.target.value)}>
-                            <option value="">Any</option>
-                            <option value="MEMBER">MEMBER</option>
-                            <option value="TRAINER">TRAINER</option>
-                          </select>
-                        </Field>
-                        <Field label="Status">
-                          <select className={compactInputClass} value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}>
-                            <option value="">Any</option>
-                            <option value="ACTIVE">ACTIVE</option>
-                            <option value="COMPLETED">COMPLETED</option>
-                            <option value="AUTO_CLOSED">AUTO_CLOSED</option>
-                          </select>
-                        </Field>
-                        <Field label="Start Date">
-                          <input className={compactInputClass} type="date" value={filters.startDate} onChange={(event) => updateFilter("startDate", event.target.value)} />
-                        </Field>
-                        <Field label="End Date">
-                          <input className={compactInputClass} type="date" value={filters.endDate} onChange={(event) => updateFilter("endDate", event.target.value)} />
-                        </Field>
-                        <Field label="Trainer">
-                          <input className={compactInputClass} value={trainerId} onChange={(event) => setTrainerId(event.target.value)} placeholder="trainer_uuid" disabled={role === "trainer"} />
-                        </Field>
-                        <Field label="User Id">
-                          <input className={compactInputClass} value={filters.userId} onChange={(event) => updateFilter("userId", event.target.value)} placeholder="user_uuid" />
-                        </Field>
-                        {canUse(role, "late") && (
-                          <Field label="Late After Hour">
-                            <input className={compactInputClass} type="number" min="0" max="23" value={lateAfterHour} onChange={(event) => setLateAfterHour(event.target.value)} />
-                          </Field>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsFilterDrawerOpen(false);
-                            void loadFiltered();
-                          }}
-                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Apply Filters
-                        </button>
-                      </>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-2 border-t border-gray-200 pt-3">
-                      {canUse(role, "absent") && (
-                        <button type="button" onClick={() => void loadList("absent")} className={compactButtonClass}>
-                          Absent
-                        </button>
-                      )}
-                      {canUse(role, "date") && (
-                        <button type="button" onClick={() => void loadList("date")} className={compactButtonClass}>
-                          By Date
-                        </button>
-                      )}
-                      {canUse(role, "user") && (
-                        <button type="button" onClick={() => void loadUserHistory()} className={compactButtonClass}>
-                          User History
-                        </button>
-                      )}
-                      <button type="button" onClick={() => void resetFilters()} className={compactButtonClass}>
-                        Reset
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </aside>
-            </div>
+              </div>
+            </Card>
           )}
 
           <Card className="overflow-hidden">
             <div className="border-b border-gray-200 p-4">
               <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 shadow-sm">
                 <Search size={17} className="shrink-0 text-gray-400" />
-                <input
-                  className="h-11 min-w-0 flex-1 text-sm outline-none"
-                  value={tableSearch}
-                  onChange={(event) => setTableSearch(event.target.value)}
-                  placeholder="Search attendance records..."
-                />
+                <input className="h-11 min-w-0 flex-1 text-sm outline-none" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} placeholder="Search attendance records..." />
               </div>
             </div>
-
             <div className="max-h-[34rem] overflow-auto">
               <table className="min-w-full table-fixed text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-gray-100 text-xs uppercase text-gray-500 shadow-sm">
-                <tr>
-                  <th className="w-[30%] p-3">User</th>
-                  <th className="w-[14%] p-3">Type</th>
-                  <th className="w-[19%] p-3">Check In</th>
-                  <th className="w-[19%] p-3">Check Out</th>
-                  <th className="w-[10%] p-3">Status</th>
-                  <th className="w-[8%] p-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
-                {loading && (
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-sm text-gray-500">
-                      Loading attendance records...
-                    </td>
+                    <th className="w-[30%] p-3">User</th>
+                    <th className="w-[14%] p-3">Type</th>
+                    <th className="w-[19%] p-3">Check In</th>
+                    <th className="w-[19%] p-3">Check Out</th>
+                    <th className="w-[10%] p-3">Status</th>
+                    <th className="w-[8%] p-3 text-right">Actions</th>
                   </tr>
-                )}
-                {!loading &&
-                  filteredRecords.map((record, index) => {
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {loading && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-sm text-gray-500">Loading attendance records...</td>
+                    </tr>
+                  )}
+                  {!loading && filteredRecords.map((record, index) => {
                     const id = recordId(record) || `${displayName(record)}-${index}`;
                     const isExpanded = expandedId === id;
-
                     return (
                       <Fragment key={id}>
                         <tr className="align-middle transition hover:bg-gray-50">
                           <td className="p-3">
                             <div className="flex min-w-0 items-center gap-3">
-                              <button type="button" onClick={() => setExpandedId(isExpanded ? "" : id)} className={iconButtonClass} aria-label="Toggle attendance details">
+                              <button type="button" onClick={() => setExpandedId(isExpanded ? "" : id)} className={iconButtonClass} aria-label="Toggle details">
                                 <ChevronDown size={16} className={`transition ${isExpanded ? "rotate-180" : ""}`} />
                               </button>
                               <div className="min-w-0">
@@ -949,13 +1109,13 @@ export default function AdminAttendance() {
                           </td>
                           <td className="p-3">
                             <div className="flex justify-end gap-2">
-                              {canUse(role, "update") && (
-                                <button type="button" onClick={() => startEdit(record)} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-blue-600 transition hover:bg-blue-50" aria-label="Edit attendance">
+                              {canUpdate && (
+                                <button type="button" onClick={() => startEdit(record)} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-blue-600 transition hover:bg-blue-50" aria-label="Edit">
                                   <Pencil size={17} />
                                 </button>
                               )}
-                              {canUse(role, "delete") && (
-                                <button type="button" onClick={() => void handleDelete(record)} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50" aria-label="Delete attendance">
+                              {canDelete && (
+                                <button type="button" onClick={() => void handleDelete(record)} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50" aria-label="Delete">
                                   <Trash size={17} />
                                 </button>
                               )}
@@ -969,9 +1129,9 @@ export default function AdminAttendance() {
                                 {[
                                   { label: "Check-In", value: displayDate(getCheckIn(record)) },
                                   { label: "Check-Out", value: displayDate(getCheckOut(record)) },
-                                  { label: "Workout Duration", value: durationText(record) },
+                                  { label: "Duration", value: durationText(record) },
                                   { label: "Trainer", value: record.trainerName || record.trainer?.name || record.trainerId || "-" },
-                                  { label: "Attendance Status", value: record.status || "-" },
+                                  { label: "Status", value: record.status || "-" },
                                 ].map((item) => (
                                   <div key={item.label} className="rounded-md border border-gray-200 bg-white p-3">
                                     <p className="text-xs font-semibold uppercase text-gray-500">{item.label}</p>
@@ -985,15 +1145,15 @@ export default function AdminAttendance() {
                       </Fragment>
                     );
                   })}
-                {!loading && !filteredRecords.length && (
-                  <tr>
-                    <td colSpan={6}>
-                      <EmptyState title="No attendance records found" detail="Adjust filters, load today, or choose another quick list." />
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  {!loading && !filteredRecords.length && (
+                    <tr>
+                      <td colSpan={6}>
+                        <EmptyState title="No attendance records found" detail="Adjust filters, load today, or choose another quick list." />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
             <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-gray-500">
@@ -1008,9 +1168,7 @@ export default function AdminAttendance() {
                 <button type="button" className={iconButtonClass} onClick={() => updateFilter("page", String(Math.max(1, Number(filters.page || 1) - 1)))} disabled={Number(filters.page || 1) <= 1}>
                   <ChevronLeft size={16} />
                 </button>
-                <span className="min-w-16 text-center text-sm font-semibold text-gray-700">
-                  {filters.page} / {totalPages}
-                </span>
+                <span className="min-w-16 text-center text-sm font-semibold text-gray-700">{filters.page} / {totalPages}</span>
                 <button type="button" className={iconButtonClass} onClick={() => updateFilter("page", String(Number(filters.page || 1) + 1))}>
                   <ChevronRight size={16} />
                 </button>
@@ -1022,106 +1180,358 @@ export default function AdminAttendance() {
 
       {activeTab === "reports" && (
         <Card className="overflow-hidden">
-          <SectionHeader icon={BarChart3} title="Reports & Export" detail="Monthly summaries, member summaries, and attendance exports." />
-          <div className="grid gap-4 p-4 lg:grid-cols-3">
-            {canUse(role, "monthly") && (
-              <div className="rounded-md border border-gray-200 p-4">
-                <div className="mb-4 flex items-center gap-2">
-                  <BarChart3 size={18} className="text-blue-600" />
-                  <h3 className="font-semibold text-gray-950">Monthly Report</h3>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Month">
-                    <input className={inputClass} type="number" min="1" max="12" value={monthlyQuery.month} onChange={(event) => setMonthlyQuery({ ...monthlyQuery, month: event.target.value })} />
-                  </Field>
-                  <Field label="Year">
-                    <input className={inputClass} type="number" value={monthlyQuery.year} onChange={(event) => setMonthlyQuery({ ...monthlyQuery, year: event.target.value })} />
-                  </Field>
-                </div>
-                <button type="button" onClick={() => void loadMonthlyReport()} className={`${primaryButtonClass} mt-4 w-full`}>
-                  <BarChart3 size={16} />
-                  Generate Report
-                </button>
-              </div>
-            )}
-
-            {canUse(role, "summary") && (
-              <div className="rounded-md border border-gray-200 p-4">
-                <div className="mb-4 flex items-center gap-2">
-                  <Users size={18} className="text-emerald-600" />
-                  <h3 className="font-semibold text-gray-950">Member Summary</h3>
-                </div>
-                <Field label="User Id">
-                  <input className={inputClass} value={role === "member" ? ownUserId : summaryUserId} disabled={role === "member"} onChange={(event) => setSummaryUserId(event.target.value)} />
-                </Field>
-                <button type="button" onClick={() => void loadMemberSummary()} className={`${softButtonClass} mt-4 w-full`}>
-                  Load Summary
-                </button>
-              </div>
-            )}
-
-            {canUse(role, "export") && (
-              <div className="rounded-md border border-gray-200 p-4">
-                <div className="mb-4 flex items-center gap-2">
-                  <Download size={18} className="text-gray-700" />
-                  <h3 className="font-semibold text-gray-950">Export Attendance</h3>
-                </div>
-                <Field label="Format">
-                  <select className={inputClass} value={exportFormat} onChange={(event) => setExportFormat(event.target.value)}>
-                    <option value="csv">csv</option>
-                    <option value="excel">excel</option>
-                  </select>
-                </Field>
-                <button type="button" onClick={() => void handleExport()} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-gray-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-800">
-                  <Download size={16} />
-                  Download Export
-                </button>
-              </div>
-            )}
+          <SectionHeader icon={BarChart3} title="Reports & Export" detail="Monthly, weekly, quarterly, yearly reports, trends, and exports." />
+          <div className="flex flex-wrap gap-2 border-b border-gray-200 px-4 py-3">
+            {[
+              { key: "monthly", label: "Monthly", hidden: !canViewReports },
+              { key: "weekly", label: "Weekly", hidden: !canViewReports },
+              { key: "quarterly", label: "Quarterly", hidden: !canViewReports },
+              { key: "yearly", label: "Yearly", hidden: !canViewReports },
+              { key: "trends", label: "Trends", hidden: !canViewReports },
+              { key: "peakHours", label: "Peak Hours", hidden: !canViewReports },
+              { key: "comparison", label: "Comparison", hidden: !canViewReports },
+              { key: "retention", label: "Retention", hidden: !canViewReports },
+              { key: "occupancy", label: "Occupancy", hidden: !canViewReports },
+              { key: "summary", label: "Member Summary", hidden: !canViewSummary },
+              { key: "export", label: "Export", hidden: !canExport },
+            ].filter((t) => !t.hidden).map((t) => (
+              <button key={t.key} type="button" onClick={() => setReportsSubTab(t.key)}
+                className={`h-9 rounded-md px-3 text-xs font-semibold transition ${reportsSubTab === t.key ? "bg-gray-950 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
 
-          <div className="border-t border-gray-200 bg-gray-50 p-4">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {Object.entries(reportOutput).map(([key, value]) => (
-                <div key={key} className="min-h-24 rounded-md bg-white p-4 ring-1 ring-gray-200">
-                  <p className="text-xs font-semibold uppercase text-gray-500">{key}</p>
-                  <p className="mt-2 break-words text-lg font-bold text-gray-950">{displayMetric(value)}</p>
+          <div className="p-4">
+            {reportsSubTab === "monthly" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label="Month"><input className={inputClass} type="number" min="1" max="12" value={monthlyQuery.month} onChange={(e) => setMonthlyQuery({ ...monthlyQuery, month: e.target.value })} /></Field>
+                  <Field label="Year"><input className={inputClass} type="number" value={monthlyQuery.year} onChange={(e) => setMonthlyQuery({ ...monthlyQuery, year: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadMonthlyReport()} className={primaryButtonClass}><BarChart3 size={16} /> Generate</button></div>
                 </div>
-              ))}
-              {!Object.keys(reportOutput).length && (
-                <div className="sm:col-span-2 xl:col-span-4">
-                  <EmptyState title="No report data yet" detail="Generate a monthly report or member summary to view analytics here." />
+                {Object.keys(monthlyReport).length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {Object.entries(monthlyReport).map(([key, value]) => (
+                      <div key={key} className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{displayMetric(value)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "weekly" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label="Year"><input className={inputClass} type="number" value={weeklyQuery.year} onChange={(e) => setWeeklyQuery({ ...weeklyQuery, year: e.target.value })} /></Field>
+                  <Field label="Week #"><input className={inputClass} type="number" min="1" max="53" value={weeklyQuery.week} onChange={(e) => setWeeklyQuery({ ...weeklyQuery, week: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadWeeklyReport()} className={primaryButtonClass}><BarChart3 size={16} /> Generate</button></div>
                 </div>
-              )}
+                {weeklyReport && Object.keys(weeklyReport).length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {Object.entries(weeklyReport).map(([key, value]) => (
+                      <div key={key} className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{displayMetric(value)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "quarterly" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label="Year"><input className={inputClass} type="number" value={quarterlyQuery.year} onChange={(e) => setQuarterlyQuery({ ...quarterlyQuery, year: e.target.value })} /></Field>
+                  <Field label="Quarter (1-4)"><input className={inputClass} type="number" min="1" max="4" value={quarterlyQuery.quarter} onChange={(e) => setQuarterlyQuery({ ...quarterlyQuery, quarter: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadQuarterlyReport()} className={primaryButtonClass}><BarChart3 size={16} /> Generate</button></div>
+                </div>
+                {quarterlyReport && Object.keys(quarterlyReport).length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {Object.entries(quarterlyReport).map(([key, value]) => (
+                      <div key={key} className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{displayMetric(value)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "yearly" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Year"><input className={inputClass} type="number" value={yearlyQuery.year} onChange={(e) => setYearlyQuery({ ...yearlyQuery, year: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadYearlyReport()} className={primaryButtonClass}><BarChart3 size={16} /> Generate</button></div>
+                </div>
+                {yearlyReport && Object.keys(yearlyReport).length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {Object.entries(yearlyReport).map(([key, value]) => (
+                      <div key={key} className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{displayMetric(value)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "trends" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Days (1-365)"><input className={inputClass} type="number" min="1" max="365" value={trendsQuery.days} onChange={(e) => setTrendsQuery({ ...trendsQuery, days: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadTrends()} className={primaryButtonClass}><BarChart3 size={16} /> Load Trends</button></div>
+                </div>
+                {trendsData && (
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendsData.labels?.map((label, i) => ({ label, value: trendsData.series?.[i] || 0, unique: trendsData.uniqueSeries?.[i] || 0 }))}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="value" stroke="#2563eb" name="Check-ins" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="unique" stroke="#16a34a" name="Unique Members" strokeWidth={2} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "peakHours" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Date"><input className={inputClass} type="date" value={peakHoursQuery.date} onChange={(e) => setPeakHoursQuery({ ...peakHoursQuery, date: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadPeakHours()} className={primaryButtonClass}><BarChart3 size={16} /> Load</button></div>
+                </div>
+                {peakHoursData && (
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={Array.isArray(peakHoursData) ? peakHoursData : peakHoursData.hours || []}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="hour" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 10 }} />
+                        <YAxis />
+                        <Tooltip labelFormatter={(h) => `${h}:00`} />
+                        <Bar dataKey="count" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "comparison" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <Field label="Period 1 Start"><input className={inputClass} type="date" value={comparisonQuery.period1Start} onChange={(e) => setComparisonQuery({ ...comparisonQuery, period1Start: e.target.value })} /></Field>
+                  <Field label="Period 1 End"><input className={inputClass} type="date" value={comparisonQuery.period1End} onChange={(e) => setComparisonQuery({ ...comparisonQuery, period1End: e.target.value })} /></Field>
+                  <Field label="Period 2 Start"><input className={inputClass} type="date" value={comparisonQuery.period2Start} onChange={(e) => setComparisonQuery({ ...comparisonQuery, period2Start: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadComparison()} className={primaryButtonClass}><BarChart3 size={16} /> Compare</button></div>
+                </div>
+                {comparisonData && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Period 1 Check-ins</p>
+                      <p className="mt-2 text-2xl font-bold text-gray-950">{comparisonData.period1?.totalCheckIns ?? "-"}</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Period 2 Check-ins</p>
+                      <p className="mt-2 text-2xl font-bold text-gray-950">{comparisonData.period2?.totalCheckIns ?? "-"}</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Change</p>
+                      <p className="mt-2 text-2xl font-bold text-gray-950">{comparisonData.changes?.checkIns ?? "-"}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "retention" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Lookback Days"><input className={inputClass} type="number" min="1" max="365" value={retentionQuery.days} onChange={(e) => setRetentionQuery({ ...retentionQuery, days: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadRetention()} className={primaryButtonClass}><BarChart3 size={16} /> Load</button></div>
+                </div>
+                {retentionData && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Return Rate 7d</p>
+                      <p className="mt-2 text-2xl font-bold text-emerald-700">{retentionData.returnRate7d ?? "-"}</p>
+                      <p className="text-xs text-gray-500 mt-1">{retentionData.returned7d ?? 0} members</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Return Rate 14d</p>
+                      <p className="mt-2 text-2xl font-bold text-blue-700">{retentionData.returnRate14d ?? "-"}</p>
+                      <p className="text-xs text-gray-500 mt-1">{retentionData.returned14d ?? 0} members</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Return Rate 30d</p>
+                      <p className="mt-2 text-2xl font-bold text-violet-700">{retentionData.returnRate30d ?? "-"}</p>
+                      <p className="text-xs text-gray-500 mt-1">{retentionData.returned30d ?? 0} members</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">At Risk</p>
+                      <p className="mt-2 text-2xl font-bold text-amber-700">{retentionData.atRisk ?? "-"}</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Churned</p>
+                      <p className="mt-2 text-2xl font-bold text-red-700">{retentionData.churned ?? "-"}</p>
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Avg Visits / Member</p>
+                      <p className="mt-2 text-2xl font-bold text-gray-950">{retentionData.avgVisitsPerMember ?? "-"}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "occupancy" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Date"><input className={inputClass} type="date" value={occupancyQuery.date} onChange={(e) => setOccupancyQuery({ ...occupancyQuery, date: e.target.value })} /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadOccupancy()} className={primaryButtonClass}><BarChart3 size={16} /> Load</button></div>
+                </div>
+                {occupancyData && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">Peak Hour</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{occupancyData.peakHour !== undefined ? `${occupancyData.peakHour}:00` : "-"}</p>
+                      </div>
+                      <div className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">Peak Count</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{occupancyData.peakCount ?? "-"}</p>
+                      </div>
+                    </div>
+                    <div className="h-72">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={Array.isArray(occupancyData.hours) ? occupancyData.hours : []}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="hour" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 10 }} />
+                          <YAxis />
+                          <Tooltip labelFormatter={(h) => `${h}:00`} />
+                          <Bar dataKey="peakConcurrent" fill="#2563eb" radius={[4, 4, 0, 0]} name="Peak Concurrent" />
+                          <Bar dataKey="checkIns" fill="#16a34a" radius={[4, 4, 0, 0]} name="Check-ins" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "summary" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="User Id"><input className={inputClass} value={summaryUserId} onChange={(e) => setSummaryUserId(e.target.value)} placeholder="user_uuid" /></Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void loadMemberSummary()} className={softButtonClass}>Load Summary</button></div>
+                </div>
+                {Object.keys(memberSummary).length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {Object.entries(memberSummary).map(([key, value]) => (
+                      <div key={key} className="rounded-md border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase text-gray-500">{key.replace(/([A-Z])/g, " $1").trim()}</p>
+                        <p className="mt-2 text-2xl font-bold text-gray-950">{displayMetric(value)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportsSubTab === "export" && (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label="Format">
+                    <select className={inputClass} value={exportFormat} onChange={(e) => setExportFormat(e.target.value)}>
+                      <option value="csv">CSV</option>
+                      <option value="excel">Excel</option>
+                      <option value="pdf">PDF</option>
+                    </select>
+                  </Field>
+                  <div className="flex items-end"><button type="button" onClick={() => void handleExport()} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-gray-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-800"><Download size={16} /> Download</button></div>
+                </div>
+              </div>
+            )}
+
+            {!["monthly", "weekly", "quarterly", "yearly", "trends", "peakHours", "comparison", "retention", "occupancy", "summary", "export"].includes(reportsSubTab) && (
+              <EmptyState title="Select a report type" detail="Choose from the tabs above to view attendance analytics." />
+            )}
+          </div>
+        </Card>
+      )}
+
+      {activeTab === "bulk" && canMark && (
+        <Card className="overflow-hidden">
+          <SectionHeader icon={Upload} title="Bulk Operations" detail="Batch check-in or import historical attendance records." />
+          <div className="grid gap-6 p-4 lg:grid-cols-2">
+            <div className="rounded-md border border-gray-200 p-4">
+              <h3 className="mb-3 font-semibold text-gray-950">Bulk Check-In</h3>
+              <p className="mb-4 text-sm text-gray-500">Select users and check them all in at once.</p>
+              <div className="max-h-60 overflow-y-auto rounded-md border border-gray-200">
+                {users.map((u) => {
+                  const uid = userIdOf(u);
+                  const selected = bulkCheckInUserIds.includes(uid);
+                  return (
+                    <label key={uid} className={`flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 text-sm transition last:border-b-0 ${selected ? "bg-blue-50" : "hover:bg-gray-50"}`}>
+                      <input type="checkbox" checked={selected} onChange={() => setBulkCheckInUserIds((prev) => selected ? prev.filter((id) => id !== uid) : [...prev, uid])} className="h-4 w-4 rounded border-gray-300" />
+                      <span className="min-w-0 flex-1 truncate font-medium text-gray-900">{u.name || u.email || uid}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <span className="text-sm text-gray-500">{bulkCheckInUserIds.length} selected</span>
+                <button type="button" onClick={() => void handleBulkCheckIn()} disabled={actionLoading || !bulkCheckInUserIds.length} className={primaryButtonClass}>
+                  <LogIn size={16} />
+                  {actionLoading ? "Checking in..." : `Check In (${bulkCheckInUserIds.length})`}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-gray-200 p-4">
+              <h3 className="mb-3 font-semibold text-gray-950">Bulk Import (Historical)</h3>
+              <p className="mb-4 text-sm text-gray-500">Paste a JSON array of historical attendance records.</p>
+              <textarea className="min-h-32 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" value={bulkRecords} onChange={(e) => setBulkRecords(e.target.value)} placeholder='[{ "userId": "uuid", "type": "MEMBER", "checkIn": "2026-06-01T08:00:00Z", "checkOut": "2026-06-01T09:30:00Z", "source": "MANUAL", "status": "COMPLETED" }]' />
+              <div className="mt-3 flex items-center justify-between">
+                {bulkImportResult && <span className="text-sm text-gray-500">Imported: {bulkImportResult.imported ?? 0} records</span>}
+                <button type="button" onClick={() => void handleBulkImport()} disabled={actionLoading || !bulkRecords.trim()} className={primaryButtonClass}>
+                  <Upload size={16} />
+                  {actionLoading ? "Importing..." : "Import Records"}
+                </button>
+              </div>
             </div>
           </div>
         </Card>
       )}
 
-      {editRecord && canUse(role, "update") && (
+      {editRecord && canUpdate && (
         <Card className="p-4">
           <form onSubmit={handleUpdate}>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-              <Field label="Check In">
-                <input className={inputClass} type="datetime-local" value={editForm.checkIn} onChange={(event) => setEditForm({ ...editForm, checkIn: event.target.value })} />
-              </Field>
-              <Field label="Check Out">
-                <input className={inputClass} type="datetime-local" value={editForm.checkOut} onChange={(event) => setEditForm({ ...editForm, checkOut: event.target.value })} />
-              </Field>
+              <Field label="Check In"><input className={inputClass} type="datetime-local" value={editForm.checkIn} onChange={(e) => setEditForm({ ...editForm, checkIn: e.target.value })} /></Field>
+              <Field label="Check Out"><input className={inputClass} type="datetime-local" value={editForm.checkOut} onChange={(e) => setEditForm({ ...editForm, checkOut: e.target.value })} /></Field>
               <Field label="Status">
-                <select className={inputClass} value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}>
+                <select className={inputClass} value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
                   <option value="ACTIVE">ACTIVE</option>
                   <option value="COMPLETED">COMPLETED</option>
                   <option value="AUTO_CLOSED">AUTO_CLOSED</option>
                 </select>
               </Field>
               <div className="flex gap-2">
-                <button type="submit" className={primaryButtonClass}>
-                  Save
-                </button>
-                <button type="button" onClick={() => setEditRecord(null)} className={softButtonClass}>
-                  Cancel
-                </button>
+                <button type="submit" className={primaryButtonClass}>Save</button>
+                <button type="button" onClick={() => setEditRecord(null)} className={softButtonClass}>Cancel</button>
               </div>
             </div>
           </form>

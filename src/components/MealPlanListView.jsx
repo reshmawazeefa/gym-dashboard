@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Edit, Trash } from "lucide-react";
+import { Plus, Edit, Trash, Download } from "lucide-react";
 
 export default function MealPlanListView({ plans, meals, onCreate, onEdit, onDelete, token, getPlanNutritionSummary }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -17,6 +17,27 @@ export default function MealPlanListView({ plans, meals, onCreate, onEdit, onDel
     return matchesSearch && matchesGoal && matchesStatus;
   });
 
+  const handleExportCSV = () => {
+    const headers = ["Plan Name", "Goal", "Duration (days)", "Meals Per Day", "Total Meals", "Calories (Avg)", "Status"];
+    const rows = filteredPlans.map((plan) => {
+      const totalMeals = plan.days?.reduce((sum, day) => sum + (day.meals?.length || 0), 0) || 0;
+      const mealsPerDay = plan.days?.length ? Math.round(totalMeals / plan.days.length) : 0;
+      const planNutrition = getPlanNutritionSummary(plan);
+      const avgCalories = planNutrition?.calories ? Math.round(planNutrition.calories / (plan.duration || 1)) : 0;
+      const status = plan.draft ? "Draft" : plan.archived ? "Archived" : "Active";
+      return [plan.name, plan.goal, plan.duration, mealsPerDay, totalMeals, avgCalories, status];
+    });
+
+    const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${cell ?? ""}"`).join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `meal-plans-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <section className="space-y-6">
       {/* Header */}
@@ -25,13 +46,22 @@ export default function MealPlanListView({ plans, meals, onCreate, onEdit, onDel
           <h2 className="text-2xl font-semibold text-gray-950">Meal Plans</h2>
           <p className="mt-2 text-sm text-gray-500">Create and manage meal plans for your clients.</p>
         </div>
-        <button
-          type="button"
-          onClick={onCreate}
-          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          <Plus size={16} /> Create Meal Plan
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Download size={16} /> Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={onCreate}
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            <Plus size={16} /> Create Meal Plan
+          </button>
+        </div>
       </div>
 
       {/* Stats Cards */}

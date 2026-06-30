@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Code2,
+  Dumbbell,
   FileText,
   Languages,
   Mail,
@@ -498,8 +499,34 @@ export const moduleDefinitions = {
       delete: "DELETE /nutrition/plans/:id",
     },
   },
+  equipments: {
+    title: "Equipment Management",
+    description: "Manage gym equipment inventory, track condition, and log maintenance records.",
+    storageKey: "equipments",
+    icon: Dumbbell,
+    primaryAction: "Add Equipment",
+    fields: [
+      { name: "name", label: "Equipment Name", type: "text", placeholder: "Treadmill Pro" },
+      { name: "brand", label: "Brand", type: "text", placeholder: "LifeFitness" },
+      { name: "modelNumber", label: "Model Number", type: "text", placeholder: "LF-9500" },
+      { name: "serialNumber", label: "Serial Number", type: "text", placeholder: "SN-12345" },
+      { name: "category", label: "Category", type: "select", options: ["CARDIO", "STRENGTH", "MACHINE", "FREE_WEIGHT", "ACCESSORY", "OTHER"] },
+      { name: "purchaseDate", label: "Purchase Date", type: "date" },
+      { name: "purchasePrice", label: "Purchase Price", type: "number", placeholder: "2999.99" },
+      { name: "condition", label: "Condition", type: "select", options: ["EXCELLENT", "GOOD", "FAIR", "DAMAGED", "UNDER_REPAIR"] },
+      { name: "quantity", label: "Quantity", type: "number", placeholder: "1" },
+      { name: "status", label: "Status", type: "select", options: ["ACTIVE", "INACTIVE", "OUT_OF_SERVICE"] },
+      { name: "location", label: "Location", type: "text", placeholder: "Floor 1 - Cardio Zone" },
+      { name: "warrantyExpiry", label: "Warranty Expiry", type: "date" },
+    ],
+    seed: [],
+    insights: [
+      "Equipment inventory tracking",
+      "Condition and status monitoring",
+      "Maintenance scheduling and history",
+    ],
+  },
 };
-
 export const moduleGroups = [
   {
     title: "Operations",

@@ -7,6 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { canAccess } from "../utils/rbac";
 import AttendanceStatus from "../components/AttendanceStatus";
 import AdminAttendance from "../components/AdminAttendance";
+import AdminEquipments from "../components/AdminEquipments";
 import AdminFacilities from "../components/AdminFacilities";
 import AdminWorkouts from "../components/AdminWorkouts";
 import FacilityMaintenance from "../components/FacilityMaintenance";
@@ -238,6 +239,10 @@ export default function ModuleManager() {
 
   if (moduleKey === "facility-maintenance") {
     return <FacilityMaintenance />;
+  }
+
+  if (moduleKey === "equipments") {
+    return <AdminEquipments key={moduleKey} />;
   }
 
   return (

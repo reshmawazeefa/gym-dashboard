@@ -61,9 +61,15 @@ export default function ClassModal({ isOpen, onClose, onSave, editData, trainers
       return;
     }
 
-    if (form.type === "RECURRING" && !form.endDate) {
-      alert("End date is required for recurring classes");
-      return;
+    if (form.type === "RECURRING") {
+      if (!form.endDate) {
+        alert("End date is required for recurring classes");
+        return;
+      }
+      if (new Date(form.endDate) <= new Date(form.startDate)) {
+        alert("End date must be after start date");
+        return;
+      }
     }
 
     const payload = {
@@ -74,6 +80,8 @@ export default function ClassModal({ isOpen, onClose, onSave, editData, trainers
     };
     if (form.type === "RECURRING") {
       payload.endDate = toIsoDateTime(form.endDate);
+    } else {
+      payload.endDate = toIsoDateTime(form.startDate);
     }
 
     onSave(payload);

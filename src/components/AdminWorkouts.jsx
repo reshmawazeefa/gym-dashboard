@@ -4,10 +4,14 @@ import {
   CalendarDays,
   ChevronDown,
   ClipboardList,
+  Download,
   Dumbbell,
   Pencil,
+  Play,
   Plus,
   Search,
+  StopCircle,
+  Target,
   Trash,
   UserPlus,
   Users,
@@ -17,26 +21,39 @@ import {
   assignExerciseToWorkoutDay,
   assignTrainerToWorkoutPlan,
   assignWorkoutToMember,
+  completeWorkoutSession,
   createExercise,
   createWorkoutDay,
   createWorkoutPlan,
   deleteExercise,
   deleteWorkoutDay,
   deleteWorkoutPlan,
+  deleteWorkoutSet,
+  deleteWorkoutSession,
+  getActiveSession,
   getApiError,
   getExercises,
+  getMySessions,
   getMyWorkoutAssignments,
   getTenantUsers,
+  getUserSessions,
   getUserWorkouts,
   getWorkoutDays,
   getWorkoutPlans,
+  getWorkoutSessionById,
+  getWorkoutSessions,
+  getWorkoutSets,
   getWorkoutTrainers,
+  logWorkoutSet,
   removeWorkoutDayExercise,
   removeWorkoutTrainerAssignment,
+  startWorkoutSession,
   updateExercise,
   updateWorkoutDay,
   updateWorkoutDayExercise,
   updateWorkoutPlan,
+  updateWorkoutSession,
+  updateWorkoutSet,
   unwrapList,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -46,6 +63,8 @@ const goals = ["WEIGHT_LOSS", "MUSCLE_GAIN", "STRENGTH", "ENDURANCE", "FAT_BURN"
 const difficulties = ["BEGINNER", "INTERMEDIATE", "ADVANCED"];
 const muscleGroupOptions = ["CHEST", "BACK", "LEGS", "SHOULDERS", "ARMS", "CORE", "FULL_BODY"];
 const trainerRoles = ["PRIMARY", "ASSISTANT", "SUBSTITUTE"];
+const sessionStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
+const rpeOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const inputClass =
   "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
 const textareaClass =
@@ -365,6 +384,19 @@ export default function AdminWorkouts() {
   const [configForm, setConfigForm] = useState(emptyConfig);
   const [trainerForm, setTrainerForm] = useState({ trainerId: "", role: trainerRoles[0] });
   const [memberForm, setMemberForm] = useState({ memberId: "", startDate: "", endDate: "" });
+  const [sessions, setSessions] = useState([]);
+  const [setLogs, setSetLogs] = useState([]);
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [activeSession, setActiveSession] = useState(null);
+  const [sessionStatusFilter, setSessionStatusFilter] = useState("");
+  const [sessionMemberSearch, setSessionMemberSearch] = useState("");
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [setLogsLoading, setSetLogsLoading] = useState(false);
+  const [sessionPage, setSessionPage] = useState(1);
+  const [sessionTotalPages, setSessionTotalPages] = useState(1);
+  const [sessionForm, setSessionForm] = useState({ workoutPlanId: "", workoutDayId: "", assignmentId: "", notes: "" });
+  const [sessionCompleteForm, setSessionCompleteForm] = useState({ energyLevel: "", mood: "", notes: "" });
+  const [setLogForm, setSetLogForm] = useState({ exerciseId: "", setNumber: "", reps: "", weight: "", duration: "", rpe: "" });
 
   const selectedPlan = plans.find((plan) => idOf(plan) === selectedPlanId);
   const selectedMember = members.find((member) => idOf(member) === memberForm.memberId);
@@ -465,6 +497,32 @@ export default function AdminWorkouts() {
     });
   }, [plans, planSearch, goalFilter, difficultyFilter]);
 
+  const handleExportCSV = () => {
+    const headers = ["Workout", "Goal", "Difficulty", "Duration", "Days", "Description", "Trainers"];
+    const rows = filteredPlans.map((plan) => {
+      const totalDays = countOf(plan.days || plan.workoutDays || plan.totalDays);
+      const trainers = (plan.trainers || plan.trainerAssignments || []).map(trainerAssignmentName).join("; ");
+      return [
+        plan.name || plan.title || assignmentPlanName(plan, "Workout plan"),
+        titleCase(metricValue(plan.goal)),
+        titleCase(metricValue(plan.difficulty)),
+        metricValue(plan.duration),
+        totalDays,
+        (plan.description || "").slice(0, 100),
+        trainers,
+      ];
+    });
+
+    const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${cell ?? ""}"`).join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `workout-plans-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const filteredExercises = useMemo(() => {
     const query = exerciseSearch.trim().toLowerCase();
     return exercises.filter((exercise) => {
@@ -529,18 +587,80 @@ export default function AdminWorkouts() {
     }
   };
 
+  const loadSessions = async () => {
+    try {
+      setSessionsLoading(true);
+      if (isMember) {
+        const params = { page: sessionPage, limit: 20 };
+        if (sessionStatusFilter) params.status = sessionStatusFilter;
+        const response = await getMySessions(params, user?.token);
+        const data = response?.data || response;
+        setSessions(listOf(data, ["sessions", "workoutSessions", "data"]));
+        setSessionTotalPages(data?.totalPages || data?.total_page || 1);
+      } else {
+        const params = {};
+        if (sessionStatusFilter) params.status = sessionStatusFilter;
+        if (sessionMemberSearch.trim()) params.memberSearch = sessionMemberSearch.trim();
+        const response = await getWorkoutSessions(params, user?.token);
+        setSessions(listOf(response, ["sessions", "workoutSessions"]));
+      }
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load workout sessions"));
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const loadActiveSession = async () => {
+    try {
+      const response = await getActiveSession(user?.token);
+      const data = response?.data || response;
+      if (data?.id) {
+        setActiveSession(data);
+        setSelectedSessionId(data.id);
+        setSetLogs(listOf(data, ["setLogs", "sets"]));
+      }
+    } catch {
+      setActiveSession(null);
+    }
+  };
+
+  const loadSetLogs = async (sessionId) => {
+    if (!sessionId) {
+      setSetLogs([]);
+      return;
+    }
+
+    try {
+      setSetLogsLoading(true);
+      const response = await getWorkoutSets(sessionId, user?.token);
+      setSetLogs(listOf(response, ["sets", "setLogs"]));
+    } catch (error) {
+      setSetLogs([]);
+      toast.error(getApiError(error, "Unable to load set logs"));
+    } finally {
+      setSetLogsLoading(false);
+    }
+  };
+
   useEffect(() => {
     let isCurrent = true;
 
     const loadInitial = async () => {
       try {
         setLoading(true);
-        const results = await Promise.allSettled([loadPlans(), loadExercises(), loadUsers()]);
+        const canViewSessions = role !== "owner" && role !== "admin";
+        const initialLoads = [loadPlans(), loadExercises(), loadUsers()];
+        if (canViewSessions) initialLoads.push(loadSessions());
+        const results = await Promise.allSettled(initialLoads);
         const plansResult = results[0];
         if (plansResult.status === "rejected") throw plansResult.reason;
         const sideLoadError = results.slice(1).find((result) => result.status === "rejected");
         if (sideLoadError && isCurrent && !isMember) {
           toast.error(getApiError(sideLoadError.reason, "Some workout module data could not be loaded"));
+        }
+        if (isCurrent && canViewSessions) {
+          void loadActiveSession();
         }
       } catch (error) {
         if (isCurrent) toast.error(getApiError(error, "Unable to load workout module"));
@@ -556,6 +676,12 @@ export default function AdminWorkouts() {
     // The loader functions intentionally use the current auth/session values for the initial module hydration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.token, isMember]);
+
+  useEffect(() => {
+    if (role === "owner" || role === "admin") return;
+    void loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatusFilter, sessionMemberSearch, sessionPage]);
 
   useEffect(() => {
     if (!selectedPlanId) {
@@ -822,6 +948,117 @@ export default function AdminWorkouts() {
     });
   };
 
+  const resetSessionForm = () => {
+    setSessionForm({ workoutPlanId: "", workoutDayId: "", assignmentId: "", notes: "" });
+  };
+
+  const resetSessionCompleteForm = () => {
+    setSessionCompleteForm({ energyLevel: "", mood: "", notes: "" });
+  };
+
+  const resetSetLogForm = () => {
+    setSetLogForm({ exerciseId: "", setNumber: "", reps: "", weight: "", duration: "", rpe: "" });
+  };
+
+  const handleStartSession = async (event) => {
+    event.preventDefault();
+    if (!sessionForm.workoutPlanId) {
+      toast.error("Select a workout plan");
+      return;
+    }
+
+    try {
+      const payload = { workoutPlanId: sessionForm.workoutPlanId };
+      if (sessionForm.workoutDayId) payload.workoutDayId = sessionForm.workoutDayId;
+      if (sessionForm.assignmentId) payload.assignmentId = sessionForm.assignmentId;
+      if (sessionForm.notes.trim()) payload.notes = sessionForm.notes.trim();
+      await startWorkoutSession(payload, user?.token);
+      toast.success("Workout session started");
+      resetSessionForm();
+      await loadSessions();
+      await loadActiveSession();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to start workout session"));
+    }
+  };
+
+  const handleCompleteSession = async (sessionId) => {
+    try {
+      const payload = {};
+      if (sessionCompleteForm.energyLevel) payload.energyLevel = Number(sessionCompleteForm.energyLevel);
+      if (sessionCompleteForm.mood) payload.mood = Number(sessionCompleteForm.mood);
+      if (sessionCompleteForm.notes.trim()) payload.notes = sessionCompleteForm.notes.trim();
+      await completeWorkoutSession(sessionId, payload, user?.token);
+      toast.success("Workout session completed");
+      resetSessionCompleteForm();
+      setActiveSession(null);
+      await loadSessions();
+      await loadSetLogs(selectedSessionId === sessionId ? sessionId : "");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to complete workout session"));
+    }
+  };
+
+  const handleSelectSession = (sessionId) => {
+    setSelectedSessionId((current) => {
+      const next = current === sessionId ? "" : sessionId;
+      if (next) {
+          getWorkoutSessionById(next, user?.token).then((response) => {
+          const data = response?.data || response;
+          setSetLogs(listOf(data, ["setLogs", "sets"]));
+        }).catch(() => {
+          void loadSetLogs(next);
+        });
+      } else {
+        setSetLogs([]);
+      }
+      return next;
+    });
+  };
+
+  const handleLogSet = async (event) => {
+    event.preventDefault();
+    if (!selectedSessionId || !setLogForm.exerciseId) {
+      toast.error("Select an exercise");
+      return;
+    }
+
+    try {
+      const payload = {
+        exerciseId: setLogForm.exerciseId,
+        setNumber: setLogForm.setNumber ? Number(setLogForm.setNumber) : undefined,
+        reps: setLogForm.reps ? Number(setLogForm.reps) : undefined,
+        weight: setLogForm.weight ? Number(setLogForm.weight) : undefined,
+        duration: setLogForm.duration ? Number(setLogForm.duration) : undefined,
+        rpe: setLogForm.rpe ? Number(setLogForm.rpe) : undefined,
+      };
+      await logWorkoutSet(selectedSessionId, payload, user?.token);
+      toast.success("Set logged");
+      resetSetLogForm();
+      await loadSetLogs(selectedSessionId);
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to log set"));
+    }
+  };
+
+  const handleDeleteSet = async (setId) => {
+    try {
+      await deleteWorkoutSet(selectedSessionId, setId, user?.token);
+      toast.success("Set removed");
+      await loadSetLogs(selectedSessionId);
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to delete set"));
+    }
+  };
+
+  const memberNameFromSession = (session) => {
+    return session?.member?.name || session?.member?.fullName || session?.memberName || session?.user?.name || session?.userName || session?.memberId || session?.userId || "-";
+  };
+
+  const exerciseNameFromSet = (setLog) => {
+    return setLog?.exercise?.name || setLog?.exerciseName || exercises.find((e) => idOf(e) === setLog?.exerciseId)?.name || "-";
+  };
+
   return (
     <div className="space-y-5">
       <Card className="p-4">
@@ -829,13 +1066,14 @@ export default function AdminWorkouts() {
           <SectionTitle
             icon={Dumbbell}
             title="Workout Management"
-            detail="Plans, workout days, exercise configuration, trainer assignment, and member assignment."
+            detail="Plans, workout days, exercise configuration, trainer and member assignment, and workout session tracking."
           />
           <div className="grid grid-cols-2 gap-2 sm:flex">
             {[
               { key: "plans", label: "Plans" },
               { key: "days", label: "Days" },
               { key: "exercises", label: "Exercises" },
+              { key: "sessions", label: "Sessions", hidden: role === "owner" || role === "admin" },
               { key: "assignments", label: "Assignments", hidden: isMember },
             ]
               .filter((tab) => !tab.hidden)
@@ -918,7 +1156,7 @@ export default function AdminWorkouts() {
           )}
 
           <Card className="overflow-hidden">
-            <div className="grid gap-3 border-b border-gray-200 p-4 lg:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+            <div className="grid gap-3 border-b border-gray-200 p-4 lg:grid-cols-[minmax(0,1fr)_12rem_12rem_auto]">
               <div className="flex items-center gap-2 rounded-md border border-gray-200 px-3">
                 <Search size={17} className="text-gray-400" />
                 <input className="h-10 min-w-0 flex-1 text-sm outline-none" value={planSearch} onChange={(event) => setPlanSearch(event.target.value)} placeholder="Search workout plans..." />
@@ -931,6 +1169,13 @@ export default function AdminWorkouts() {
                 <option value="">All Levels</option>
                 {difficulties.map((level) => <option key={level} value={level}>{titleCase(level)}</option>)}
               </select>
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Download size={16} /> Export CSV
+              </button>
             </div>
             <div className="divide-y divide-gray-100">
               <div className={`hidden gap-3 bg-gray-100 px-0 py-3 text-xs font-semibold uppercase text-gray-500 lg:grid ${adminPlanGridClass} lg:items-center`}>
@@ -1303,6 +1548,294 @@ export default function AdminWorkouts() {
               </div>
             </div>
           </Card>
+        </section>
+      )}
+
+      {activeTab === "sessions" && role !== "owner" && role !== "admin" && (
+        <section className="space-y-5">
+          <Card className="p-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <SectionTitle icon={Play} title="Workout Sessions" detail="Track workout sessions, log sets, and monitor progress." />
+              <div className="flex flex-wrap gap-2">
+                <select className={inputClass + " w-auto"} value={sessionStatusFilter} onChange={(event) => setSessionStatusFilter(event.target.value)}>
+                  <option value="">All Status</option>
+                  {sessionStatuses.map((status) => <option key={status} value={status}>{titleCase(status)}</option>)}
+                </select>
+                {!isMember && (
+                  <div className="flex h-10 items-center gap-2 rounded-md border border-gray-200 bg-white px-3">
+                    <Search size={17} className="text-gray-400" />
+                    <input className="min-w-0 flex-1 text-sm outline-none" value={sessionMemberSearch} onChange={(event) => setSessionMemberSearch(event.target.value)} placeholder="Search member..." />
+                  </div>
+                )}
+                <button type="button" onClick={() => void loadSessions()} className={buttonClass} disabled={sessionsLoading}>
+                  {sessionsLoading ? "Loading..." : "Refresh"}
+                </button>
+              </div>
+            </div>
+          </Card>
+
+          {activeSession && (
+            <Card className="border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <Activity size={20} className="text-blue-600" />
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">Active Session In Progress</p>
+                    <p className="text-xs text-blue-700">
+                      {activeSession.workoutDay?.title || activeSession.plan?.name || "Workout"}
+                      {activeSession.startTime ? ` \u00B7 Started ${displayDate(activeSession.startTime)}` : ""}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => { setSelectedSessionId(activeSession.id); }} className={primaryButtonClass}>
+                  <Play size={16} /> Resume
+                </button>
+              </div>
+            </Card>
+          )}
+
+          <div className="grid gap-5 xl:grid-cols-[20rem_minmax(0,1fr)]">
+            <div className="space-y-4">
+              {!isMember && (
+                <Card className="p-3">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-950">Start Session</h3>
+                      <p className="mt-1 text-xs leading-5 text-gray-500">Begin a new workout session for a member.</p>
+                    </div>
+                    <Play size={18} className="mt-0.5 text-gray-400" />
+                  </div>
+                  <form onSubmit={handleStartSession} className="grid gap-2">
+                    <Field label="Workout Plan">
+                      <select className={inputClass} value={sessionForm.workoutPlanId} onChange={(event) => setSessionForm({ ...sessionForm, workoutPlanId: event.target.value, workoutDayId: "" })}>
+                        <option value="">Select plan</option>
+                        {plans.map((plan) => <option key={idOf(plan)} value={idOf(plan)}>{plan.name || plan.title}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Day (optional)">
+                      <select className={inputClass} value={sessionForm.workoutDayId} onChange={(event) => setSessionForm({ ...sessionForm, workoutDayId: event.target.value })} disabled={!sessionForm.workoutPlanId}>
+                        <option value="">All days</option>
+                        {(sessionForm.workoutPlanId ? plans.find((p) => idOf(p) === sessionForm.workoutPlanId)?.days || days : []).map((day) => (
+                          <option key={idOf(day)} value={idOf(day)}>Day {day.dayNumber || "-"} - {day.title || day.name || "Untitled"}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Assignment (optional)">
+                      <select className={inputClass} value={sessionForm.assignmentId} onChange={(event) => setSessionForm({ ...sessionForm, assignmentId: event.target.value })}>
+                        <option value="">No assignment</option>
+                        {assignments.map((a) => <option key={idOf(a)} value={idOf(a)}>{a.member?.name || a.memberName || idOf(a)}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Notes">
+                      <input className={inputClass} value={sessionForm.notes} onChange={(event) => setSessionForm({ ...sessionForm, notes: event.target.value })} placeholder="Session focus" />
+                    </Field>
+                    <button type="submit" className={primaryButtonClass} disabled={!sessionForm.workoutPlanId}>
+                      <Play size={16} /> Start Session
+                    </button>
+                  </form>
+                </Card>
+              )}
+
+              <Card className="overflow-hidden">
+                <div className="border-b border-gray-200 px-3 py-2 text-xs font-semibold uppercase text-gray-500">
+                  {isMember ? "My Sessions" : "All Sessions"}
+                  <span className="ml-2 font-normal normal-case text-gray-400">({sessions.length})</span>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {!sessionsLoading && sessions.map((session) => {
+                    const sessionId = idOf(session);
+                    const isSelected = selectedSessionId === sessionId;
+                    const status = session.status || "SCHEDULED";
+                    return (
+                      <button
+                        key={sessionId}
+                        type="button"
+                        onClick={() => handleSelectSession(sessionId)}
+                        className={`w-full text-left px-3 py-3 transition hover:bg-gray-50 ${isSelected ? "bg-blue-50/60" : ""}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-gray-950 truncate">{isMember ? (session.plan?.name || session.planName || "Workout") : memberNameFromSession(session)}</span>
+                          <span className={`inline-flex shrink-0 h-6 items-center rounded-full px-2 text-xs font-medium ${
+                            status === "COMPLETED" ? "bg-emerald-50 text-emerald-700" :
+                            status === "IN_PROGRESS" ? "bg-blue-50 text-blue-700" :
+                            status === "CANCELLED" ? "bg-red-50 text-red-700" :
+                            "bg-gray-100 text-gray-600"
+                          }`}>{titleCase(status)}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500 truncate">
+                          {session.plan?.name || session.planName || ""}
+                          {session.startedAt ? ` \u00B7 ${displayDate(session.startedAt)}` : ""}
+                        </p>
+                        {!isMember && session.member?.name && (
+                          <p className="mt-0.5 text-xs text-gray-400">{session.member.name}</p>
+                        )}
+                      </button>
+                    );
+                  })}
+                  {sessionsLoading && (
+                    <div className="px-3 py-6 text-center text-sm text-gray-500">Loading sessions...</div>
+                  )}
+                  {!sessionsLoading && !sessions.length && (
+                    <div className="px-3 py-6 text-center text-sm text-gray-500">No workout sessions found.</div>
+                  )}
+                </div>
+                {isMember && sessionTotalPages > 1 && (
+                  <div className="flex items-center justify-between border-t border-gray-100 px-3 py-2">
+                    <button type="button" className={buttonClass} disabled={sessionPage <= 1} onClick={() => setSessionPage((p) => Math.max(1, p - 1))}>
+                      Previous
+                    </button>
+                    <span className="text-xs text-gray-500">Page {sessionPage} of {sessionTotalPages}</span>
+                    <button type="button" className={buttonClass} disabled={sessionPage >= sessionTotalPages} onClick={() => setSessionPage((p) => p + 1)}>
+                      Next
+                    </button>
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            <div className="space-y-4">
+              {selectedSessionId ? (
+                <>
+                  {(() => {
+                    const session = sessions.find((s) => idOf(s) === selectedSessionId);
+                    if (!session) return <Card className="p-6 text-center text-sm text-gray-500">Session not found.</Card>;
+                    const status = session.status || "SCHEDULED";
+                    const isActive = status === "IN_PROGRESS";
+                    const isCompleted = status === "COMPLETED";
+                    return (
+                      <>
+                        <Card className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-base font-semibold text-gray-950">{session.plan?.name || session.planName || "Workout Session"}</h3>
+                              <p className="mt-1 text-sm text-gray-500">
+                                {memberNameFromSession(session)}
+                                {session.startedAt ? ` \u00B7 Started ${displayDate(session.startedAt)}` : ""}
+                                {session.completedAt ? ` \u00B7 Completed ${displayDate(session.completedAt)}` : ""}
+                              </p>
+                              {session.notes && <p className="mt-2 text-sm text-gray-600">{session.notes}</p>}
+                            </div>
+                            <div className="flex shrink-0 gap-2">
+                              {isActive && (
+                                <form onSubmit={(e) => { e.preventDefault(); void handleCompleteSession(selectedSessionId); }} className="flex flex-wrap items-end gap-2">
+                                  <Field label="Energy">
+                                    <select className={inputClass + " w-20"} value={sessionCompleteForm.energyLevel} onChange={(e) => setSessionCompleteForm({ ...sessionCompleteForm, energyLevel: e.target.value })}>
+                                      <option value="">-</option>
+                                      {[...Array(10)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                                    </select>
+                                  </Field>
+                                  <Field label="Mood">
+                                    <select className={inputClass + " w-20"} value={sessionCompleteForm.mood} onChange={(e) => setSessionCompleteForm({ ...sessionCompleteForm, mood: e.target.value })}>
+                                      <option value="">-</option>
+                                      {[...Array(10)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                                    </select>
+                                  </Field>
+                                  <Field label="Notes">
+                                    <input className={inputClass + " w-40"} value={sessionCompleteForm.notes} onChange={(e) => setSessionCompleteForm({ ...sessionCompleteForm, notes: e.target.value })} placeholder="Session notes" />
+                                  </Field>
+                                  <button type="submit" className={primaryButtonClass}>
+                                    <StopCircle size={16} /> End Session
+                                  </button>
+                                </form>
+                              )}
+                              {!isCompleted && (
+                                <button type="button" onClick={() => void deleteWorkoutSession(selectedSessionId, user?.token).then(() => { toast.success("Session cancelled"); setSelectedSessionId(""); setSetLogs([]); void loadSessions(); }).catch((error) => toast.error(getApiError(error, "Unable to cancel session")))} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-50">
+                                  <Trash size={16} /> Cancel
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </Card>
+
+                        <Card className="overflow-hidden">
+                          <div className="border-b border-gray-200 p-4">
+                            <h3 className="font-semibold text-gray-950">
+                              Set Logs
+                              <span className="ml-2 text-sm font-normal text-gray-500">({setLogs.length} sets)</span>
+                            </h3>
+                          </div>
+
+                          {isActive && (
+                            <form onSubmit={handleLogSet} className="grid gap-3 border-b border-gray-200 bg-gray-50 p-4 md:grid-cols-12 md:items-end">
+                              <Field label="Exercise" className="md:col-span-3">
+                                <select className={inputClass} value={setLogForm.exerciseId} onChange={(event) => setSetLogForm({ ...setLogForm, exerciseId: event.target.value })}>
+                                  <option value="">Select exercise</option>
+                                  {exercises.map((exercise) => <option key={idOf(exercise)} value={idOf(exercise)}>{exercise.name}</option>)}
+                                </select>
+                              </Field>
+                              <Field label="Set #" className="md:col-span-1">
+                                <input className={inputClass} type="number" min="1" value={setLogForm.setNumber} onChange={(event) => setSetLogForm({ ...setLogForm, setNumber: event.target.value })} placeholder="1" />
+                              </Field>
+                              <Field label="Weight" className="md:col-span-2">
+                                <input className={inputClass} type="number" min="0" step="0.5" value={setLogForm.weight} onChange={(event) => setSetLogForm({ ...setLogForm, weight: event.target.value })} placeholder="kg" />
+                              </Field>
+                              <Field label="Reps" className="md:col-span-2">
+                                <input className={inputClass} type="number" min="0" value={setLogForm.reps} onChange={(event) => setSetLogForm({ ...setLogForm, reps: event.target.value })} placeholder="0" />
+                              </Field>
+                              <Field label="Duration" className="md:col-span-2">
+                                <input className={inputClass} value={setLogForm.duration} onChange={(event) => setSetLogForm({ ...setLogForm, duration: event.target.value })} placeholder="sec" />
+                              </Field>
+                              <Field label="RPE" className="md:col-span-2">
+                                <select className={inputClass} value={setLogForm.rpe} onChange={(event) => setSetLogForm({ ...setLogForm, rpe: event.target.value })}>
+                                  <option value="">RPE</option>
+                                  {rpeOptions.map((rpe) => <option key={rpe} value={rpe}>{rpe}</option>)}
+                                </select>
+                              </Field>
+                              <button type="submit" className={`${primaryButtonClass} md:col-span-12`} disabled={!setLogForm.exerciseId}>
+                                <Target size={16} /> Log Set
+                              </button>
+                            </form>
+                          )}
+
+                          <div className="overflow-x-auto">
+                            <table className="min-w-[32rem] w-full text-left text-sm">
+                              <thead className="bg-gray-100 text-xs uppercase text-gray-500">
+                                <tr>
+                                  <th className="p-3">Exercise</th>
+                                  <th className="p-3 text-center">Set</th>
+                                  <th className="p-3 text-center">Weight</th>
+                                  <th className="p-3 text-center">Reps</th>
+                                  <th className="p-3 text-center">Duration</th>
+                                  <th className="p-3 text-center">RPE</th>
+                                  {isActive && <th className="p-3 text-right">Action</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100 bg-white">
+                                {setLogs.length ? setLogs.map((setLog) => (
+                                  <tr key={idOf(setLog)} className="hover:bg-gray-50">
+                                    <td className="p-3 font-medium text-gray-950">{exerciseNameFromSet(setLog)}</td>
+                                    <td className="p-3 text-center">{metricValue(setLog.setNumber)}</td>
+                                    <td className="p-3 text-center">{metricValue(setLog.weight)}</td>
+                                    <td className="p-3 text-center">{metricValue(setLog.reps)}</td>
+                                    <td className="p-3 text-center">{metricValue(setLog.duration)}</td>
+                                    <td className="p-3 text-center">{setLog.rpe ? setLog.rpe : "-"}</td>
+                                    {isActive && (
+                                      <td className="p-3 text-right">
+                                        <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50" onClick={() => void handleDeleteSet(idOf(setLog))} aria-label="Delete set log"><Trash size={14} /></button>
+                                      </td>
+                                    )}
+                                  </tr>
+                                )) : (
+                                  <tr><td colSpan={isActive ? 7 : 6} className="p-6 text-center text-sm text-gray-500">{setLogsLoading ? "Loading set logs..." : "No sets logged yet."}</td></tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </Card>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <Card className="flex min-h-[15rem] items-center justify-center">
+                  <div className="text-center text-sm text-gray-500">
+                    <Play size={32} className="mx-auto mb-2 text-gray-300" />
+                    <p>Select a session from the left panel to view details and log sets.</p>
+                  </div>
+                </Card>
+              )}
+            </div>
+          </div>
         </section>
       )}
 

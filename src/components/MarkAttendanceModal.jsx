@@ -47,6 +47,7 @@ export default function MarkAttendanceModal({ isOpen, onClose, onSave, editData,
             <option value="PRESENT">PRESENT</option>
             <option value="ABSENT">ABSENT</option>
             <option value="LATE">LATE</option>
+            <option value="PENDING">PENDING</option>
           </select>
         </div>
 

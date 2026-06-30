@@ -8,7 +8,9 @@ export const MODULE_PERMISSIONS = [
   { key: "staff", label: "Staff", actions: ["read", "create", "update", "delete"] },
   { key: "permissions", label: "Permissions", actions: ["read", "assign", "remove"] },
   { key: "gyms", label: "Platform Gyms", actions: ["read", "create", "edit", "delete"] },
-  { key: "attendance", label: "Attendance" },
+  { key: "saas-plans", label: "SaaS Plans", actions: ["read", "create", "update", "delete"] },
+  { key: "saas-features", label: "SaaS Features", actions: ["read", "create", "update", "delete"] },
+  { key: "attendance", label: "Attendance", actions: ["mark", "view", "update", "delete", "export", "force.checkout"] },
   { key: "subscriptions", label: "Subscriptions" },
   { key: "classes", label: "Classes" },
   { key: "workouts", label: "Workouts" },
@@ -16,6 +18,7 @@ export const MODULE_PERMISSIONS = [
   { key: "products", label: "Products" },
   { key: "facilities", label: "Facilities" },
   { key: "facility-maintenance", label: "Facility Maintenance", actions: ["view", "create", "edit", "delete"] },
+  { key: "equipments", label: "Equipments", actions: ["view", "create", "edit", "delete", "maintenance"] },
   { key: "finance", label: "Finance" },
   { key: "reports", label: "Reports", actions: ["view", "create"] },
   { key: "communication", label: "Communication" },
@@ -76,6 +79,7 @@ const STAFF_MODULES = [
   "products",
   "facilities",
   "facility-maintenance",
+  "equipments",
   "reports",
   "communication",
   "reminders",
@@ -103,18 +107,19 @@ function buildPermissions(moduleKeys, actionOverrides = {}) {
 }
 
 export const DEFAULT_ROLE_PERMISSIONS = {
-  platform_admin: buildPermissions(["dashboard", "gyms"]),
+  platform_admin: buildPermissions(["dashboard", "gyms", "saas-plans", "saas-features"]),
   gym_owner: buildPermissions(OWNER_MODULES),
   staff: buildPermissions(STAFF_MODULES, {
     permissions: [],
     finance: ["view"],
     reports: ["view", "create"],
+    attendance: ["mark", "view", "update", "export"],
   }),
   member: buildPermissions(MEMBER_MODULES, {
     dashboard: ["view"],
     plans: ["read"],
     payments: ["view", "create"],
-    attendance: ["view"],
+    attendance: ["mark", "view"],
     subscriptions: ["view"],
     classes: ["view"],
     workouts: ["view"],
@@ -128,12 +133,13 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
   "category:staff:admin": buildPermissions(STAFF_MODULES, {
     finance: ["view"],
     reports: ["view", "create"],
+    attendance: ["mark", "view", "update", "export"],
   }),
   "category:staff:trainer": buildPermissions(
     ["dashboard", "members", "attendance", "subscriptions", "classes", "workouts", "nutrition", "communication"],
     {
       members: ["read"],
-      attendance: ["view", "create"],
+      attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create"],
       classes: ["view", "create", "edit", "delete"],
       workouts: ["view", "create", "edit"],
@@ -147,7 +153,7 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       members: ["read", "create", "update"],
       plans: ["read"],
       payments: ["view", "create", "edit"],
-      attendance: ["view", "create"],
+      attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create", "edit"],
       classes: ["view", "create", "edit", "delete"],
       communication: ["view", "create"],

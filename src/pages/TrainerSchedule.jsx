@@ -20,23 +20,30 @@ import { canAccess, getStaffCategory, normalizeRole } from "../utils/rbac";
 import {
   bookClass,
   cancelBooking,
+  changeSlot,
+  changeSlotPermanent,
   createClass,
   createClassSchedule,
   createClassSlot,
+  deleteClassSchedule,
   deleteClassSlot,
   deleteClass,
   getAllClasses,
   getApiError,
+  getAvailableMembers,
   getClassAttendance,
   getClassBookings,
   getClassById,
   getClassSchedules,
   getMyBookings,
+  getSlotAttendance,
+  getSlotMembers,
   getSlotsBySchedule,
   getTenantUsers,
   getTrainerClasses,
   getUserAttendance,
   markAttendance,
+  getBookingSlotChanges,
   unwrapList,
   unwrapObject,
   updateClass,
@@ -45,6 +52,16 @@ import {
 import ClassModal from "../components/ClassModal";
 import ScheduleModal from "../components/ScheduleModal";
 import MarkAttendanceModal from "../components/MarkAttendanceModal";
+
+const dayNameToNumber = {
+  sunday: "0",
+  monday: "1",
+  tuesday: "2",
+  wednesday: "3",
+  thursday: "4",
+  friday: "5",
+  saturday: "6",
+};
 
 const dayOptions = [
   { value: "0", label: "Sunday" },
@@ -146,7 +163,8 @@ function toBookingDateIso(value, time = "") {
 }
 
 function dayName(value) {
-  const option = dayOptions.find((day) => String(day.value) === String(value));
+  const normalized = dayNameToNumber[String(value).toLowerCase()] ?? value;
+  const option = dayOptions.find((day) => String(day.value) === String(normalized));
   return option?.label || "-";
 }
 
@@ -195,7 +213,8 @@ function normalizeClass(item = {}) {
 
   return {
     id: getId(item),
-    title: item.title || item.name || item.className || "Untitled class",
+    name: item.name || item.title || item.className || "Untitled class",
+    title: item.name || item.title || item.className || "Untitled class",
     description: item.description || item.details || item.sessionDetails || "",
     type: item.type || item.classType || "ONE_TIME",
     startDate: item.startDate || item.date || "",
@@ -213,14 +232,14 @@ function normalizeClass(item = {}) {
       item.trainer?._id ||
       item.assignedTrainer?._id ||
       "",
-    capacity: item.maxCapacity || item.capacity || item.memberCapacity || "",
+    capacity: item.capacity ?? item.maxCapacity ?? item.memberCapacity ?? "",
     duration: item.duration || item.durationMinutes || "",
     level: item.level || "",
     bookedCount:
-      item.bookedCount ||
-      item.totalBookings ||
-      item.bookingsCount ||
-      (Array.isArray(item.bookings) ? item.bookings.length : 0) ||
+      item.bookedCount ??
+      item.totalBookings ??
+      item.bookingsCount ??
+      (Array.isArray(item.bookings) ? item.bookings.length : 0) ??
       0,
     schedules: Array.isArray(schedules) ? schedules.map(normalizeSchedule) : [],
     slots: Array.isArray(slots) ? slots.map(normalizeSlot) : [],
@@ -235,7 +254,7 @@ function normalizeSchedule(item = {}) {
     id: getId(item) || item.id || item._id,
     classId: item.classId || item.gymClassId || item.class?._id || item.class?.id || "",
     date: item.classDate || item.date || item.scheduledDate || item.startDate || item.start,
-    dayOfWeek: item.dayOfWeek ?? item.weekDay ?? item.day ?? "",
+    dayOfWeek: dayNameToNumber[String(item.dayOfWeek ?? "").toLowerCase()] ?? item.dayOfWeek ?? item.weekDay ?? item.day ?? "",
     startTime: item.startTime || item.start || item.time || "",
     endTime: item.endTime || item.end || "",
     trainer:
@@ -257,10 +276,13 @@ function normalizeSlot(item = {}) {
     id: item.id || item._id || item.slotId || "",
     scheduleId: item.scheduleId || item.classScheduleId || item.schedule?.id || item.schedule?._id || "",
     classId: item.classId || item.gymClassId || item.class?.id || item.class?._id || "",
+    date: item.startDate || item.classDate || item.date || "",
     startTime: item.startTime || item.start || item.time || "",
     endTime: item.endTime || item.end || "",
-    capacity: item.capacity || item.maxCapacity || "",
-    bookedCount: item.bookedCount || item.totalBookings || item.bookingsCount || 0,
+    capacity: item.capacity ?? item.maxCapacity ?? "",
+    bookedCount: item.bookedCount ?? item.totalBookings ?? item.bookingsCount ?? 0,
+    remainingSpots: item.remainingSpots ?? item.availableSpots ?? "",
+    isFull: item.isFull ?? false,
     raw: item,
   };
 }
@@ -268,6 +290,7 @@ function normalizeSlot(item = {}) {
 function normalizeBooking(item = {}) {
   const classItem = item.class || item.gymClass || item.classDetails || {};
   const schedule = item.schedule || item.classSchedule || item.session || {};
+  const slot = item.slot || item.classSlot || {};
   const attendance = item.attendance || item.attendanceRecord || {};
 
   const attendanceStatus = String(
@@ -294,13 +317,15 @@ function normalizeBooking(item = {}) {
       classItem.trainer?.name ||
       schedule.trainer?.name ||
       "",
+    slotId: item.slotId || item.bookingSlotId || slot.id || "",
     date: item.bookingDate || item.classDate || item.date || schedule.bookingDate || schedule.classDate || schedule.date || schedule.start,
-    startTime: item.startTime || schedule.startTime || schedule.start,
-    endTime: item.endTime || schedule.endTime || schedule.end,
+    startTime: item.startTime || schedule.startTime || slot.startTime || schedule.start,
+    endTime: item.endTime || schedule.endTime || slot.endTime || schedule.end,
     bookingStatus: item.bookingStatus || item.status || "Booked",
     attendanceStatus,
     attendanceMarked,
     memberName: item.memberName || item.member?.name || item.user?.name || "",
+    dayOfWeek: schedule.dayOfWeek || slot.dayOfWeek || "",
     raw: item,
   };
 }
@@ -314,6 +339,7 @@ function normalizeAttendance(item = {}) {
     memberName: item.memberName || item.member?.name || user.name || user.fullName || "Member",
     trainerName: item.trainerName || item.trainer?.name || item.markedByUser?.name || "",
     status: item.status || item.attendanceStatus || "Attended",
+    attendanceDate: item.attendanceDate || item.markedAt || item.timestamp || "",
     timestamp: item.timestamp || item.createdAt || item.markedAt || "",
     bookingId: item.bookingId || booking.id || "",
     raw: item,
@@ -340,6 +366,7 @@ export default function TrainerSchedule() {
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [bookingDates, setBookingDates] = useState({});
+  const [selectedDate, setSelectedDate] = useState(toDateInputValue());
   const [trainers, setTrainers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState("");
@@ -368,12 +395,13 @@ export default function TrainerSchedule() {
     []
   );
 
-  const loadClassDetails = useCallback(async (classId) => {
+  const loadClassDetails = useCallback(async (classId, date) => {
     if (!classId) return;
+    const queryDate = date || selectedDate;
 
     try {
       const [detailResponse, bookingsResponse, attendanceResponse, schedulesResponse] = await Promise.allSettled([
-        getClassById(classId, authToken),
+        getClassById(classId, authToken, queryDate),
         canManageClasses ? getClassBookings(classId, authToken) : Promise.resolve([]),
         canManageClasses ? getClassAttendance(classId, authToken) : Promise.resolve([]),
         getClassSchedules(classId, authToken),
@@ -392,7 +420,7 @@ export default function TrainerSchedule() {
       if (detailResponse.status === "fulfilled") {
         const detail = normalizeClass(unwrapObject(detailResponse.value));
         const baseSchedules = apiSchedules.length ? apiSchedules : detail.schedules;
-        const schedulesWithSlots = await Promise.all(
+        let schedulesWithSlots = await Promise.all(
           baseSchedules.map(async (schedule) => {
             if (!schedule.id) return schedule;
             if (schedule.slots?.length) return schedule;
@@ -409,6 +437,37 @@ export default function TrainerSchedule() {
           })
         );
         detail.bookedCount = detail.bookedCount || normalizedBookings.length;
+
+        // Group bookings by slotId for accurate per-slot counts
+        const slotBookings = {};
+        normalizedBookings.forEach((booking) => {
+          const slotId = booking.slotId || booking.raw?.slotId;
+          if (slotId) {
+            if (!slotBookings[slotId]) slotBookings[slotId] = 0;
+            const status = String(booking.bookingStatus || booking.raw?.status || "").toLowerCase();
+            if (status === "booked" || !status) {
+              slotBookings[slotId]++;
+            }
+          }
+        });
+
+        // Enrich schedule slots with real booking counts
+        schedulesWithSlots = schedulesWithSlots.map((schedule) => ({
+          ...schedule,
+          slots: (schedule.slots || []).map((slot) => {
+            const bookedCount = slotBookings[slot.id] ?? slot.bookedCount ?? 0;
+            const capacity = Number(slot.capacity) || 0;
+            return { ...slot, bookedCount, remainingSpots: capacity - bookedCount, isFull: bookedCount >= capacity && capacity > 0 };
+          }),
+        }));
+
+        // Also enrich standalone slots
+        detail.slots = (detail.slots || []).map((slot) => {
+          const bookedCount = slotBookings[slot.id] ?? slot.bookedCount ?? 0;
+          const capacity = Number(slot.capacity) || 0;
+          return { ...slot, bookedCount, remainingSpots: capacity - bookedCount, isFull: bookedCount >= capacity && capacity > 0 };
+        });
+
         detail.schedules = schedulesWithSlots;
         selectedClassIdRef.current = detail.id || classId;
         setSelectedClass(detail);
@@ -432,7 +491,7 @@ export default function TrainerSchedule() {
     } catch (error) {
       toast.error(getApiError(error, "Could not load class details"));
     }
-  }, [authToken, canManageClasses, selectedSchedule]);
+  }, [authToken, canManageClasses, selectedDate]);
 
   const loadModuleData = useCallback(async () => {
     try {
@@ -476,30 +535,41 @@ export default function TrainerSchedule() {
         });
       }
 
-      setClasses(nextClasses);
+      // Enrich each class with actual booking count
+      const enrichedClasses = await Promise.all(
+        nextClasses.map(async (classItem) => {
+          try {
+            const bookingsResponse = await getClassBookings(classItem.id, authToken);
+            const bookings = unwrapMaybeList(bookingsResponse, ["bookings", "classBookings"]);
+            return { ...classItem, bookedCount: bookings.length };
+          } catch {
+            return classItem;
+          }
+        })
+      );
+
+      setClasses(enrichedClasses);
       setMyBookings(nextBookings);
       setTrainerClasses(nextTrainerClasses);
-      localStorage.setItem("classes", JSON.stringify(nextClasses));
+      localStorage.setItem("classes", JSON.stringify(enrichedClasses));
 
       const currentSelectedClassId = selectedClassIdRef.current;
       const trainerSelectedClass = isTrainer ? nextTrainerClasses[0] : null;
-      const defaultClass = trainerSelectedClass || nextClasses[0];
+      const defaultClass = trainerSelectedClass || enrichedClasses[0];
 
       if (!currentSelectedClassId && defaultClass) {
         selectedClassIdRef.current = defaultClass.id;
-        setSelectedClass(defaultClass);
         setSelectedSlot(defaultClass.slots?.[0] || null);
         await loadClassDetails(defaultClass.id);
       } else if (currentSelectedClassId) {
         const selectedIsTrainerClass = isTrainer
-          ? nextTrainerClasses.some((item) => item.id === currentSelectedClassId) || nextClasses.some((item) => item.id === currentSelectedClassId)
+          ? nextTrainerClasses.some((item) => item.id === currentSelectedClassId) || enrichedClasses.some((item) => item.id === currentSelectedClassId)
           : true;
 
         if (selectedIsTrainerClass) {
           await loadClassDetails(currentSelectedClassId);
         } else if (defaultClass) {
           selectedClassIdRef.current = defaultClass.id;
-          setSelectedClass(defaultClass);
           setSelectedSlot(defaultClass.slots?.[0] || null);
           await loadClassDetails(defaultClass.id);
         }
@@ -564,9 +634,11 @@ export default function TrainerSchedule() {
 
   const handleSelectClass = async (classItem) => {
     selectedClassIdRef.current = classItem.id;
-    setSelectedClass(classItem);
     setSelectedSchedule(null);
     setSelectedSlot(classItem.slots?.[0] || null);
+    setSlotMembers([]);
+    setSlotMembersSlotId(null);
+    setSlotChanges([]);
     await loadClassDetails(classItem.id);
   };
 
@@ -608,10 +680,10 @@ export default function TrainerSchedule() {
       return;
     }
 
-    if (!keys.includes(selectedScheduleDay)) {
-      setSelectedScheduleDay(keys[0]);
-    }
-  }, [selectedClass?.schedules?.length, selectedScheduleDay]);
+        if (!selectedScheduleDay && keys.length) {
+        setSelectedScheduleDay(keys[0]);
+      }
+    }, [selectedClass?.id]);
 
   const handleEditClass = (classItem) => {
     setClassModalEdit(classItem);
@@ -653,6 +725,112 @@ export default function TrainerSchedule() {
 
   const [isAttendanceModalOpen, setAttendanceModalOpen] = useState(false);
   const [attendanceModalEdit, setAttendanceModalEdit] = useState(null);
+  const [slotMembers, setSlotMembers] = useState([]);
+  const [slotMembersSlotId, setSlotMembersSlotId] = useState(null);
+  const [slotChanges, setSlotChanges] = useState([]);
+  const [showAssignPanel, setShowAssignPanel] = useState(false);
+  const [availableMembers, setAvailableMembers] = useState([]);
+  const [assignSlotId, setAssignSlotId] = useState("");
+  const [assignBookingDate, setAssignBookingDate] = useState(toDateInputValue);
+  const [slotAttendanceRecords, setSlotAttendanceRecords] = useState([]);
+  const [slotAttendanceSlotId, setSlotAttendanceSlotId] = useState(null);
+
+  const loadSlotMembers = async (slotId) => {
+    if (!slotId) return;
+    try {
+      const response = await getSlotMembers(slotId, authToken);
+      setSlotMembers(unwrapMaybeList(response, ["members", "bookings"]));
+      setSlotMembersSlotId(slotId);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not load slot members"));
+    }
+  };
+
+  const loadBookingSlotChanges = async (bookingId) => {
+    if (!bookingId) return;
+    try {
+      const response = await getBookingSlotChanges(bookingId, authToken);
+      setSlotChanges(unwrapMaybeList(response, ["slotChanges", "changes"]));
+    } catch (error) {
+      toast.error(getApiError(error, "Could not load slot changes"));
+    }
+  };
+
+  const loadAvailableMembers = async (slotId, date) => {
+    if (!selectedClass?.id || !slotId) return;
+    try {
+      const response = await getAvailableMembers(selectedClass.id, slotId, date, authToken);
+      setAvailableMembers(unwrapList(response));
+    } catch (error) {
+      toast.error(getApiError(error, "Could not load available members"));
+    }
+  };
+
+  const loadSlotAttendance = async (slotId) => {
+    if (!slotId) return;
+    try {
+      const response = await getSlotAttendance(slotId, authToken);
+      setSlotAttendanceRecords(unwrapList(response));
+      setSlotAttendanceSlotId(slotId);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not load slot attendance"));
+    }
+  };
+
+  const handleAssignMember = async (memberId) => {
+    if (!selectedClass?.id || !assignSlotId) return;
+    try {
+      setSaving(true);
+      await bookClass(selectedClass.id, { slotId: assignSlotId, bookingDate: toBookingDateIso(assignBookingDate, "00:00"), memberId }, authToken);
+      toast.success("Member assigned to class");
+      setShowAssignPanel(false);
+      setAvailableMembers([]);
+      await loadClassDetails(selectedClassIdRef.current);
+      await loadModuleData();
+    } catch (error) {
+      toast.error(getApiError(error, "Could not assign member"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteScheduleDay = async (schedule) => {
+    const scheduleId = schedule?.id || schedule?.scheduleId;
+    if (!scheduleId) {
+      toast.error("Schedule id is missing");
+      return;
+    }
+    if (!window.confirm("Delete this schedule and its slots?")) return;
+    try {
+      setSaving(true);
+      await deleteClassSchedule(scheduleId, authToken);
+      toast.success("Schedule deleted");
+      await loadModuleData();
+      if (selectedClassIdRef.current) await loadClassDetails(selectedClassIdRef.current);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not delete schedule"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSlotChange = async (bookingId, newSlotId, isPermanent = false) => {
+    try {
+      setSaving(true);
+      if (isPermanent) {
+        await changeSlotPermanent(bookingId, { newSlotId }, authToken);
+        toast.success("Permanent slot change applied");
+      } else {
+        await changeSlot(bookingId, { newSlotId, date: selectedDate }, authToken);
+        toast.success("Temporary slot change applied");
+      }
+      await loadModuleData();
+    } catch (error) {
+      toast.error(getApiError(error, "Could not change slot"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleClassModalSave = async (payload) => {
     // Only trainer/owner/admin can create/edit classes
@@ -739,8 +917,8 @@ export default function TrainerSchedule() {
   };
 
   const handleAttendanceModalSave = async (payload) => {
-    if (!isMember) {
-      toast.error("Only members can mark class attendance");
+    if (!canManageClasses) {
+      toast.error("Only staff can mark class attendance");
       return;
     }
 
@@ -754,7 +932,6 @@ export default function TrainerSchedule() {
       await markAttendance({
         bookingId: payload.bookingId,
         status: payload.status,
-        attendanceStatus: payload.status,
       }, authToken);
       toast.success("Attendance marked");
       setAttendanceModalEdit(null);
@@ -768,29 +945,24 @@ export default function TrainerSchedule() {
     }
   };
 
-  const handleBookClass = async (classId) => {
+  const handleBookClass = async (classId, slot) => {
     if (!isMember) {
       toast.error("Only members can book gym classes");
       return;
     }
 
+    const targetSlot = slot || selectedSlot;
+    if (!targetSlot?.id) {
+      toast.error("Select a slot before booking this class");
+      return;
+    }
+
     try {
       const bookingDate = toBookingDateIso(
-        bookingDates[classId] || toDateInputValue(),
-        selectedSlot?.startTime || ""
+        targetSlot.date || toDateInputValue(),
+        "00:00"
       );
-      if (!selectedSlot?.id) {
-        toast.error("Select a slot before booking this class");
-        return;
-      }
-      const bookingPayload = {
-        slotId: selectedSlot.id,
-        bookingDate,
-      };
-      if (selectedClass?.type === "ONE_TIME") {
-        bookingPayload.isPermanent = false;
-      }
-      await bookClass(classId, bookingPayload, authToken);
+      await bookClass(classId, { slotId: targetSlot.id, bookingDate }, authToken);
       toast.success("Class booked");
       await loadModuleData();
     } catch (error) {
@@ -799,18 +971,13 @@ export default function TrainerSchedule() {
   };
 
   const handleCancelBooking = async (booking) => {
-    if (!isMember) {
-      toast.error("Only members can cancel booked gym classes");
-      return;
-    }
-
     try {
-      const classId = booking?.classId || booking?.raw?.classId || booking?.raw?.gymClassId;
-      if (!classId) {
-        toast.error("Class id is missing for this booking");
+      const bookingId = booking?.id || booking?.bookingId;
+      if (!bookingId) {
+        toast.error("Booking id is missing for this booking");
         return;
       }
-      await cancelBooking(classId, authToken);
+      await cancelBooking(bookingId, authToken);
       toast.success("Booking cancelled");
       await loadModuleData();
     } catch (error) {
@@ -819,7 +986,15 @@ export default function TrainerSchedule() {
   };
 
   const selectedSchedules = selectedClass?.schedules || [];
-  const allRecurringSlots = selectedSchedules.flatMap((schedule) => schedule.slots || []);
+  const slotDayOfWeek = {};
+  selectedSchedules.forEach((schedule) =>
+    (schedule.slots || []).forEach((slot) => {
+      if (slot.id) slotDayOfWeek[slot.id] = schedule.dayOfWeek;
+    })
+  );
+  const allRecurringSlots = selectedSchedules.flatMap((schedule) =>
+    (schedule.slots || []).map((slot) => ({ ...slot, dayOfWeek: schedule.dayOfWeek }))
+  );
   const visibleSlots = isRecurringClass ? allRecurringSlots : oneTimeSlots;
   const selectedDaySlots = isRecurringClass
     ? selectedDaySchedules.flatMap((schedule) =>
@@ -838,7 +1013,9 @@ export default function TrainerSchedule() {
         <aside className="border-b border-gray-200 bg-gray-50/70 p-4 lg:border-b-0 lg:border-r">
           <div className="mb-5 flex items-center justify-between">
             <div>
-              <h1 className="text-base font-semibold text-gray-950">Classes</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-semibold text-gray-950">Classes</h1>
+              </div>
               <p className="mt-1 text-[11px] text-gray-500">
                 {filteredClasses.length} of {visibleClasses.length} shown
               </p>
@@ -933,27 +1110,29 @@ export default function TrainerSchedule() {
                         <p className="mt-2 max-w-3xl text-xs text-gray-500">{selectedClass.description || "No class description added."}</p>
                       </div>
                     </div>
-                  <div className="flex flex-wrap gap-2">
-                    {canEditClass && (
-                      <button
-                        type="button"
-                        onClick={() => handleEditClass(selectedClass)}
-                        className="rounded-md border border-blue-300 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line" aria-hidden="true"><path d="M13 21h8"></path><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path></svg>
-                      </button>
-                    )}
-                    {canDeleteClass && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteClass(selectedClass.id)}
-                        disabled={saving}
-                        className="rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 lucide-trash-2" aria-hidden="true"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                      </button>
-                    )}
-                  </div>
+                  {!isMember && (
+                    <div className="flex flex-wrap gap-2">
+                      {canEditClass && (
+                        <button
+                          type="button"
+                          onClick={() => handleEditClass(selectedClass)}
+                          className="rounded-md border border-blue-300 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line" aria-hidden="true"><path d="M13 21h8"></path><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path></svg>
+                        </button>
+                      )}
+                      {canDeleteClass && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClass(selectedClass.id)}
+                          disabled={saving}
+                          className="rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 lucide-trash-2" aria-hidden="true"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-5 grid gap-4 md:grid-cols-5">
@@ -962,7 +1141,7 @@ export default function TrainerSchedule() {
                     ["Level", selectedClass.level || "ALL"],
                     ["Duration", selectedClass.duration ? `${selectedClass.duration} mins` : "-"],
                     ["Date Range", `${formatDate(selectedClass.startDate)} - ${formatDate(selectedClass.endDate)}`],
-                    ["Bookings", selectedClass.bookedCount || classBookings.length || 0],
+                    ["Bookings", classBookings.length || 0],
                   ].map(([label, value]) => (
                     <div key={label} className="border-gray-200 md:border-l md:pl-4 first:md:border-l-0 first:md:pl-0">
                       <p className="text-[11px] font-medium text-gray-500">{label}</p>
@@ -970,6 +1149,22 @@ export default function TrainerSchedule() {
                     </div>
                   ))}
                 </div>
+                {isRecurringClass && (
+                  <div className="mt-3 flex items-center gap-3">
+                    <label className="text-xs font-medium text-gray-500">View availability for date:</label>
+                    <input
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => {
+                        setSelectedDate(e.target.value);
+                        if (selectedClassIdRef.current) {
+                          loadClassDetails(selectedClassIdRef.current, e.target.value);
+                        }
+                      }}
+                      className="h-8 rounded border border-gray-300 px-2 text-sm"
+                    />
+                  </div>
+                )}
               </section>
 
               <section className="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -1052,22 +1247,24 @@ export default function TrainerSchedule() {
                             : oneTimeSlots.length;
                           const isActive = isRecurringClass ? activeScheduleDay === day.value : true;
                           return (
-                            <button
-                              key={day.value}
-                              type="button"
-                              onClick={() => isRecurringClass && setSelectedScheduleDay(day.value)}
-                              className={`flex w-full items-center gap-3 rounded-md border p-3 text-left ${
-                                isActive
-                                  ? "border-blue-500 bg-blue-50 text-blue-900"
-                                  : "border-gray-200 bg-white hover:border-blue-300"
-                              }`}
-                            >
-                              <CalendarClock size={20} className={isActive ? "text-blue-600" : "text-gray-500"} />
-                              <span>
-                                <span className="block text-sm font-semibold">{day.label}</span>
-                                <span className="text-xs text-gray-500">{slotCount} Slot{slotCount === 1 ? "" : "s"}</span>
-                              </span>
-                            </button>
+                            <div key={day.value} className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => isRecurringClass && setSelectedScheduleDay(day.value)}
+                                className={`flex flex-1 items-center gap-3 rounded-md border p-3 text-left ${
+                                  isActive
+                                    ? "border-blue-500 bg-blue-50 text-blue-900"
+                                    : "border-gray-200 bg-white hover:border-blue-300"
+                                }`}
+                              >
+                                <CalendarClock size={20} className={isActive ? "text-blue-600" : "text-gray-500"} />
+                                <span>
+                                  <span className="block text-sm font-semibold">{day.label}</span>
+                                  <span className="text-xs text-gray-500">{slotCount} Slot{slotCount === 1 ? "" : "s"}</span>
+                                </span>
+                              </button>
+
+                            </div>
                           );
                         })}
                       </div>
@@ -1119,12 +1316,38 @@ export default function TrainerSchedule() {
                                       {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
                                     </p>
                                     <p className="mt-2 text-sm text-gray-500">
-                                      Capacity: {slot.capacity || "-"} <span className="mx-2">|</span> Booked: {slot.bookedCount || 0}
+                                      Capacity: {slot.capacity || "-"} <span className="mx-2">|</span> Booked: {slot.bookedCount} {slot.remainingSpots !== "" ? <><span className="mx-2">|</span> Remaining: {slot.remainingSpots}</> : ""}
                                     </p>
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="rounded bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Active</span>
+                                  <span className={`rounded px-3 py-1 text-xs font-semibold ${slot.isFull ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{slot.isFull ? "Full" : "Active"}</span>
+                                  {isMember && (
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleBookClass(selectedClass.id, slot);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                                    >
+                                      <CalendarCheck size={14} />
+                                      Book
+                                    </button>
+                                  )}
+                                  {canManageClasses && (
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        loadSlotMembers(slot.id);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                    >
+                                      <Users size={14} />
+                                      Members
+                                    </button>
+                                  )}
                                   { !isMember && (
                                     <>
                                       <button
@@ -1162,13 +1385,39 @@ export default function TrainerSchedule() {
                           </p>
                         )}
                       </div>
+
+                      {slotMembersSlotId && slotMembers.length > 0 && (
+                        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <div className="mb-3 flex items-center justify-between">
+                            <h4 className="text-sm font-semibold text-gray-950">Booked Members</h4>
+                            <button
+                              type="button"
+                              onClick={() => { setSlotMembers([]); setSlotMembersSlotId(null); }}
+                              className="text-xs text-gray-500 hover:text-gray-700"
+                            >
+                              Close
+                            </button>
+                          </div>
+                          <div className="space-y-2">
+                            {slotMembers.map((member) => (
+                              <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto] md:items-center">
+                                <span className="font-medium text-gray-950">{member.user?.name || member.name || "Member"}</span>
+                                <span className="text-gray-500">{member.user?.email || ""}</span>
+                                <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(member.status || member.attendanceStatus || "BOOKED")}`}>
+                                  {titleCase(member.status || member.attendanceStatus || "BOOKED")}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
- {activeTab === "details" && (
+                {activeTab === "details" && (
                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     {[
-                      { label: "Total Bookings", value: classBookings.length || selectedClass.bookedCount || 0, icon: Users, tone: "bg-blue-50 text-blue-700" },
+                      { label: "Total Bookings", value: classBookings.length || 0, icon: Users, tone: "bg-blue-50 text-blue-700" },
                       { label: "Schedules", value: selectedSchedules.length, icon: CalendarClock, tone: "bg-emerald-50 text-emerald-700" },
                       { label: "Total Slots", value: visibleSlots.length, icon: Clock3, tone: "bg-orange-50 text-orange-700" },
                       { label: "Total Capacity", value: `${totalBookedSlots}/${totalCapacity || selectedClass.capacity || 0}`, icon: Users, tone: "bg-violet-50 text-violet-700" },
@@ -1186,16 +1435,244 @@ export default function TrainerSchedule() {
                 )}
 
                 {activeTab === "bookings" && (
-                  <div className="space-y-2 p-4">
-                    {classBookings.map((booking) => (
-                      <div key={booking.id || booking.memberName || booking.classTitle} className="grid gap-3 rounded-lg border border-gray-200 p-3 text-sm md:grid-cols-[1fr_10rem_10rem_auto] md:items-center">
-                        <span className="font-semibold text-gray-950">{booking.memberName || booking.classTitle}</span>
-                        <span className="text-gray-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span>
-                        <span className="text-gray-500">{formatDate(booking.date)}</span>
-                        <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus)}</span>
+                  <div className="space-y-3 p-4">
+                    {!isMember && (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <select
+                          value={slotMembersSlotId || ""}
+                          onChange={(e) => {
+                            const slotId = e.target.value;
+                            if (slotId) loadSlotMembers(slotId);
+                          }}
+                          className="h-9 rounded border border-gray-300 px-3 text-sm outline-none"
+                        >
+                          <option value="">Select a slot to view members</option>
+                          {visibleSlots.map((slot) => (
+                            <option key={slot.id} value={slot.id}>
+                              {isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)} ({slot.bookedCount || 0} booked)
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setShowAssignPanel(!showAssignPanel)}
+                          className={`inline-flex items-center gap-1 rounded-md px-3 py-2 text-xs font-semibold ${
+                            showAssignPanel ? "bg-gray-100 text-gray-700" : "bg-emerald-600 text-white hover:bg-emerald-700"
+                          }`}
+                        >
+                          <Plus size={14} />
+                          {showAssignPanel ? "Close Assign" : "Assign Member"}
+                        </button>
                       </div>
-                    ))}
-                    {!classBookings.length && <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">No bookings returned for this class.</p>}
+                    )}
+
+                    {!isMember && showAssignPanel && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4">
+                        <h4 className="mb-3 text-sm font-semibold text-gray-950">Assign Member to Class</h4>
+                        <div className="mb-3 flex flex-wrap items-center gap-3">
+                          <select
+                            value={assignSlotId}
+                            onChange={(e) => {
+                              const slotId = e.target.value;
+                              setAssignSlotId(slotId);
+                              if (!isRecurringClass && slotId) {
+                                const slot = visibleSlots.find(s => s.id === slotId);
+                                const slotDate = slot?.date || selectedClass?.startDate;
+                                if (slotDate) setAssignBookingDate(toDateInputValue(slotDate));
+                              }
+                            }}
+                            className="h-9 rounded border border-gray-300 px-3 text-sm outline-none"
+                          >
+                            <option value="">Select slot</option>
+                            {visibleSlots.map((slot) => (
+                              <option key={slot.id} value={slot.id}>
+{isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                            </option>
+                          ))}
+                          </select>
+                          {isRecurringClass && (
+                            <input
+                              type="date"
+                              value={assignBookingDate}
+                              onChange={(e) => setAssignBookingDate(e.target.value)}
+                              className="h-9 rounded border border-gray-300 px-3 text-sm outline-none"
+                            />
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => loadAvailableMembers(assignSlotId, assignBookingDate)}
+                            disabled={!assignSlotId || saving}
+                            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                          >
+                            <Users size={14} />
+                            Load Available Members
+                          </button>
+                        </div>
+                        {availableMembers.length > 0 && (
+                          <div className="space-y-2">
+                            {availableMembers.map((member) => (
+                              <div key={member.id || member.userId} className="flex items-center justify-between rounded-md bg-white p-3 text-sm">
+                                <div>
+                                  <p className="font-medium text-gray-950">{member.name || member.fullName}</p>
+                                  <p className="text-xs text-gray-500">{member.email}{member.phoneNumber ? ` | ${member.phoneNumber}` : ""}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAssignMember(member.id || member.userId)}
+                                  disabled={saving}
+                                  className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                  <Plus size={14} />
+                                  Assign
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {assignSlotId && availableMembers.length === 0 && (
+                          <p className="text-sm text-gray-500">No available members. Click "Load Available Members" to refresh.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {!isMember && slotMembersSlotId && slotMembers.length > 0 && (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold text-gray-950">Booked Members</h4>
+                          <button
+                            type="button"
+                            onClick={() => loadSlotAttendance(slotMembersSlotId)}
+                            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                          >
+                            <ClipboardCheck size={14} />
+                            View Attendance
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {slotMembers.map((member) => (
+                            <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto] md:items-center">
+                              <span className="font-medium text-gray-950">{member.user?.name || member.name || "Member"}</span>
+                              <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(member.status || member.attendanceStatus || "BOOKED")}`}>
+                                {titleCase(member.status || member.attendanceStatus || "BOOKED")}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!isMember && slotAttendanceSlotId === slotMembersSlotId && slotAttendanceRecords.length > 0 && (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold text-gray-950">Slot Attendance</h4>
+                          <button
+                            type="button"
+                            onClick={() => { setSlotAttendanceRecords([]); setSlotAttendanceSlotId(null); }}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {slotAttendanceRecords.map((record) => (
+                            <div key={record.id || record.bookingId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto] md:items-center">
+                              <span className="font-medium text-gray-950">{record.booking?.user?.name || record.user?.name || record.memberName || "Member"}</span>
+                              <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(record.status)}`}>
+                                {titleCase(record.status)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      {(isMember ? myBookings.filter((b) => b.classId === selectedClass?.id) : classBookings).map((booking) => (
+                        <div key={booking.id || booking.memberName || booking.classTitle} className="rounded-lg border border-gray-200 p-3 text-sm">
+                          <div className="grid gap-2 md:grid-cols-[1fr_16rem_10rem_auto] md:items-center">
+                            <span className="font-semibold text-gray-950">{booking.memberName || booking.classTitle}</span>
+                            <span className="text-gray-500">{(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) ? dayName(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) + " - " : ""}{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span>
+                            <span className="text-gray-500">{formatDate(booking.date)}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus)}</span>
+                              {booking.attendanceStatus && (
+                                <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
+                                  {titleCase(booking.attendanceStatus)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {booking.id && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {!["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelBooking(booking)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                                >
+                                  <XCircle size={14} />
+                                  Cancel
+                                </button>
+                              )}
+                              {!isMember && canManageClasses && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttendanceModalEdit({
+                                      bookingId: booking.id || booking._id || booking.bookingId || "",
+                                      status: booking.attendanceStatus || "PRESENT",
+                                    });
+                                    setAttendanceModalOpen(true);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                                >
+                                  <CheckCircle2 size={14} />
+                                  Mark Attendance
+                                </button>
+                              )}
+                              {!isMember && booking.slotId && (
+                                <button
+                                  type="button"
+                                  onClick={() => loadBookingSlotChanges(booking.id)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                >
+                                  <RefreshCw size={14} />
+                                  Slot Changes
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {(!isMember ? !classBookings.length : !myBookings.filter((b) => b.classId === selectedClass?.id).length) && (
+                        <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">No bookings found.</p>
+                      )}
+                    </div>
+
+                    {slotChanges.length > 0 && (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold text-gray-950">Slot Change History</h4>
+                          <button
+                            type="button"
+                            onClick={() => setSlotChanges([])}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {slotChanges.map((change) => (
+                            <div key={change.id} className="rounded-md bg-white p-2 text-sm">
+                              <p className="text-gray-950">
+                                {change.isPermanent ? "Permanent" : "Temporary"} change: {formatTime(change.oldSlotId)} → {formatTime(change.newSlotId)}
+                              </p>
+                              {change.date && <p className="text-xs text-gray-500">Date: {formatDate(change.date)}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1204,7 +1681,7 @@ export default function TrainerSchedule() {
                     {classAttendance.map((record) => (
                       <div key={record.id || `${record.memberName}-${record.timestamp}`} className="grid gap-3 rounded-lg border border-gray-200 p-3 text-sm md:grid-cols-[1fr_10rem_auto] md:items-center">
                         <span className="font-semibold text-gray-950">{record.memberName}</span>
-                        <span className="text-gray-500">{record.timestamp ? formatTime(record.timestamp) : record.trainerName || "-"}</span>
+                        <span className="text-gray-500">{record.attendanceDate ? formatDate(record.attendanceDate) + " " + formatTime(record.attendanceDate) : record.trainerName || "-"}</span>
                         <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>{titleCase(record.status)}</span>
                       </div>
                     ))}
@@ -1377,7 +1854,7 @@ export default function TrainerSchedule() {
                         >
                           <p className="text-sm font-semibold text-gray-950">
                             <Clock3 size={14} className="mr-1 inline" />
-                            {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                            {slot.date ? `${formatDate(slot.date)} | ` : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)}
                           </p>
                           <p className="mt-2 text-sm text-gray-700">Capacity: {slot.capacity || "-"}</p>
                           <div className="mt-3 flex flex-wrap gap-2">
@@ -1467,11 +1944,11 @@ export default function TrainerSchedule() {
                                         }}
                                         className="cursor-pointer rounded-md bg-white p-3 ring-1 ring-gray-200 transition hover:bg-gray-50"
                                       >
-                                        <p className="text-sm text-gray-700">
-                                          <Clock3 size={14} className="mr-1 inline" />
-                                          {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
-                                        </p>
-                                        <p className="mt-2 text-sm text-gray-700">Capacity: {slot.capacity || "-"}</p>
+                                          <p className="text-sm text-gray-700">
+                                            <Clock3 size={14} className="mr-1 inline" />
+                                            {slot.date ? `${formatDate(slot.date)} | ` : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                                          </p>
+                                          <p className="mt-2 text-sm text-gray-700">Capacity: {slot.capacity || "-"}</p>
                                         <div className="mt-3 flex flex-wrap gap-2">
                                           {canManageClasses && !isMember && (
                                             <>
@@ -1702,9 +2179,21 @@ export default function TrainerSchedule() {
                 <div key={booking.id || booking.memberName || booking.classTitle} className="rounded-md border border-gray-200 p-3">
                   <p className="font-medium text-gray-950 truncate">{booking.memberName || booking.classTitle}</p>
                   <p className="mt-1 truncate text-sm text-gray-500">{formatDate(booking.date)} | {formatTime(booking.startTime)}</p>
-                  <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                    {titleCase(booking.bookingStatus)}
-                  </span>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
+                      {titleCase(booking.bookingStatus)}
+                    </span>
+                    {booking.id && !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
+                      <button
+                        type="button"
+                        onClick={() => handleCancelBooking(booking)}
+                        className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                      >
+                        <XCircle size={14} />
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
               {!classBookings.length && (
@@ -1722,7 +2211,7 @@ export default function TrainerSchedule() {
               {classAttendance.map((record) => (
                 <div key={record.id || `${record.memberName}-${record.timestamp}`} className="rounded-md border border-gray-200 p-3">
                   <p className="font-medium text-gray-950 truncate">{record.memberName}</p>
-                  <p className="mt-1 truncate text-sm text-gray-500">{record.timestamp ? formatTime(record.timestamp) : record.trainerName || "-"}</p>
+                  <p className="mt-1 truncate text-sm text-gray-500">{record.attendanceDate ? formatDate(record.attendanceDate) + " " + formatTime(record.attendanceDate) : record.trainerName || "-"}</p>
                   <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>
                     {titleCase(record.status)}
                   </span>
@@ -1777,9 +2266,21 @@ export default function TrainerSchedule() {
                     <div key={booking.id || booking.memberName || booking.classTitle} className="rounded-md border border-gray-200 p-3">
                       <p className="font-medium text-gray-950 truncate">{booking.memberName || booking.classTitle}</p>
                       <p className="mt-1 truncate text-sm text-gray-500">{formatDate(booking.date)} | {formatTime(booking.startTime)}</p>
-                      <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                        {titleCase(booking.bookingStatus)}
-                      </span>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
+                          {titleCase(booking.bookingStatus)}
+                        </span>
+                        {booking.id && !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
+                          <button
+                            type="button"
+                            onClick={() => handleCancelBooking(booking)}
+                            className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                          >
+                            <XCircle size={14} />
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {!classBookings.length && (
@@ -1797,7 +2298,7 @@ export default function TrainerSchedule() {
                   {classAttendance.map((record) => (
                     <div key={record.id || `${record.memberName}-${record.timestamp}`} className="rounded-md border border-gray-200 p-3">
                       <p className="font-medium text-gray-950 truncate">{record.memberName}</p>
-                      <p className="mt-1 truncate text-sm text-gray-500">{record.timestamp ? formatTime(record.timestamp) : record.trainerName || "-"}</p>
+                      <p className="mt-1 truncate text-sm text-gray-500">{record.attendanceDate ? formatDate(record.attendanceDate) + " " + formatTime(record.attendanceDate) : record.trainerName || "-"}</p>
                       <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>
                         {titleCase(record.status)}
                       </span>

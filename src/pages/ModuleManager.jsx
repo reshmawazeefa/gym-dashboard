@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { Box, ChevronLeft, ChevronRight, Download, Edit, Minus, Plus, Search, Tag, Trash, Users, RefreshCw, Eye, X } from "lucide-react";
+import { Box, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download, Edit, Minus, Plus, Search, Tag, Trash, Users, Eye, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { moduleDefinitions, statusTone } from "../data/moduleDefinitions";
 import { useAuth } from "../context/AuthContext";
@@ -9,12 +9,19 @@ import AttendanceStatus from "../components/AttendanceStatus";
 import AdminAttendance from "../components/AdminAttendance";
 import AdminEquipments from "../components/AdminEquipments";
 import AdminFacilities from "../components/AdminFacilities";
+import AdminNotifications from "../components/AdminNotifications";
 import AdminWorkouts from "../components/AdminWorkouts";
 import FacilityMaintenance from "../components/FacilityMaintenance";
 import TrainerSchedule from "./TrainerSchedule";
 import NutritionModule from "./NutritionModule";
 import {
   getApiError,
+  getBillingPlans,
+  getCurrentSubscription,
+  cancelSubscription,
+  renewSubscription,
+  getPaymentHistory,
+  subscribeToBillingPlan,
   getMembershipPlans,
   subscribeToPlan,
   unwrapList,
@@ -243,6 +250,14 @@ export default function ModuleManager() {
 
   if (moduleKey === "equipments") {
     return <AdminEquipments key={moduleKey} />;
+  }
+
+  if (moduleKey === "notifications") {
+    return <AdminNotifications />;
+  }
+
+  if (moduleKey === "subscriptions") {
+    return <OwnerSubscriptionsModule user={user} />;
   }
 
   return (
@@ -511,7 +526,7 @@ function ProductModule({ user }) {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+      {/* <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
@@ -536,7 +551,7 @@ function ProductModule({ user }) {
             Export JSON
           </button>
         </div>
-      </section>
+      </section> */}
 
       <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
         <div className="flex flex-wrap gap-2">
@@ -1443,14 +1458,13 @@ function StaffModule({ user }) {
               <Plus size={18} />
               Add Staff
             </button>
-            <button
+            {/* <button
               onClick={loadStaff}
               disabled={loading}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
-              Refresh
-            </button>
+              Reload
+            </button> */}
           </div>
         </div>
       </section>
@@ -1783,6 +1797,252 @@ function StaffModule({ user }) {
   );
 }
 
+function OwnerSubscriptionsModule({ user }) {
+  const token = user?.accessToken || user?.token;
+  const [plans, setPlans] = useState([]);
+  const [subscription, setSubscription] = useState(null);
+  const [payments, setPayments] = useState([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [subscribingPlanId, setSubscribingPlanId] = useState("");
+
+  const loadPlans = async () => {
+    try {
+      setLoadingPlans(true);
+      const response = await getBillingPlans({}, token);
+      const list = Array.isArray(response?.data) ? response.data : unwrapList(response);
+      setPlans(list);
+    } catch (error) {
+      console.warn("Unable to load SaaS billing plans:", error);
+      setPlans([]);
+    } finally {
+      setLoadingPlans(false);
+    }
+  };
+
+  const loadSubscription = async () => {
+    if (!token) return;
+
+    try {
+      setLoadingSubscription(true);
+      const response = await getCurrentSubscription(token);
+      setSubscription(response?.data || response || null);
+    } catch {
+      setSubscription(null);
+    } finally {
+      setLoadingSubscription(false);
+    }
+  };
+
+  const loadPayments = async () => {
+    if (!token) return;
+
+    try {
+      setLoadingPayments(true);
+      const response = await getPaymentHistory(token);
+      const list = Array.isArray(response?.data) ? response.data : unwrapList(response);
+      setPayments(list);
+    } catch {
+      setPayments([]);
+    } finally {
+      setLoadingPayments(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    void loadPlans();
+    void loadSubscription();
+    void loadPayments();
+  }, [token]);
+
+  const handleSubscribe = async (planId) => {
+    try {
+      setSubscribingPlanId(planId);
+      await subscribeToBillingPlan({ saasPlanId: planId, autoRenew: false }, token);
+      toast.success("Subscribed to plan successfully");
+      await Promise.all([loadSubscription(), loadPayments()]);
+    } catch (error) {
+      toast.error(getApiError(error, "Subscription failed"));
+    } finally {
+      setSubscribingPlanId("");
+    }
+  };
+
+  const handleCancel = async () => {
+    try {
+      const response = await cancelSubscription(token);
+      setSubscription(response?.data || response || null);
+      toast.success("Subscription cancelled");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to cancel subscription"));
+    }
+  };
+
+  const handleRenew = async () => {
+    try {
+      const response = await renewSubscription(token);
+      setSubscription(response?.data || response || null);
+      toast.success("Subscription renewed");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to renew subscription"));
+    }
+  };
+
+  const status = String(subscription?.status || "").toUpperCase();
+  const hasActiveSubscription = ["ACTIVE", "TRIAL"].includes(status);
+
+  const formatFeatureLabel = (feature) => {
+    if (typeof feature === "string") return feature;
+    if (feature && typeof feature === "object") {
+      return feature.name || feature.label || feature.title || feature.id || "Feature";
+    }
+    return "Feature";
+  };
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-950">SaaS Subscription Management</h1>
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              Browse available SaaS plans, manage your gym subscription, and review billing history.
+            </p>
+          </div>
+          <div className="rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
+            {loadingSubscription ? "Loading subscription..." : subscription ? `${status} subscription` : "No subscription yet"}
+          </div>
+        </div>
+
+        <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-500">Current subscription</p>
+              <p className="mt-1 text-lg font-semibold text-gray-950">
+                {subscription?.saasPlan?.name || "No active plan"}
+              </p>
+              <p className="mt-1 text-sm text-gray-600">
+                {subscription
+                  ? `Status: ${subscription.status || "-"} • Ends ${subscription.endDate ? new Date(subscription.endDate).toLocaleDateString() : "-"}`
+                  : "Subscribe to a plan to activate your gym account."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {subscription ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleRenew()}
+                    className="rounded-full border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50"
+                  >
+                    Renew
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCancel()}
+                    className="rounded-full border border-red-500 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <span className="rounded-full bg-gray-100 px-3 py-2 text-sm text-gray-600">No current subscription</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <CreditCard size={18} className="text-blue-600" />
+            <h2 className="text-lg font-semibold text-gray-950">Available SaaS plans</h2>
+          </div>
+
+          {loadingPlans ? (
+            <p className="mt-4 text-sm text-gray-500">Loading plans...</p>
+          ) : plans.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500">No plans available right now.</p>
+          ) : (
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {plans.map((plan) => (
+                <div key={plan.id} className="rounded-xl border border-gray-200 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-950">{plan.name}</h3>
+                      <p className="mt-1 text-sm text-gray-600">{plan.description || "Flexible SaaS access for your gym."}</p>
+                    </div>
+                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                      {plan.billingCycle || "MONTHLY"}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 flex items-end justify-between">
+                    <div>
+                      <p className="text-2xl font-semibold text-gray-950">${Number(plan.price || 0).toFixed(2)}</p>
+                      <p className="text-sm text-gray-500">{plan.durationDays || 0} days</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSubscribe(plan.id)}
+                      disabled={subscribingPlanId === plan.id || hasActiveSubscription}
+                      className="rounded-full bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {subscribingPlanId === plan.id ? "Subscribing..." : hasActiveSubscription ? "Active" : "Subscribe"}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-sm text-gray-600">
+                    <div className="flex items-center gap-2"><CalendarDays size={16} className="text-gray-400" /> Trial: {plan.trialDays ? `${plan.trialDays} days` : "None"}</div>
+                    {Array.isArray(plan.features) && plan.features.length ? (
+                      <ul className="list-disc pl-5 space-y-1">
+                        {plan.features.map((feature, index) => (
+                          <li key={`${formatFeatureLabel(feature)}-${index}`}>{formatFeatureLabel(feature)}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-gray-500">No feature list provided.</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <CalendarDays size={18} className="text-blue-600" />
+            <h2 className="text-lg font-semibold text-gray-950">Payment history</h2>
+          </div>
+
+          {loadingPayments ? (
+            <p className="mt-4 text-sm text-gray-500">Loading payments...</p>
+          ) : payments.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500">No payments recorded yet.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {payments.map((payment) => (
+                <div key={payment.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-gray-900">{payment.subscription?.saasPlan?.name || "Plan"}</span>
+                    <span className="font-semibold text-gray-900">${Number(payment.amount || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="mt-1 text-gray-500">{payment.method || "-"} • {payment.status || "-"}</div>
+                  <div className="mt-1 text-xs text-gray-400">{payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "-"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ModuleWorkspace({ moduleKey, definition }) {
   const { user } = useAuth();
   const loggedUserAccessToken = user?.accessToken || user?.token;
@@ -1957,7 +2217,7 @@ function ModuleWorkspace({ moduleKey, definition }) {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+      {/* <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
@@ -1976,7 +2236,7 @@ function ModuleWorkspace({ moduleKey, definition }) {
             Export JSON
           </button>
         </div>
-      </section>
+      </section> */}
 
       <section className="grid gap-4 md:grid-cols-3">
         <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">

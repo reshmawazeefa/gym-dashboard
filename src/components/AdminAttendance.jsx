@@ -48,6 +48,7 @@ import {
   getApiError,
   getAttendanceByDate,
   getAttendanceComparison,
+  getAttendanceLogs,
   getAttendanceMemberSummary,
   getAttendanceStats,
   getAttendanceTrends,
@@ -155,6 +156,7 @@ function displayMetric(value) {
 function unwrapAttendance(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.data)) return payload.data.data;
   if (Array.isArray(payload?.attendance)) return payload.attendance;
   if (Array.isArray(payload?.records)) return payload.records;
   if (Array.isArray(payload?.sessions)) return payload.sessions;
@@ -164,6 +166,10 @@ function unwrapAttendance(payload) {
   if (Array.isArray(payload?.members)) return payload.members;
   if (Array.isArray(payload?.data?.members)) return payload.data.members;
   return [];
+}
+
+function unwrapPagination(payload) {
+  return payload?.data?.pagination || null;
 }
 
 function unwrapMetrics(payload) {
@@ -343,7 +349,11 @@ export default function AdminAttendance() {
   const [retentionQuery, setRetentionQuery] = useState({ days: "90" });
   const [occupancyQuery, setOccupancyQuery] = useState({ date: new Date().toISOString().slice(0, 10) });
   const [editRecord, setEditRecord] = useState(null);
-  const [editForm, setEditForm] = useState({ checkIn: "", checkOut: "", status: "COMPLETED" });
+  const [editForm, setEditForm] = useState({ checkIn: "", checkOut: "", status: "COMPLETED", source: "", type: "" });
+  const [logsData, setLogsData] = useState([]);
+  const [logsPagination, setLogsPagination] = useState(null);
+  const [logsFilters, setLogsFilters] = useState({ userId: "", action: "", page: "1", limit: "20" });
+  const [serverPagination, setServerPagination] = useState(null);
   const [bulkRecords, setBulkRecords] = useState("");
   const [bulkImportResult, setBulkImportResult] = useState(null);
   const [bulkCheckInUserIds, setBulkCheckInUserIds] = useState([]);
@@ -363,7 +373,8 @@ export default function AdminAttendance() {
     );
   }, [records, tableSearch]);
 
-  const totalPages = Math.max(1, Math.ceil(records.length / (Number(filters.limit) || 10)));
+  const totalPages = serverPagination?.totalPages || Math.max(1, Math.ceil(records.length / (Number(filters.limit) || 10)));
+  const totalRecords = serverPagination?.total ?? records.length;
 
   useEffect(() => {
     if (!canMark) return;
@@ -454,6 +465,7 @@ export default function AdminAttendance() {
       setLoading(true);
       const response = await filterAttendance(params, user?.token);
       setRecords(unwrapAttendance(response));
+      setServerPagination(unwrapPagination(response));
       setActiveTab("records");
       toast.success("Attendance filters applied");
     } catch (error) {
@@ -642,6 +654,25 @@ export default function AdminAttendance() {
     }
   };
 
+  const loadLogs = async () => {
+    if (!canView) return;
+    const params = Object.fromEntries(
+      Object.entries(logsFilters).filter(([, value]) => value !== "")
+    );
+    try {
+      setLoading(true);
+      const response = await getAttendanceLogs(params, user?.token);
+      const data = response?.data || response;
+      setLogsData(Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []);
+      setLogsPagination(data?.pagination || null);
+      setActiveTab("logs");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load attendance logs"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleExport = async () => {
     if (!canExport) return;
 
@@ -674,8 +705,7 @@ export default function AdminAttendance() {
         await adminCheckIn({ userId: selectedId, type: userType }, user?.token);
         toast.success(`${userType} checked in successfully`);
       } else {
-        const fn = canForceCheckout ? adminCheckOut : adminCheckOut;
-        await fn({ userId: selectedId }, user?.token);
+        await adminCheckOut({ userId: selectedId }, user?.token);
         toast.success(`${userType} checked out successfully`);
       }
       setSelectedUser(null);
@@ -746,6 +776,8 @@ export default function AdminAttendance() {
       checkIn: record.checkIn ? new Date(record.checkIn).toISOString().slice(0, 16) : "",
       checkOut: record.checkOut ? new Date(record.checkOut).toISOString().slice(0, 16) : "",
       status: record.status || "COMPLETED",
+      source: record.source || "",
+      type: record.type || "",
     });
   };
 
@@ -759,6 +791,8 @@ export default function AdminAttendance() {
         checkIn: editForm.checkIn ? new Date(editForm.checkIn).toISOString() : undefined,
         checkOut: editForm.checkOut ? new Date(editForm.checkOut).toISOString() : undefined,
         status: editForm.status,
+        source: editForm.source || undefined,
+        type: editForm.type || undefined,
       };
       await updateAttendance(id, payload, user?.token);
       toast.success("Attendance updated");
@@ -816,7 +850,7 @@ export default function AdminAttendance() {
 
   return (
     <div className="space-y-5">
-      <Card className="p-4">
+      {/* <Card className="p-4">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-gray-950 text-white">
             <ShieldCheck size={22} />
@@ -826,7 +860,7 @@ export default function AdminAttendance() {
             <p className="mt-1 text-sm text-gray-500">Daily check-ins, live sessions, reports, and attendance corrections.</p>
           </div>
         </div>
-      </Card>
+      </Card> */}
 
       {statCards.length > 0 && (
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -940,6 +974,7 @@ export default function AdminAttendance() {
           {[
             { key: "records", label: "Attendance" },
             { key: "reports", label: "Reports", hidden: !canShowReports },
+            { key: "logs", label: "Logs", hidden: !canView },
             { key: "bulk", label: "Bulk Ops", hidden: !canMark },
           ]
             .filter((tab) => !tab.hidden)
@@ -1068,23 +1103,25 @@ export default function AdminAttendance() {
               <table className="min-w-full table-fixed text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-gray-100 text-xs uppercase text-gray-500 shadow-sm">
                   <tr>
-                    <th className="w-[30%] p-3">User</th>
-                    <th className="w-[14%] p-3">Type</th>
-                    <th className="w-[19%] p-3">Check In</th>
-                    <th className="w-[19%] p-3">Check Out</th>
+                    <th className="w-[26%] p-3">User</th>
+                    <th className="w-[12%] p-3">Type</th>
+                    <th className="w-[16%] p-3">Check In</th>
+                    <th className="w-[16%] p-3">Check Out</th>
+                    <th className="w-[10%] p-3">Duration</th>
                     <th className="w-[10%] p-3">Status</th>
-                    <th className="w-[8%] p-3 text-right">Actions</th>
+                    <th className="w-[10%] p-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {loading && (
                     <tr>
-                      <td colSpan={6} className="p-6 text-center text-sm text-gray-500">Loading attendance records...</td>
+                      <td colSpan={7} className="p-6 text-center text-sm text-gray-500">Loading attendance records...</td>
                     </tr>
                   )}
                   {!loading && filteredRecords.map((record, index) => {
                     const id = recordId(record) || `${displayName(record)}-${index}`;
                     const isExpanded = expandedId === id;
+                    const durationMinutes = record.duration != null ? record.duration : null;
                     return (
                       <Fragment key={id}>
                         <tr className="align-middle transition hover:bg-gray-50">
@@ -1102,6 +1139,13 @@ export default function AdminAttendance() {
                           <td className="p-3 text-gray-700">{getType(record)}</td>
                           <td className="p-3 text-gray-700">{displayDate(getCheckIn(record))}</td>
                           <td className="p-3 text-gray-700">{displayDate(getCheckOut(record))}</td>
+                          <td className="p-3 text-gray-700">
+                            {durationMinutes != null
+                              ? `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`
+                              : durationText(record) !== "-"
+                                ? durationText(record)
+                                : "-"}
+                          </td>
                           <td className="p-3">
                             <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ring-1 ${getStatusClass(record.status)}`}>
                               {record.status || "-"}
@@ -1124,13 +1168,13 @@ export default function AdminAttendance() {
                         </tr>
                         {isExpanded && (
                           <tr className="bg-gray-50">
-                            <td colSpan={6} className="p-4">
+                            <td colSpan={7} className="p-4">
                               <div className="grid gap-3 md:grid-cols-5">
                                 {[
                                   { label: "Check-In", value: displayDate(getCheckIn(record)) },
                                   { label: "Check-Out", value: displayDate(getCheckOut(record)) },
-                                  { label: "Duration", value: durationText(record) },
-                                  { label: "Trainer", value: record.trainerName || record.trainer?.name || record.trainerId || "-" },
+                                  { label: "Duration", value: durationMinutes != null ? `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m` : durationText(record) },
+                                  { label: "Source", value: record.source || "-" },
                                   { label: "Status", value: record.status || "-" },
                                 ].map((item) => (
                                   <div key={item.label} className="rounded-md border border-gray-200 bg-white p-3">
@@ -1147,7 +1191,7 @@ export default function AdminAttendance() {
                   })}
                   {!loading && !filteredRecords.length && (
                     <tr>
-                      <td colSpan={6}>
+                      <td colSpan={7}>
                         <EmptyState title="No attendance records found" detail="Adjust filters, load today, or choose another quick list." />
                       </td>
                     </tr>
@@ -1157,19 +1201,21 @@ export default function AdminAttendance() {
             </div>
             <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-gray-500">
-                Showing {filteredRecords.length ? 1 : 0} to {filteredRecords.length} of {records.length} results
+                {serverPagination
+                  ? `Showing ${(Number(filters.page) - 1) * Number(filters.limit) + 1} to ${Math.min(Number(filters.page) * Number(filters.limit), totalRecords)} of ${totalRecords} results`
+                  : `${filteredRecords.length} record${filteredRecords.length === 1 ? "" : "s"}`}
               </span>
               <div className="flex items-center gap-2">
-                <select className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700" value={filters.limit} onChange={(event) => updateFilter("limit", event.target.value)}>
+                <select className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700" value={filters.limit} onChange={(event) => { updateFilter("limit", event.target.value); setFilters((prev) => ({ ...prev, page: "1" })); setTimeout(() => void loadFiltered(), 0); }}>
                   <option value="10">10 / page</option>
                   <option value="25">25 / page</option>
                   <option value="50">50 / page</option>
                 </select>
-                <button type="button" className={iconButtonClass} onClick={() => updateFilter("page", String(Math.max(1, Number(filters.page || 1) - 1)))} disabled={Number(filters.page || 1) <= 1}>
+                <button type="button" className={iconButtonClass} onClick={() => { const next = String(Math.max(1, Number(filters.page || 1) - 1)); updateFilter("page", next); setTimeout(() => void loadFiltered(), 0); }} disabled={Number(filters.page || 1) <= 1}>
                   <ChevronLeft size={16} />
                 </button>
                 <span className="min-w-16 text-center text-sm font-semibold text-gray-700">{filters.page} / {totalPages}</span>
-                <button type="button" className={iconButtonClass} onClick={() => updateFilter("page", String(Number(filters.page || 1) + 1))}>
+                <button type="button" className={iconButtonClass} onClick={() => { const next = String(Number(filters.page || 1) + 1); updateFilter("page", next); setTimeout(() => void loadFiltered(), 0); }}>
                   <ChevronRight size={16} />
                 </button>
               </div>
@@ -1472,6 +1518,118 @@ export default function AdminAttendance() {
         </Card>
       )}
 
+      {activeTab === "logs" && (
+        <Card className="overflow-hidden">
+          <SectionHeader
+            icon={Clock}
+            title="Attendance Audit Logs"
+            detail="Track every state change: check-in, check-out, auto-close, edits, and deletions."
+          />
+          <div className="border-b border-gray-200 p-4">
+            <div className="grid gap-3 sm:grid-cols-4">
+              <Field label="User Id">
+                <input className={compactInputClass} value={logsFilters.userId} onChange={(e) => setLogsFilters((prev) => ({ ...prev, userId: e.target.value, page: "1" }))} placeholder="Filter by user" />
+              </Field>
+              <Field label="Action">
+                <select className={compactInputClass} value={logsFilters.action} onChange={(e) => setLogsFilters((prev) => ({ ...prev, action: e.target.value, page: "1" }))}>
+                  <option value="">All</option>
+                  <option value="CREATED">CREATED</option>
+                  <option value="UPDATED">UPDATED</option>
+                  <option value="DELETED">DELETED</option>
+                  <option value="AUTO_CLOSED">AUTO_CLOSED</option>
+                </select>
+              </Field>
+              <div className="flex items-end gap-2">
+                <button type="button" onClick={() => void loadLogs()} className={primaryButtonClass}>
+                  <Search size={16} /> Load Logs
+                </button>
+                <button type="button" onClick={() => { setLogsFilters({ userId: "", action: "", page: "1", limit: "20" }); setLogsData([]); setLogsPagination(null); }} className={compactButtonClass}>
+                  Reset
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="max-h-[34rem] overflow-auto">
+            <table className="min-w-full table-fixed text-left text-sm">
+              <thead className="sticky top-0 z-10 bg-gray-100 text-xs uppercase text-gray-500 shadow-sm">
+                <tr>
+                  <th className="w-[15%] p-3">Action</th>
+                  <th className="w-[17%] p-3">User</th>
+                  <th className="w-[15%] p-3">Timestamp</th>
+                  <th className="w-[28%] p-3">Changes</th>
+                  <th className="w-[25%] p-3">Attendance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 bg-white">
+                {loading && (
+                  <tr><td colSpan={5} className="p-6 text-center text-sm text-gray-500">Loading audit logs...</td></tr>
+                )}
+                {!loading && logsData.map((log, index) => {
+                  const logId = log.id || `log-${index}`;
+                  const changes = log.changes || {};
+                  const attendance = log.attendance || {};
+                  return (
+                    <tr key={logId} className="align-top transition hover:bg-gray-50">
+                      <td className="p-3">
+                        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ring-1 ${
+                          log.action === "CREATED" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" :
+                          log.action === "UPDATED" ? "bg-blue-50 text-blue-700 ring-blue-200" :
+                          log.action === "DELETED" ? "bg-red-50 text-red-700 ring-red-200" :
+                          log.action === "AUTO_CLOSED" ? "bg-amber-50 text-amber-700 ring-amber-200" :
+                          "bg-gray-100 text-gray-700 ring-gray-200"
+                        }`}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="p-3 text-gray-700">
+                        <p className="truncate font-medium text-gray-900">{attendance?.user?.name || log.changedBy || attendance?.userId || "-"}</p>
+                        <p className="truncate text-xs text-gray-500">{attendance?.user?.email || ""}</p>
+                      </td>
+                      <td className="p-3 text-gray-700">{displayDate(log.createdAt)}</td>
+                      <td className="p-3 text-gray-700">
+                        <div className="max-h-20 overflow-y-auto rounded-md bg-gray-50 p-2 text-xs font-mono">
+                          <pre className="whitespace-pre-wrap break-all">{JSON.stringify(changes, null, 1)}</pre>
+                        </div>
+                      </td>
+                      <td className="p-3 text-gray-700">
+                        <p className="text-xs text-gray-500">{attendance?.id || log.attendanceId || "-"}</p>
+                        <p className="text-xs text-gray-500">
+                          {attendance?.checkIn ? `In: ${displayDate(attendance.checkIn)}` : ""}
+                          {attendance?.checkOut ? ` Out: ${displayDate(attendance.checkOut)}` : ""}
+                        </p>
+                        <p className="text-xs font-medium">{attendance?.type || ""} {attendance?.status ? `· ${attendance.status}` : ""}</p>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!loading && !logsData.length && (
+                  <tr><td colSpan={5}><EmptyState title="No audit logs found" detail="Adjust filters and click Load Logs." /></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {logsPagination && (
+            <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm text-gray-500">
+                Showing {(Number(logsFilters.page) - 1) * Number(logsFilters.limit) + 1} to {Math.min(Number(logsFilters.page) * Number(logsFilters.limit), logsPagination.total)} of {logsPagination.total} results
+              </span>
+              <div className="flex items-center gap-2">
+                <button type="button" className={iconButtonClass}
+                  onClick={() => { setLogsFilters((prev) => ({ ...prev, page: String(Math.max(1, Number(prev.page) - 1)) })); setTimeout(() => void loadLogs(), 0); }}
+                  disabled={Number(logsFilters.page) <= 1}>
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="min-w-16 text-center text-sm font-semibold text-gray-700">{logsPagination.page} / {logsPagination.totalPages}</span>
+                <button type="button" className={iconButtonClass}
+                  onClick={() => { setLogsFilters((prev) => ({ ...prev, page: String(Number(prev.page) + 1) })); setTimeout(() => void loadLogs(), 0); }}>
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
       {activeTab === "bulk" && canMark && (
         <Card className="overflow-hidden">
           <SectionHeader icon={Upload} title="Bulk Operations" detail="Batch check-in or import historical attendance records." />
@@ -1522,6 +1680,24 @@ export default function AdminAttendance() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
               <Field label="Check In"><input className={inputClass} type="datetime-local" value={editForm.checkIn} onChange={(e) => setEditForm({ ...editForm, checkIn: e.target.value })} /></Field>
               <Field label="Check Out"><input className={inputClass} type="datetime-local" value={editForm.checkOut} onChange={(e) => setEditForm({ ...editForm, checkOut: e.target.value })} /></Field>
+              <Field label="Type">
+                <select className={inputClass} value={editForm.type} onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}>
+                  <option value="">Any</option>
+                  <option value="MEMBER">MEMBER</option>
+                  <option value="TRAINER">TRAINER</option>
+                </select>
+              </Field>
+              <Field label="Source">
+                <select className={inputClass} value={editForm.source} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })}>
+                  <option value="">Any</option>
+                  <option value="MOBILE">MOBILE</option>
+                  <option value="QR">QR</option>
+                  <option value="KIOSK">KIOSK</option>
+                  <option value="RFID">RFID</option>
+                  <option value="BIOMETRIC">BIOMETRIC</option>
+                  <option value="MANUAL">MANUAL</option>
+                </select>
+              </Field>
               <Field label="Status">
                 <select className={inputClass} value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
                   <option value="ACTIVE">ACTIVE</option>

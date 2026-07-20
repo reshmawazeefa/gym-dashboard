@@ -162,6 +162,10 @@ function toBookingDateIso(value, time = "") {
   return date.toISOString();
 }
 
+function toCurrentBookingDateIso() {
+  return new Date().toISOString();
+}
+
 function dayName(value) {
   const normalized = dayNameToNumber[String(value).toLowerCase()] ?? value;
   const option = dayOptions.find((day) => String(day.value) === String(normalized));
@@ -728,6 +732,7 @@ export default function TrainerSchedule() {
   const [slotMembers, setSlotMembers] = useState([]);
   const [slotMembersSlotId, setSlotMembersSlotId] = useState(null);
   const [slotChanges, setSlotChanges] = useState([]);
+  const [slotChangeTargets, setSlotChangeTargets] = useState({});
   const [showAssignPanel, setShowAssignPanel] = useState(false);
   const [availableMembers, setAvailableMembers] = useState([]);
   const [assignSlotId, setAssignSlotId] = useState("");
@@ -781,7 +786,7 @@ export default function TrainerSchedule() {
     if (!selectedClass?.id || !assignSlotId) return;
     try {
       setSaving(true);
-      await bookClass(selectedClass.id, { slotId: assignSlotId, bookingDate: toBookingDateIso(assignBookingDate, "00:00"), memberId }, authToken);
+      await bookClass(selectedClass.id, { slotId: assignSlotId, bookingDate: toCurrentBookingDateIso(), memberId }, authToken);
       toast.success("Member assigned to class");
       setShowAssignPanel(false);
       setAvailableMembers([]);
@@ -815,13 +820,18 @@ export default function TrainerSchedule() {
   };
 
   const handleSlotChange = async (bookingId, newSlotId, isPermanent = false) => {
+    if (!bookingId || !newSlotId) {
+      toast.error("Please select a slot to change to");
+      return;
+    }
+
     try {
       setSaving(true);
       if (isPermanent) {
         await changeSlotPermanent(bookingId, { newSlotId }, authToken);
         toast.success("Permanent slot change applied");
       } else {
-        await changeSlot(bookingId, { newSlotId, date: selectedDate }, authToken);
+        await changeSlot(bookingId, { newSlotId, date: toBookingDateIso(selectedDate, "00:00") }, authToken);
         toast.success("Temporary slot change applied");
       }
       await loadModuleData();
@@ -958,10 +968,7 @@ export default function TrainerSchedule() {
     }
 
     try {
-      const bookingDate = toBookingDateIso(
-        targetSlot.date || toDateInputValue(),
-        "00:00"
-      );
+      const bookingDate = toCurrentBookingDateIso();
       await bookClass(classId, { slotId: targetSlot.id, bookingDate }, authToken);
       toast.success("Class booked");
       await loadModuleData();
@@ -1081,12 +1088,12 @@ export default function TrainerSchedule() {
         </aside>
 
         <main className="min-w-0 overflow-y-auto bg-gray-50/30 p-4 md:p-6">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          {/* <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-xl font-bold text-gray-950">Classes Management</h2>
               <p className="mt-1 text-sm text-gray-500">Manage classes, schedules, slots, bookings and attendance.</p>
             </div>
-          </div>
+          </div> */}
 
           {!selectedClass?.id ? (
             <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
@@ -1587,63 +1594,100 @@ export default function TrainerSchedule() {
                     )}
 
                     <div className="space-y-2">
-                      {(isMember ? myBookings.filter((b) => b.classId === selectedClass?.id) : classBookings).map((booking) => (
-                        <div key={booking.id || booking.memberName || booking.classTitle} className="rounded-lg border border-gray-200 p-3 text-sm">
-                          <div className="grid gap-2 md:grid-cols-[1fr_16rem_10rem_auto] md:items-center">
-                            <span className="font-semibold text-gray-950">{booking.memberName || booking.classTitle}</span>
-                            <span className="text-gray-500">{(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) ? dayName(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) + " - " : ""}{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span>
-                            <span className="text-gray-500">{formatDate(booking.date)}</span>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus)}</span>
-                              {booking.attendanceStatus && (
-                                <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
-                                  {titleCase(booking.attendanceStatus)}
-                                </span>
-                              )}
+                      {(isMember ? myBookings.filter((b) => b.classId === selectedClass?.id) : classBookings).map((booking) => {
+                        const bookingKey = booking.id || booking._id || booking.bookingId || "";
+                        const selectedSlotChangeTarget = slotChangeTargets[bookingKey] || "";
+
+                        return (
+                          <div key={bookingKey || booking.memberName || booking.classTitle} className="rounded-lg border border-gray-200 p-3 text-sm">
+                            <div className="grid gap-2 md:grid-cols-[1fr_16rem_10rem_auto] md:items-center">
+                              <span className="font-semibold text-gray-950">{booking.memberName || booking.classTitle}</span>
+                              <span className="text-gray-500">{(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) ? dayName(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) + " - " : ""}{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span>
+                              <span className="text-gray-500">{formatDate(booking.date)}</span>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus)}</span>
+                                {booking.attendanceStatus && (
+                                  <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
+                                    {titleCase(booking.attendanceStatus)}
+                                  </span>
+                                )}
+                              </div>
                             </div>
+                            {bookingKey && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {!['cancelled', 'canceled'].includes(String(booking.bookingStatus).toLowerCase()) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelBooking(booking)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                                  >
+                                    <XCircle size={14} />
+                                    Cancel
+                                  </button>
+                                )}
+                                {!isMember && canManageClasses && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAttendanceModalEdit({
+                                        bookingId: bookingKey,
+                                        status: booking.attendanceStatus || "PRESENT",
+                                      });
+                                      setAttendanceModalOpen(true);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                                  >
+                                    <CheckCircle2 size={14} />
+                                    Mark Attendance
+                                  </button>
+                                )}
+                                {!isMember && booking.slotId && (
+                                  <>
+                                    <select
+                                      value={selectedSlotChangeTarget}
+                                      onChange={(event) => setSlotChangeTargets((current) => ({ ...current, [bookingKey]: event.target.value }))}
+                                      className="h-8 rounded border border-gray-300 px-2 text-xs outline-none"
+                                    >
+                                      <option value="">Select new slot</option>
+                                      {visibleSlots
+                                        .filter((slot) => slot.id && slot.id !== booking.slotId)
+                                        .map((slot) => (
+                                          <option key={slot.id} value={slot.id}>
+                                            {isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                                          </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleSlotChange(bookingKey, selectedSlotChangeTarget, false)}
+                                      disabled={saving || !selectedSlotChangeTarget}
+                                      className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                                    >
+                                      Temporary
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleSlotChange(bookingKey, selectedSlotChangeTarget, true)}
+                                      disabled={saving || !selectedSlotChangeTarget}
+                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                                    >
+                                      Permanent
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void loadBookingSlotChanges(bookingKey)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                    >
+                                      <RefreshCw size={14} />
+                                      Slot Changes
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          {booking.id && (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {!["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleCancelBooking(booking)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
-                                >
-                                  <XCircle size={14} />
-                                  Cancel
-                                </button>
-                              )}
-                              {!isMember && canManageClasses && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAttendanceModalEdit({
-                                      bookingId: booking.id || booking._id || booking.bookingId || "",
-                                      status: booking.attendanceStatus || "PRESENT",
-                                    });
-                                    setAttendanceModalOpen(true);
-                                  }}
-                                  className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
-                                >
-                                  <CheckCircle2 size={14} />
-                                  Mark Attendance
-                                </button>
-                              )}
-                              {!isMember && booking.slotId && (
-                                <button
-                                  type="button"
-                                  onClick={() => loadBookingSlotChanges(booking.id)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                                >
-                                  <RefreshCw size={14} />
-                                  Slot Changes
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        );
+                      })}
                       {(!isMember ? !classBookings.length : !myBookings.filter((b) => b.classId === selectedClass?.id).length) && (
                         <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">No bookings found.</p>
                       )}
@@ -1736,8 +1780,7 @@ export default function TrainerSchedule() {
           disabled={loading}
           className="flex items-center justify-center gap-2 rounded-md bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
         >
-          <RefreshCw size={17} className={loading ? "animate-spin" : ""} />
-          Refresh
+          Reload
         </button>
       </div>
 

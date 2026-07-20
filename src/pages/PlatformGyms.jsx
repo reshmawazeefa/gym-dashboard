@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { Building2, Plus, RefreshCw, Search, X, Edit3, Trash2 } from "lucide-react";
+import { Building2, Plus, Search, X, Edit3, Trash2 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   createGym,
   getApiError,
@@ -29,6 +30,7 @@ function normaliseGym(gym) {
       gym.email || gym.ownerEmail || gym.owner?.email || owner?.email || "-",
     status: gym.status || (gym.isActive === false ? "Inactive" : "Active"),
     createdAt: gym.createdAt?.slice?.(0, 10) || gym.created_at?.slice?.(0, 10) || "-",
+    gymId: gym.id || gym._id || "-",
   };
 }
 
@@ -238,7 +240,6 @@ export default function PlatformGyms() {
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <Building2 className="text-blue-600" />
-          <h1 className="text-xl font-bold">Gyms</h1>
         </div>
 
         <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:flex-1">
@@ -272,6 +273,7 @@ export default function PlatformGyms() {
           <thead className="bg-gray-100">
             <tr>
               <th className="p-3">Gym Name</th>
+              <th className="p-3">QR Code</th>
               <th className="p-3">Owner</th>
               <th className="p-3">Email</th>
               <th className="p-3">Status</th>
@@ -283,6 +285,15 @@ export default function PlatformGyms() {
             {filteredGyms.map((gym) => (
               <tr key={gym.id} className="border-t">
                 <td className="p-3 font-medium text-gray-950 text-sm">{gym.gymName}</td>
+                <td className="p-3">
+                  {gym.gymId && gym.gymId !== "-" ? (
+                    <div className="flex justify-center">
+                      <QRCodeSVG value={gym.gymId} size={48} />
+                    </div>
+                  ) : (
+                    <span className="text-gray-400 text-xs">-</span>
+                  )}
+                </td>
                 <td className="p-3 text-sm">{gym.ownerName}</td>
                 <td className="p-3 text-sm">{gym.email}</td>
                 <td className="p-3">
@@ -356,7 +367,7 @@ export default function PlatformGyms() {
 
             {filteredGyms.length === 0 && (
               <tr>
-                <td colSpan="6" className="p-6 text-center text-gray-500">
+                <td colSpan="7" className="p-6 text-center text-gray-500">
                   {loading ? "Loading gyms..." : "No gyms found"}
                 </td>
               </tr>

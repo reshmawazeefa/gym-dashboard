@@ -140,7 +140,6 @@ export default function StaffProfile() {
       <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-950">Profile</h1>
             <p className="text-sm text-gray-500">Update your profile details.</p>
           </div>
           <div className="flex gap-2">

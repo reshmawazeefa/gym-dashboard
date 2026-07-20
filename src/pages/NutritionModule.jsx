@@ -2692,12 +2692,12 @@ export default function NutritionModule() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        {/* <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-bold">Nutrition</h1>
             <p className="text-sm text-gray-500">Create food items, meals, plans, assignments, logs, and goals.</p>
           </div>
-        </div>
+        </div> */}
 
         <div className="mt-6 flex flex-wrap gap-2">
           {tabs.map((tab) => (

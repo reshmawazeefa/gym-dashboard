@@ -8,7 +8,6 @@ import {
   ChartNoAxesCombined,
   ClipboardCheck,
   ClipboardList,
-  Code2,
   CreditCard,
   Dumbbell,
   Languages,
@@ -36,7 +35,6 @@ const primaryLinks = [
   { to: "/permissions", label: "Permissions", icon: LockKeyhole, moduleKey: "permissions" },
   { to: "/platform/gyms", label: "Gyms", icon: Building2, moduleKey: "gyms" },
   { to: "/platform/saas-plans", label: "SaaS Plans", icon: ClipboardList, moduleKey: "saas-plans" },
-  { to: "/platform/saas-features", label: "SaaS Features", icon: Code2, moduleKey: "saas-features" },
 ];
 
 const moduleSections = [
@@ -52,6 +50,7 @@ const moduleSections = [
       { to: "/modules/facilities", label: "Facilities", icon: ClipboardList, moduleKey: "facilities" },
       { to: "/modules/facility-maintenance", label: "Facility Maintenance", icon: ClipboardList, moduleKey: "facility-maintenance" },
       { to: "/modules/equipments", label: "Equipments", icon: Dumbbell, moduleKey: "equipments" },
+      { to: "/modules/notifications", label: "Notifications", icon: Bell, moduleKey: "notifications" },
     ],
   },
   {
@@ -77,6 +76,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
   const primaryNavLinks = [];
   primaryLinks.forEach((link) => {
     if (link.moduleKey === "gyms" && isGymOwner) return;
+    if (link.moduleKey === "saas-plans" && !isPlatformAdmin) return;
     if (link.moduleKey === "plans" && isPlatformAdmin) return;
     primaryNavLinks.push(link);
   });

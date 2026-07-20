@@ -282,21 +282,21 @@ export default function FacilityMaintenance() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
-              <Building2 size={22} />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-950">Facility Maintenance</h1>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">
-                Log maintenance tasks for facilities and update status as repairs progress.
-              </p>
+        {/* <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
+                <Building2 size={22} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-950">Facility Maintenance</h1>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">
+                  Log maintenance tasks for facilities and update status as repairs progress.
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section> */}
 
       <section className="grid gap-4 md:grid-cols-3">
         <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">

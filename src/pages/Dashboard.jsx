@@ -382,7 +382,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 p-6 text-white shadow-md">
+      {/* <section className="rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 p-6 text-white shadow-md">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">Dashboard</h1>
@@ -393,7 +393,7 @@ export default function Dashboard() {
             <ShieldCheck size={48} className="opacity-20" />
           </div>
         </div>
-      </section>
+      </section> */}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {visibleStats.map((stat) => {

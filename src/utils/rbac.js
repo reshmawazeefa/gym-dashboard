@@ -9,11 +9,10 @@ export const MODULE_PERMISSIONS = [
   { key: "permissions", label: "Permissions", actions: ["read", "assign", "remove"] },
   { key: "gyms", label: "Platform Gyms", actions: ["read", "create", "edit", "delete"] },
   { key: "saas-plans", label: "SaaS Plans", actions: ["read", "create", "update", "delete"] },
-  { key: "saas-features", label: "SaaS Features", actions: ["read", "create", "update", "delete"] },
   { key: "attendance", label: "Attendance", actions: ["mark", "view", "update", "delete", "export", "force.checkout"] },
   { key: "subscriptions", label: "Subscriptions" },
   { key: "classes", label: "Classes" },
-  { key: "workouts", label: "Workouts" },
+  { key: "workouts", label: "Workouts", actions: ["view", "create", "edit", "delete", "assign", "progress", "session", "schedule", "measurements", "goals", "feedback"] },
   { key: "nutrition", label: "Nutrition" },
   { key: "products", label: "Products" },
   { key: "facilities", label: "Facilities" },
@@ -23,6 +22,7 @@ export const MODULE_PERMISSIONS = [
   { key: "reports", label: "Reports", actions: ["view", "create"] },
   { key: "communication", label: "Communication" },
   { key: "reminders", label: "Reminders" },
+  { key: "notifications", label: "Notifications", actions: ["view", "create", "edit", "delete", "send"] },
   { key: "localization", label: "Languages" },
   { key: "integrations", label: "API & Stripe" },
 ];
@@ -65,7 +65,7 @@ export const PERMISSION_TEMPLATES = [
   })),
 ];
 
-const OWNER_MODULES = MODULE_PERMISSIONS.map((module) => module.key).filter((key) => key !== "gyms");
+const OWNER_MODULES = MODULE_PERMISSIONS.map((module) => module.key).filter((key) => key !== "gyms" && key !== "saas-plans");
 const STAFF_MODULES = [
   "dashboard",
   "members",
@@ -83,6 +83,7 @@ const STAFF_MODULES = [
   "reports",
   "communication",
   "reminders",
+  "notifications",
 ];
 const MEMBER_MODULES = [
   "dashboard",
@@ -94,6 +95,7 @@ const MEMBER_MODULES = [
   "nutrition",
   "communication",
   "reminders",
+  "notifications",
 ];
 
 function buildPermissions(moduleKeys, actionOverrides = {}) {
@@ -107,7 +109,7 @@ function buildPermissions(moduleKeys, actionOverrides = {}) {
 }
 
 export const DEFAULT_ROLE_PERMISSIONS = {
-  platform_admin: buildPermissions(["dashboard", "gyms", "saas-plans", "saas-features"]),
+  platform_admin: buildPermissions(["dashboard", "gyms", "saas-plans"]),
   gym_owner: buildPermissions(OWNER_MODULES),
   staff: buildPermissions(STAFF_MODULES, {
     permissions: [],
@@ -122,10 +124,11 @@ export const DEFAULT_ROLE_PERMISSIONS = {
     attendance: ["mark", "view"],
     subscriptions: ["view"],
     classes: ["view"],
-    workouts: ["view"],
+    workouts: ["view", "session", "schedule", "progress", "measurements", "goals"],
     nutrition: ["view"],
     communication: ["view"],
     reminders: ["view"],
+    notifications: ["view"],
   }),
 };
 
@@ -142,13 +145,13 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create"],
       classes: ["view", "create", "edit", "delete"],
-      workouts: ["view", "create", "edit"],
+      workouts: ["view", "create", "edit", "assign", "progress", "session", "schedule", "measurements", "goals", "feedback"],
       nutrition: ["view", "create", "edit"],
       communication: ["view"],
     }
   ),
   "category:staff:receptionist": buildPermissions(
-    ["dashboard", "members", "plans", "payments", "attendance", "subscriptions", "classes", "communication", "reminders"],
+    ["dashboard", "members", "plans", "payments", "attendance", "subscriptions", "classes", "communication", "reminders", "workouts"],
     {
       members: ["read", "create", "update"],
       plans: ["read"],
@@ -156,6 +159,7 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create", "edit"],
       classes: ["view", "create", "edit", "delete"],
+      workouts: ["view", "read", "session", "schedule"],
       communication: ["view", "create"],
       reminders: ["view", "create", "edit"],
     }
@@ -381,6 +385,12 @@ export function canAccess(user, moduleKey, action = "view") {
   const explicitPermissions = normalizePermissions(user.permissions);
 
   if (!explicitPermissions.length && isPrivilegedRole(user.role, user.loginType)) {
+    const normalizedRole = normalizeRole(user.role, user.loginType);
+    if (normalizedRole === "platform_admin") return true;
+    const defaultPerms = DEFAULT_ROLE_PERMISSIONS[normalizedRole];
+    if (defaultPerms) {
+      return defaultPerms.includes(permissionKey(moduleKey, action));
+    }
     return true;
   }
 

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Building2, ChevronDown, ChevronLeft, ChevronRight, Edit, Power, RefreshCw, Search, Trash } from "lucide-react";
+import { Building2, ChevronDown, ChevronLeft, ChevronRight, Edit, Power, Search, Trash } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   createFacility,
@@ -244,7 +244,7 @@ export default function AdminFacilities() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+      {/* <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
@@ -257,12 +257,8 @@ export default function AdminFacilities() {
               </p>
             </div>
           </div>
-          <button type="button" onClick={() => void loadFacilities()} className={buttonClass}>
-            <RefreshCw size={17} />
-            Refresh
-          </button>
         </div>
-      </section>
+      </section> */}
 
       <section className="grid gap-4 md:grid-cols-3">
         <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">

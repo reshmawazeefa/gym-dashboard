@@ -190,6 +190,52 @@ export async function getProfile(token = null) {
   return response.data?.data || response.data;
 }
 
+export async function registerNotificationDeviceToken(payload, token = null) {
+  const response = await api.post("/api/notification/register-token", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function unregisterNotificationDeviceToken(tokenValue, token = null) {
+  const response = await api.delete(`/api/notification/unregister-token/${encodeURIComponent(tokenValue)}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getNotifications(params = {}, token = null) {
+  const response = await api.get("/api/notification", {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getUnreadNotificationCount(token = null) {
+  const response = await api.get("/api/notification/unread-count", getAuthConfig(token));
+  return response.data;
+}
+
+export async function markNotificationAsRead(notificationId, token = null) {
+  const response = await api.put(`/api/notification/${notificationId}/read`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function markAllNotificationsAsRead(token = null) {
+  const response = await api.put("/api/notification/read-all", {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function sendNotification(payload, token = null) {
+  const response = await api.post("/api/notification/send", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function uploadNotificationImage(formData, token = null) {
+  const response = await api.post("/api/upload", formData, {
+    ...getAuthConfig(token),
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+}
+
 export async function updateGym(id, payload) {
   const response = await api.patch(`/api/gym/${id}`, payload);
   return response.data;
@@ -247,6 +293,40 @@ export async function deleteMembershipPlan(planId, token = null) {
 
 export async function getPlanStats(planId, token = null) {
   const response = await api.get(`/api/membership/plans/${planId}/stats`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== SaaS Billing (Gym Owner / Tenant) =====
+export async function getBillingPlans(params = {}, token = null) {
+  const response = await api.get("/api/billing/plans", {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function subscribeToBillingPlan(payload, token = null) {
+  const response = await api.post("/api/billing/subscribe", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getCurrentSubscription(token = null) {
+  const response = await api.get("/api/billing/subscription", getAuthConfig(token));
+  return response.data;
+}
+
+export async function cancelSubscription(token = null) {
+  const response = await api.patch("/api/billing/subscription/cancel", {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function renewSubscription(token = null) {
+  const response = await api.post("/api/billing/subscription/renew", {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPaymentHistory(token = null) {
+  const response = await api.get("/api/billing/payments", getAuthConfig(token));
   return response.data;
 }
 
@@ -382,6 +462,14 @@ export async function getAttendanceMemberSummary(userId, token = null) {
 
 export async function getAbsentMembers(token = null) {
   const response = await api.get("/api/attendance/absent-members", getAuthConfig(token));
+  return response.data;
+}
+
+export async function getAttendanceLogs(params = {}, token = null) {
+  const response = await api.get("/api/attendance/logs", {
+    ...getAuthConfig(token),
+    params,
+  });
   return response.data;
 }
 
@@ -915,6 +1003,11 @@ export async function deleteWorkoutPlan(planId, token = null) {
   return response.data;
 }
 
+export async function cloneWorkoutPlan(planId, payload = {}, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/workouts/${planId}/clone`, payload, getAuthConfig(token));
+  return response.data;
+}
+
 export async function getWorkoutDays(planId, token = null) {
   const response = await api.get(`${WORKOUT_API_PREFIX}/workouts/${planId}/days`, getAuthConfig(token));
   return response.data;
@@ -963,6 +1056,19 @@ export async function deleteExercise(exerciseId, token = null) {
   return response.data;
 }
 
+export async function bulkCreateExercises(payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/bulk`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function bulkDeleteExercises(payload, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/exercises/bulk`, {
+    ...getAuthConfig(token),
+    data: payload,
+  });
+  return response.data;
+}
+
 export async function assignExerciseToWorkoutDay(dayId, payload, token = null) {
   const response = await api.post(`${WORKOUT_API_PREFIX}/days/${dayId}/exercises`, payload, getAuthConfig(token));
   return response.data;
@@ -1006,6 +1112,15 @@ export async function getMyWorkoutAssignments(token = null) {
 export async function getUserWorkouts(userId, token = null) {
   const response = await api.get(`${WORKOUT_API_PREFIX}/users/${userId}/workouts`, getAuthConfig(token));
   return response.data;
+}
+
+export async function getWorkoutDayExercises(dayId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/days/${dayId}/exercises`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyWorkouts(token = null) {
+  return getMyWorkoutAssignments(token);
 }
 
 export async function submitWorkoutProgress(payload, token = null) {
@@ -1076,7 +1191,27 @@ export async function deleteWorkoutSession(sessionId, token = null) {
   return response.data;
 }
 
-// ===== Workout Sets =====
+export async function pauseSession(sessionId, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/pause`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function resumeSession(sessionId, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/resume`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function substituteSessionExercise(sessionId, exerciseId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/exercises/${exerciseId}/substitute`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getSessionSwaps(sessionId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/swaps`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Sets (single + bulk) =====
 export async function getWorkoutSets(sessionId, token = null) {
   const response = await api.get(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/sets`, getAuthConfig(token));
   return response.data;
@@ -1087,13 +1222,275 @@ export async function logWorkoutSet(sessionId, payload, token = null) {
   return response.data;
 }
 
-export async function updateWorkoutSet(sessionId, setId, payload, token = null) {
-  const response = await api.patch(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/sets/${setId}`, payload, getAuthConfig(token));
+export async function bulkLogSets(sessionId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/bulk-sets`, payload, getAuthConfig(token));
   return response.data;
 }
 
-export async function deleteWorkoutSet(sessionId, setId, token = null) {
-  const response = await api.delete(`${WORKOUT_API_PREFIX}/sessions/${sessionId}/sets/${setId}`, getAuthConfig(token));
+export async function updateWorkoutSet(setId, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/sessions/sets/${setId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteWorkoutSet(setId, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/sessions/sets/${setId}`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Assignments (admin) =====
+export async function updateWorkoutAssignment(id, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/assignments/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function unassignWorkout(id, payload = {}, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/assignments/${id}`, {
+    ...getAuthConfig(token),
+    data: payload,
+  });
+  return response.data;
+}
+
+export async function reassignWorkout(assignmentId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/assignments/${assignmentId}/reassign`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Progress (admin) =====
+export async function updateProgressEntry(id, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/progress/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteProgressEntry(id, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/progress/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Schedules =====
+export async function createSchedule(payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/schedules`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMySchedules(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/schedules`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getUpcomingSchedules(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/schedules/upcoming`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateSchedule(id, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/schedules/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteSchedule(id, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/schedules/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function checkInToSchedule(id, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/schedules/${id}/check-in`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyCalendar(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/calendar`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+// ===== Workout Measurements =====
+export async function createMeasurement(payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/measurements`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyMeasurements(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/measurements`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getLatestMeasurement(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/measurements/latest`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateMeasurement(id, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/measurements/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteMeasurement(id, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/measurements/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMeasurementTrends(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/measurements/trends`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Goals =====
+export async function createWorkoutGoal(payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/goals`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyWorkoutGoals(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/goals`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getMyGoalById(id, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/goals/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateGoal(id, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/goals/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteGoal(id, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/goals/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function addMilestone(goalId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/goals/${goalId}/milestones`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function achieveGoal(goalId, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/goals/${goalId}/achieve`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Feedback =====
+export async function createFeedback(payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/feedback`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyFeedback(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/feedback`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getUserFeedback(userId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/users/${userId}/feedback`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function markFeedbackRead(id, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/feedback/${id}/read`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Analytics =====
+export async function getMyAnalyticsDashboard(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/dashboard`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getVolumeTrend(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/volume`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getConsistency(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/consistency`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyPRs(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/prs`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyHeatmap(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/heatmap`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Supersets =====
+export async function createSupersetGroup(dayId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/days/${dayId}/supersets`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getSupersetGroups(dayId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/days/${dayId}/supersets`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateSupersetGroup(id, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/days/supersets/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteSupersetGroup(id, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/days/supersets/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Exercise Substitutions =====
+export async function createSubstitution(exerciseId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/substitutions`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getSubstitutions(exerciseId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/substitutions`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteSubstitution(id, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/exercises/substitutions/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+// ===== Workout Exercise Media =====
+export async function uploadExerciseMedia(exerciseId, formData, token = null) {
+  const config = getAuthConfig(token);
+  if (config) {
+    config.headers = { ...config.headers, "Content-Type": "multipart/form-data" };
+  }
+  const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/media`, formData, config || { headers: { "Content-Type": "multipart/form-data" } });
+  return response.data;
+}
+
+export async function getExerciseMedia(exerciseId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/media`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateExerciseMedia(mediaId, payload, token = null) {
+  const response = await api.patch(`${WORKOUT_API_PREFIX}/exercises/media/${mediaId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteExerciseMedia(mediaId, token = null) {
+  const response = await api.delete(`${WORKOUT_API_PREFIX}/exercises/media/${mediaId}`, getAuthConfig(token));
   return response.data;
 }
 

@@ -11,7 +11,6 @@ import Payments from "./pages/Payments";
 import ModuleManager from "./pages/ModuleManager";
 import PlatformGyms from "./pages/PlatformGyms";
 import PlatformSaasPlans from "./pages/PlatformSaasPlans";
-import PlatformSaasFeatures from "./pages/PlatformSaasFeatures";
 import Profile from "./pages/Profile";
 import Permissions from "./pages/Permissions";
 
@@ -101,14 +100,6 @@ export default function App() {
           element={
             <ProtectedPage moduleKey="saas-plans">
               <PlatformSaasPlans />
-            </ProtectedPage>
-          }
-        />
-        <Route
-          path="/platform/saas-features"
-          element={
-            <ProtectedPage moduleKey="saas-features">
-              <PlatformSaasFeatures />
             </ProtectedPage>
           }
         />

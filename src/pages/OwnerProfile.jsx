@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
+import { QRCodeSVG } from "qrcode.react";
 import {
   getApiError,
   getPlatformGym,
@@ -55,6 +56,24 @@ export default function OwnerProfile() {
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const qrPrintRef = useRef();
+
+  const handlePrintQR = () => {
+    const content = qrPrintRef.current?.innerHTML;
+    if (!content) return;
+    const win = window.open("", "_blank");
+    win.document.write(`
+      <html>
+        <head><title>Print QR Code</title></head>
+        <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;flex-direction:column;font-family:sans-serif;">
+          ${content}
+          <p style="margin-top:16px;font-size:14px;color:#666;">Gym ID: ${gym?.id}</p>
+          <script>window.onload=function(){setTimeout(function(){window.print();window.close()},500)}</script>
+        </body>
+      </html>
+    `);
+    win.document.close();
+  };
 
   const loadGym = async () => {
     if (!user) return;
@@ -171,7 +190,6 @@ export default function OwnerProfile() {
       <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-950">Profile</h1>
             <p className="text-sm text-gray-500">Gym owner profile and gym details.</p>
           </div>
           <button
@@ -314,6 +332,23 @@ export default function OwnerProfile() {
             </button>
           </div>
         )}
+      </div>
+
+      <div className="mt-6 rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <h2 className="mb-4 text-lg font-bold text-gray-950">QR Code</h2>
+        <div className="flex flex-col items-center gap-4">
+          <div ref={qrPrintRef} className="flex justify-center">
+            {gym?.id && <QRCodeSVG value={gym.id} size={180} />}
+          </div>
+          <p className="text-sm text-gray-500">Gym ID: {gym?.id || "-"}</p>
+          <button
+            type="button"
+            onClick={handlePrintQR}
+            className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+          >
+            Print QR Code
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -140,13 +140,13 @@ export default function Permissions() {
   return (
     <div className="p-4 md:p-6">
       <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-        <div className="flex items-center gap-3">
+        {/* <div className="flex items-center gap-3">
           <Shield className="h-8 w-8 text-blue-600" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Role Permissions</h1>
             <p className="text-gray-600">Manage permissions by Member and Staff role groups.</p>
           </div>
-        </div>
+        </div> */}
 
         <div className="flex w-full items-center gap-2 rounded bg-white p-3 shadow md:max-w-md">
           <Search size={18} />

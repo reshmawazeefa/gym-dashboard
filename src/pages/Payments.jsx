@@ -50,7 +50,6 @@ export default function Payments() {
 
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center justify-between mb-6">
-        <h1 className="text-xl font-bold">Payments</h1>
 
         <div className="flex w-full flex-col gap-3 md:flex-row md:items-center md:justify-between md:flex-1">
           <div className="min-w-0 flex-1">

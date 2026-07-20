@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Edit, Plus, RefreshCw, Search, Trash } from "lucide-react";
+import { Edit, Plus, Search, Trash } from "lucide-react";
 import AddMemberModal from "../components/AddMemberModal";
 import toast from "react-hot-toast";
 import {
@@ -211,7 +211,6 @@ export default function Members() {
   return (
     <div className="p-4 md:p-6">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-bold">Members</h1>
 
         <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:flex-1">
           <div className="min-w-0 flex-1">

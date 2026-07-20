@@ -354,7 +354,7 @@ export default function Plans() {
         <>
           {/* Header */}
           <div className="flex flex-col gap-3 md:flex-row md:items-center justify-between">
-            <h1 className="text-xl font-bold">Plans</h1>
+
             <div className="flex w-full flex-col gap-3 md:flex-row md:items-center md:justify-between md:flex-1">
               <div className="min-w-0 flex-1">
                 <div className="flex w-full items-center gap-2 rounded bg-white p-3 shadow sm:max-w-xxl">

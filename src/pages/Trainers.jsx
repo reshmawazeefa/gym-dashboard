@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Search, Trash, Edit3, RefreshCw } from "lucide-react";
+import { Plus, Search, Trash, Edit3 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 import { normalizeRole } from "../utils/rbac";
@@ -283,7 +283,6 @@ export default function Trainers() {
   return (
     <div>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-bold">Staff</h1>
 
         <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:flex-1">
           <div className="min-w-0 flex-1">
@@ -314,14 +313,13 @@ export default function Trainers() {
             </button>
           )}
 
-          <button
+          {/* <button
             onClick={loadStaff}
             disabled={loading}
             className="flex w-full items-center justify-center gap-2 rounded bg-gray-200 px-4 py-2 text-sm text-gray-700 disabled:opacity-50 sm:w-auto"
           >
-            <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
-            Refresh
-          </button>
+            Reload
+          </button> */}
         </div>
       </div>
 

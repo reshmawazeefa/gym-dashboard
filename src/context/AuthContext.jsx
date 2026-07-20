@@ -81,16 +81,13 @@ export const AuthProvider = ({ children }) => {
 
     persistSession(session);
 
-    // Auto check-in for members and trainers
+    // Auto check-in for members and trainers (uses JWT identity - no body needed)
     try {
-      // Use id if available, otherwise use email as identifier
-      const checkInUserId = userId || email;
-      
-      if (loginType === "member" && checkInUserId) {
-        await memberCheckIn({ userId: checkInUserId, type: "MEMBER" }, token);
+      if (loginType === "member" && userId) {
+        await memberCheckIn(token);
         localStorage.setItem("checkInTime", JSON.stringify(new Date().toISOString()));
-      } else if (loginType === "trainer" && checkInUserId) {
-        await trainerCheckIn({ userId: checkInUserId, type: "TRAINER" }, token);
+      } else if (loginType === "trainer" && userId) {
+        await trainerCheckIn(token);
         localStorage.setItem("checkInTime", JSON.stringify(new Date().toISOString()));
       }
     } catch (error) {

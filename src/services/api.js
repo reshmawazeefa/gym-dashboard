@@ -752,224 +752,152 @@ export async function getNutritionMemberDashboard(userId) {
 }
 
 // Class Management APIs
-const CLASS_API_PREFIX = "/api/class/classes";
+const CLASS_API_ROOT = "/api/class";
+const CLASS_CLASSES_API = `${CLASS_API_ROOT}/classes`;
 
-export async function createClass(classData, token) {
-  const response = await api.post(
-    CLASS_API_PREFIX,
-    classData,
-    getAuthConfig(token)
-  );
+function getClassAuthConfig(token = null, params = null) {
+  return params ? { ...getAuthConfig(token), params } : getAuthConfig(token);
+}
+
+export async function createClass(classData, token = null) {
+  const response = await api.post(CLASS_CLASSES_API, classData, getAuthConfig(token));
   return response.data;
 }
 
-export async function getAllClasses(token) {
-  const response = await api.get(
-    CLASS_API_PREFIX,
-    getAuthConfig(token)
-  );
+export async function getAllClasses(token = null) {
+  const response = await api.get(CLASS_CLASSES_API, getAuthConfig(token));
   return response.data;
 }
 
-export async function getClassById(classId, token, date = null) {
-  const config = { ...getAuthConfig(token) };
-  if (date) {
-    config.params = { date };
-  }
-  const response = await api.get(
-    `${CLASS_API_PREFIX}/${classId}`,
-    config
-  );
+export async function getClassById(classId, token = null, date = null) {
+  const params = date ? { date } : null;
+  const response = await api.get(`${CLASS_CLASSES_API}/${classId}`, getClassAuthConfig(token, params));
   return response.data;
 }
 
-export async function updateClass(classId, classData, token) {
-  const response = await api.patch(
-    `${CLASS_API_PREFIX}/${classId}`,
-    classData,
-    getAuthConfig(token)
-  );
+export async function updateClass(classId, classData, token = null) {
+  const response = await api.patch(`${CLASS_CLASSES_API}/${classId}`, classData, getAuthConfig(token));
   return response.data;
 }
 
 export async function deleteClass(classId, token = null) {
-  const response = await api.delete(
-    `${CLASS_API_PREFIX}/${classId}`,
-    getAuthConfig(token)
-  );
+  const response = await api.delete(`${CLASS_CLASSES_API}/${classId}`, getAuthConfig(token));
   return response.data;
 }
 
-export async function createClassSchedule(classId, scheduleData, token) {
-  const response = await api.post(
-    `${CLASS_API_PREFIX}/${classId}/schedules`,
-    scheduleData,
-    getAuthConfig(token)
-  );
+export async function getTrainerClasses(token = null) {
+  const response = await api.get(`${CLASS_API_ROOT}/trainer/classes`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createClassSchedule(classId, scheduleData, token = null) {
+  const response = await api.post(`${CLASS_CLASSES_API}/${classId}/schedules`, scheduleData, getAuthConfig(token));
   return response.data;
 }
 
 export async function getClassSchedules(classId, token = null) {
-  const response = await api.get(
-    `${CLASS_API_PREFIX}/${classId}/schedules`,
-    getAuthConfig(token)
-  );
+  const response = await api.get(`${CLASS_CLASSES_API}/${classId}/schedules`, getAuthConfig(token));
   return response.data;
 }
 
-export async function createClassSlot(classId, slotData, token) {
-  const response = await api.post(
-    `${CLASS_API_PREFIX}/${classId}/slots`,
-    slotData,
-    getAuthConfig(token)
-  );
+export async function deleteClassSchedule(scheduleId, token = null) {
+  const response = await api.delete(`${CLASS_API_ROOT}/schedules/${scheduleId}`, getAuthConfig(token));
   return response.data;
 }
 
-export async function scheduleClass(classId, scheduleData, token) {
+export async function createClassSlot(classId, slotData, token = null) {
+  const response = await api.post(`${CLASS_CLASSES_API}/${classId}/slots`, slotData, getAuthConfig(token));
+  return response.data;
+}
+
+export async function scheduleClass(classId, scheduleData, token = null) {
   return createClassSlot(classId, scheduleData, token);
 }
 
-export async function bookClass(classId, bookingData = {}, token) {
-  const response = await api.post(
-    `${CLASS_API_PREFIX}/${classId}/book`,
-    bookingData,
-    getAuthConfig(token)
-  );
-  return response.data;
-}
-
-export async function cancelBooking(bookingId, token = null) {
-  const response = await api.patch(
-    `/api/class/bookings/${bookingId}/cancel`,
-    {},
-    getAuthConfig(token)
-  );
+export async function getClassSlots(classId, token = null) {
+  const response = await api.get(`${CLASS_CLASSES_API}/${classId}/slots`, getAuthConfig(token));
   return response.data;
 }
 
 export async function getSlotsBySchedule(scheduleId, token = null) {
-  const response = await api.get(
-    `/api/class/schedules/${scheduleId}/slots`,
-    getAuthConfig(token)
-  );
+  const response = await api.get(`${CLASS_API_ROOT}/schedules/${scheduleId}/slots`, getAuthConfig(token));
   return response.data;
 }
 
 export async function updateClassSlot(slotId, payload, token = null) {
-  const response = await api.patch(
-    `/api/class/slots/${slotId}`,
-    payload,
-    getAuthConfig(token)
-  );
+  const response = await api.patch(`${CLASS_API_ROOT}/slots/${slotId}`, payload, getAuthConfig(token));
   return response.data;
 }
 
 export async function deleteClassSlot(slotId, token = null) {
-  const response = await api.delete(
-    `/api/class/slots/${slotId}`,
-    getAuthConfig(token)
-  );
+  const response = await api.delete(`${CLASS_API_ROOT}/slots/${slotId}`, getAuthConfig(token));
   return response.data;
 }
 
-export async function getMyBookings(token) {
-  const response = await api.get(
-    "/api/class/my-bookings",
-    getAuthConfig(token)
-  );
+export async function getSlotMembers(slotId, token = null) {
+  const response = await api.get(`${CLASS_API_ROOT}/slots/${slotId}/members`, getAuthConfig(token));
   return response.data;
 }
 
-export async function markAttendance(attendanceData, token = null) {
-  const response = await api.post(
-    "/api/class/attendance",
-    attendanceData,
-    getAuthConfig(token)
-  );
+export async function bookClass(classId, bookingData = {}, token = null) {
+  const response = await api.post(`${CLASS_CLASSES_API}/${classId}/book`, bookingData, getAuthConfig(token));
   return response.data;
 }
 
-export async function getTrainerClasses(token) {
-  const response = await api.get(
-    "/api/class/trainer/classes",
-    getAuthConfig(token)
-  );
+export async function cancelBooking(bookingId, token = null) {
+  const response = await api.patch(`${CLASS_API_ROOT}/bookings/${bookingId}/cancel`, {}, getAuthConfig(token));
   return response.data;
 }
 
-export async function getClassBookings(classId, token) {
-  const response = await api.get(
-    `${CLASS_API_PREFIX}/${classId}/bookings`,
-    getAuthConfig(token)
-  );
+export async function getMyBookings(token = null) {
+  const response = await api.get(`${CLASS_API_ROOT}/my-bookings`, getAuthConfig(token));
   return response.data;
 }
 
-export async function getClassAttendance(classId, token) {
-  const response = await api.get(
-    `${CLASS_API_PREFIX}/${classId}/attendance`,
-    getAuthConfig(token)
-  );
-  return response.data;
-}
-
-export async function getClassSlots(classId, token = null) {
-  const response = await api.get(
-    `${CLASS_API_PREFIX}/${classId}/slots`,
-    getAuthConfig(token)
-  );
+export async function getClassBookings(classId, token = null) {
+  const response = await api.get(`${CLASS_CLASSES_API}/${classId}/bookings`, getAuthConfig(token));
   return response.data;
 }
 
 export async function getAvailableMembers(classId, slotId, bookingDate, token = null) {
   const params = { slotId };
   if (bookingDate) params.bookingDate = bookingDate;
-  const response = await api.get(
-    `${CLASS_API_PREFIX}/${classId}/available-members`,
-    { ...getAuthConfig(token), params }
-  );
+  const response = await api.get(`${CLASS_CLASSES_API}/${classId}/available-members`, getClassAuthConfig(token, params));
+  return response.data;
+}
+
+export async function markAttendance(attendanceData, token = null) {
+  const response = await api.post(`${CLASS_API_ROOT}/attendance`, attendanceData, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getClassAttendance(classId, token = null) {
+  const response = await api.get(`${CLASS_CLASSES_API}/${classId}/attendance`, getAuthConfig(token));
   return response.data;
 }
 
 export async function getSlotAttendance(slotId, token = null) {
-  const response = await api.get(
-    `/api/class/slots/${slotId}/attendance`,
-    getAuthConfig(token)
-  );
+  const response = await api.get(`${CLASS_API_ROOT}/slots/${slotId}/attendance`, getAuthConfig(token));
   return response.data;
 }
 
 export async function getMemberClassAttendance(userId, token = null) {
-  const response = await api.get(
-    `/api/class/members/${userId}/attendance`,
-    getAuthConfig(token)
-  );
-  return response.data;
-}
-
-export async function deleteClassSchedule(scheduleId, token = null) {
-  const response = await api.delete(`/api/class/schedules/${scheduleId}`, getAuthConfig(token));
-  return response.data;
-}
-
-export async function getSlotMembers(slotId, token = null) {
-  const response = await api.get(`/api/class/slots/${slotId}/members`, getAuthConfig(token));
+  const response = await api.get(`${CLASS_API_ROOT}/members/${userId}/attendance`, getAuthConfig(token));
   return response.data;
 }
 
 export async function changeSlot(bookingId, payload, token = null) {
-  const response = await api.post(`/api/class/bookings/${bookingId}/change-slot`, payload, getAuthConfig(token));
+  const response = await api.post(`${CLASS_API_ROOT}/bookings/${bookingId}/change-slot`, payload, getAuthConfig(token));
   return response.data;
 }
 
 export async function changeSlotPermanent(bookingId, payload, token = null) {
-  const response = await api.post(`/api/class/bookings/${bookingId}/change-slot-permanent`, payload, getAuthConfig(token));
+  const response = await api.post(`${CLASS_API_ROOT}/bookings/${bookingId}/change-slot-permanent`, payload, getAuthConfig(token));
   return response.data;
 }
 
 export async function getBookingSlotChanges(bookingId, token = null) {
-  const response = await api.get(`/api/class/bookings/${bookingId}/slot-changes`, getAuthConfig(token));
+  const response = await api.get(`${CLASS_API_ROOT}/bookings/${bookingId}/slot-changes`, getAuthConfig(token));
   return response.data;
 }
 

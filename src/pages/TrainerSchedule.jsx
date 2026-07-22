@@ -35,6 +35,7 @@ import {
   getClassBookings,
   getClassById,
   getClassSchedules,
+  getClassSlots,
   getMyBookings,
   getSlotAttendance,
   getSlotMembers,
@@ -138,6 +139,18 @@ function formatTime(value) {
     minute: "2-digit",
     hour12: true,
   });
+}
+
+function formatSlotRange(slot = {}) {
+  const start = slot.startTime || slot.start || slot.time || "";
+  const end = slot.endTime || slot.end || "";
+
+  if (!start && !end) return "Slot details unavailable";
+  return `${formatTime(start)} - ${formatTime(end)}`;
+}
+
+function getBookingDateValue(item = {}) {
+  return item.bookingDate || item.booking?.bookingDate || item.raw?.bookingDate || item.date || "";
 }
 
 function toDateInputValue(value) {
@@ -404,11 +417,12 @@ export default function TrainerSchedule() {
     const queryDate = date || selectedDate;
 
     try {
-      const [detailResponse, bookingsResponse, attendanceResponse, schedulesResponse] = await Promise.allSettled([
+      const [detailResponse, bookingsResponse, attendanceResponse, schedulesResponse, slotsResponse] = await Promise.allSettled([
         getClassById(classId, authToken, queryDate),
         canManageClasses ? getClassBookings(classId, authToken) : Promise.resolve([]),
         canManageClasses ? getClassAttendance(classId, authToken) : Promise.resolve([]),
         getClassSchedules(classId, authToken),
+        getClassSlots(classId, authToken),
       ]);
 
       const normalizedBookings =
@@ -419,6 +433,10 @@ export default function TrainerSchedule() {
       const apiSchedules =
         schedulesResponse.status === "fulfilled"
           ? unwrapMaybeList(schedulesResponse.value, ["schedules", "classSchedules"]).map(normalizeSchedule)
+          : [];
+      const apiSlots =
+        slotsResponse.status === "fulfilled"
+          ? unwrapMaybeList(slotsResponse.value, ["slots", "classSlots"]).map(normalizeSlot)
           : [];
 
       if (detailResponse.status === "fulfilled") {
@@ -465,8 +483,12 @@ export default function TrainerSchedule() {
           }),
         }));
 
+        const standaloneSlots = apiSlots.length
+          ? apiSlots.filter((slot) => !slot.scheduleId)
+          : detail.slots || [];
+
         // Also enrich standalone slots
-        detail.slots = (detail.slots || []).map((slot) => {
+        detail.slots = standaloneSlots.map((slot) => {
           const bookedCount = slotBookings[slot.id] ?? slot.bookedCount ?? 0;
           const capacity = Number(slot.capacity) || 0;
           return { ...slot, bookedCount, remainingSpots: capacity - bookedCount, isFull: bookedCount >= capacity && capacity > 0 };
@@ -736,7 +758,7 @@ export default function TrainerSchedule() {
   const [showAssignPanel, setShowAssignPanel] = useState(false);
   const [availableMembers, setAvailableMembers] = useState([]);
   const [assignSlotId, setAssignSlotId] = useState("");
-  const [assignBookingDate, setAssignBookingDate] = useState(toDateInputValue);
+  const [assignBookingDate, setAssignBookingDate] = useState(toDateInputValue());
   const [slotAttendanceRecords, setSlotAttendanceRecords] = useState([]);
   const [slotAttendanceSlotId, setSlotAttendanceSlotId] = useState(null);
 
@@ -882,45 +904,42 @@ export default function TrainerSchedule() {
 
     try {
       setSaving(true);
-      const body = {
-        startTime: payload.startTime,
-        endTime: payload.endTime,
-        capacity: Number(payload.maxCapacity),
-      };
-      if (scheduleModalEdit?.id && (scheduleModalEdit.startTime || scheduleModalEdit.raw?.startTime)) {
-        await updateClassSlot(scheduleModalEdit.id, body, authToken);
-        toast.success("Slot updated");
-      } else if (payload.classType === "RECURRING") {
-        // If only dayOfWeek was provided, create the schedule only (per API).
-        if (!payload.startTime && !payload.endTime && !payload.maxCapacity) {
-          const scheduleResponse = await createClassSchedule(
-            payload.classId,
-            { dayOfWeek: Number(payload.dayOfWeek) },
-            authToken
-          );
-          const schedule = normalizeSchedule(unwrapObject(scheduleResponse));
-          toast.success("Schedule created");
-        } else {
-          // If slot details are also provided, create schedule then slot.
-          const scheduleResponse = await createClassSchedule(
-            payload.classId,
-            { dayOfWeek: Number(payload.dayOfWeek) },
-            authToken
-          );
-          const schedule = normalizeSchedule(unwrapObject(scheduleResponse));
-          await createClassSlot(payload.classId, { ...body, scheduleId: schedule.id }, authToken);
-          toast.success("Recurring class slot created");
-        }
+      if (scheduleModalPurpose === "schedule") {
+        await createClassSchedule(
+          payload.classId,
+          { dayOfWeek: Number(payload.dayOfWeek) },
+          authToken
+        );
+        toast.success("Schedule created");
       } else {
-        await createClassSlot(payload.classId, body, authToken);
-        toast.success("One-time class slot created");
+        const body = {
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+          capacity: Number(payload.maxCapacity),
+        };
+
+        if (payload.scheduleId) {
+          body.scheduleId = payload.scheduleId;
+        }
+
+        if (scheduleModalEdit?.id && (scheduleModalEdit.startTime || scheduleModalEdit.raw?.startTime)) {
+          await updateClassSlot(scheduleModalEdit.id, {
+            startTime: body.startTime,
+            endTime: body.endTime,
+            capacity: body.capacity,
+          }, authToken);
+          toast.success("Slot updated");
+        } else {
+          await createClassSlot(payload.classId, body, authToken);
+          toast.success(payload.scheduleId ? "Schedule slot created" : "Class slot created");
+        }
       }
       setScheduleModalEdit(null);
       setScheduleModalOpen(false);
       await loadModuleData();
       await loadClassDetails(payload.classId);
     } catch (error) {
-      toast.error(getApiError(error, "Could not create schedule"));
+      toast.error(getApiError(error, "Could not save slot"));
     } finally {
       setSaving(false);
     }
@@ -1008,6 +1027,7 @@ export default function TrainerSchedule() {
         (schedule.slots || []).map((slot) => ({ ...slot, schedule }))
       )
     : oneTimeSlots.map((slot) => ({ ...slot, schedule: null }));
+  const activeSlotSchedule = selectedDaySchedules.find((schedule) => schedule.id === selectedSchedule?.id) || selectedDaySchedules[0] || null;
   const totalCapacity = visibleSlots.reduce((total, slot) => total + (Number(slot.capacity) || 0), 0);
   const totalBookedSlots = visibleSlots.reduce((total, slot) => total + (Number(slot.bookedCount) || 0), 0);
   const classInitial = (selectedClass?.title || "C").trim().charAt(0).toUpperCase();
@@ -1288,6 +1308,7 @@ export default function TrainerSchedule() {
                             onClick={() => {
                               setScheduleModalEdit({
                                 classId: selectedClass.id,
+                                scheduleId: isRecurringClass ? activeSlotSchedule?.id || "" : "",
                                 dayOfWeek: activeScheduleDay || "1",
                               });
                               setScheduleModalPurpose("slot");
@@ -1310,6 +1331,7 @@ export default function TrainerSchedule() {
                               onClick={() => {
                                 setSelectedSchedule(slot.schedule || null);
                                 setSelectedSlot(slot);
+                                if (slot?.id) setAssignSlotId(slot.id);
                               }}
                               className={`cursor-pointer rounded-lg border p-4 transition hover:bg-gray-50 ${
                                 isSelectedSlot ? "border-blue-300 bg-blue-50/40" : "border-gray-200 bg-white"
@@ -1361,7 +1383,12 @@ export default function TrainerSchedule() {
                                         type="button"
                                         onClick={(event) => {
                                           event.stopPropagation();
-                                          handleEditSchedule({ ...slot, classId: selectedClass.id, dayOfWeek: slot.schedule?.dayOfWeek });
+                                          handleEditSchedule({
+                                            ...slot,
+                                            classId: selectedClass.id,
+                                            scheduleId: slot.scheduleId || slot.schedule?.id || "",
+                                            dayOfWeek: slot.schedule?.dayOfWeek,
+                                          });
                                         }}
                                         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-300 text-blue-700 hover:bg-blue-50"
                                         aria-label="Edit slot"
@@ -1407,9 +1434,14 @@ export default function TrainerSchedule() {
                           </div>
                           <div className="space-y-2">
                             {slotMembers.map((member) => (
-                              <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto] md:items-center">
-                                <span className="font-medium text-gray-950">{member.user?.name || member.name || "Member"}</span>
-                                <span className="text-gray-500">{member.user?.email || ""}</span>
+                              <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
+                                <div>
+                                  <p className="font-medium text-gray-950">{member.user?.name || member.name || "Member"}</p>
+                                  {member.user?.email && <p className="text-xs text-gray-500">{member.user.email}</p>}
+                                </div>
+                                <span className="text-xs text-gray-500">
+                                  Booking date: {formatDate(getBookingDateValue(member))}
+                                </span>
                                 <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(member.status || member.attendanceStatus || "BOOKED")}`}>
                                   {titleCase(member.status || member.attendanceStatus || "BOOKED")}
                                 </span>
@@ -1442,102 +1474,148 @@ export default function TrainerSchedule() {
                 )}
 
                 {activeTab === "bookings" && (
-                  <div className="space-y-3 p-4">
+                  <div className="space-y-4 p-4">
                     {!isMember && (
-                      <div className="flex flex-wrap items-center gap-3">
-                        <select
-                          value={slotMembersSlotId || ""}
-                          onChange={(e) => {
-                            const slotId = e.target.value;
-                            if (slotId) loadSlotMembers(slotId);
-                          }}
-                          className="h-9 rounded border border-gray-300 px-3 text-sm outline-none"
-                        >
-                          <option value="">Select a slot to view members</option>
-                          {visibleSlots.map((slot) => (
-                            <option key={slot.id} value={slot.id}>
-                              {isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)} ({slot.bookedCount || 0} booked)
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => setShowAssignPanel(!showAssignPanel)}
-                          className={`inline-flex items-center gap-1 rounded-md px-3 py-2 text-xs font-semibold ${
-                            showAssignPanel ? "bg-gray-100 text-gray-700" : "bg-emerald-600 text-white hover:bg-emerald-700"
-                          }`}
-                        >
-                          <Plus size={14} />
-                          {showAssignPanel ? "Close Assign" : "Assign Member"}
-                        </button>
+                      <div className="rounded-lg border border-gray-200 bg-white p-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                          <div className="grid flex-1 gap-2">
+                            <label className="text-xs font-semibold uppercase text-gray-500">Booked members by slot</label>
+                            <select
+                              value={slotMembersSlotId || ""}
+                              onChange={(e) => {
+                                const slotId = e.target.value;
+                                if (slotId) {
+                                  loadSlotMembers(slotId);
+                                  setAssignSlotId(slotId);
+                                } else {
+                                  setSlotMembers([]);
+                                  setAssignSlotId("");
+                                }
+                              }}
+                              className="h-11 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            >
+                              <option value="">Select a slot to view members</option>
+                              {visibleSlots.map((slot) => (
+                                <option key={slot.id} value={slot.id}>
+                                  {isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)} ({slot.bookedCount || 0} booked)
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = !showAssignPanel;
+                              setShowAssignPanel(next);
+                              if (next) {
+                                // initialize defaults when opening the panel
+                                const defaultSlot = slotMembersSlotId
+                                  ? visibleSlots.find((s) => s.id === slotMembersSlotId)
+                                  : selectedSlot || visibleSlots[0];
+                                setAssignSlotId((current) => current || (defaultSlot ? defaultSlot.id : ""));
+                                if (isRecurringClass) {
+                                  setAssignBookingDate((current) => current || selectedDate || toDateInputValue());
+                                } else {
+                                  const slotDate = defaultSlot?.date || selectedClass?.startDate;
+                                  setAssignBookingDate((current) => current || toDateInputValue(slotDate));
+                                }
+                              }
+                            }}
+                            className={`inline-flex h-11 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold transition ${
+                              showAssignPanel
+                                ? "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                : "bg-emerald-600 text-white hover:bg-emerald-700"
+                            }`}
+                          >
+                            {showAssignPanel ? <XCircle size={16} /> : <Plus size={16} />}
+                            {showAssignPanel ? "Close Assign" : "Assign member"}
+                          </button>
+                        </div>
                       </div>
                     )}
 
                     {!isMember && showAssignPanel && (
-                      <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4">
-                        <h4 className="mb-3 text-sm font-semibold text-gray-950">Assign Member to Class</h4>
-                        <div className="mb-3 flex flex-wrap items-center gap-3">
-                          <select
-                            value={assignSlotId}
-                            onChange={(e) => {
-                              const slotId = e.target.value;
-                              setAssignSlotId(slotId);
-                              if (!isRecurringClass && slotId) {
-                                const slot = visibleSlots.find(s => s.id === slotId);
-                                const slotDate = slot?.date || selectedClass?.startDate;
-                                if (slotDate) setAssignBookingDate(toDateInputValue(slotDate));
-                              }
-                            }}
-                            className="h-9 rounded border border-gray-300 px-3 text-sm outline-none"
-                          >
-                            <option value="">Select slot</option>
-                            {visibleSlots.map((slot) => (
-                              <option key={slot.id} value={slot.id}>
-{isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)}
-                            </option>
-                          ))}
-                          </select>
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-4">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-base font-semibold text-gray-950">Assign member</h4>
+                            <p className="mt-1 text-sm text-gray-500">Add an available member to this class slot.</p>
+                          </div>
+                          <span className="rounded-md bg-white px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                            {selectedClass?.name || "Selected class"}
+                          </span>
+                        </div>
+                        <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(14rem,1fr)_12rem_auto] lg:items-end">
+                          <div className="grid gap-2">
+                            <label className="text-xs font-semibold uppercase text-gray-500">Class slot</label>
+                            <select
+                              value={assignSlotId}
+                              onChange={(e) => {
+                                const slotId = e.target.value;
+                                setAssignSlotId(slotId);
+                                if (!isRecurringClass && slotId) {
+                                  const slot = visibleSlots.find(s => s.id === slotId);
+                                  const slotDate = slot?.date || selectedClass?.startDate;
+                                  if (slotDate) setAssignBookingDate(toDateInputValue(slotDate));
+                                }
+                              }}
+                              className="h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            >
+                              <option value="">Select slot</option>
+                              {visibleSlots.map((slot) => (
+                                <option key={slot.id} value={slot.id}>
+                                  {isRecurringClass ? dayName(slot.dayOfWeek) + " - " : ""}{formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                           {isRecurringClass && (
-                            <input
-                              type="date"
-                              value={assignBookingDate}
-                              onChange={(e) => setAssignBookingDate(e.target.value)}
-                              className="h-9 rounded border border-gray-300 px-3 text-sm outline-none"
-                            />
+                            <div className="grid gap-2">
+                              <label className="text-xs font-semibold uppercase text-gray-500">Booking date</label>
+                              <input
+                                type="date"
+                                value={assignBookingDate}
+                                onChange={(e) => setAssignBookingDate(e.target.value)}
+                                className="h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                              />
+                            </div>
                           )}
                           <button
                             type="button"
                             onClick={() => loadAvailableMembers(assignSlotId, assignBookingDate)}
                             disabled={!assignSlotId || saving}
-                            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                            className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            <Users size={14} />
+                            <Users size={16} />
                             Load Available Members
                           </button>
                         </div>
                         {availableMembers.length > 0 && (
                           <div className="space-y-2">
                             {availableMembers.map((member) => (
-                              <div key={member.id || member.userId} className="flex items-center justify-between rounded-md bg-white p-3 text-sm">
+                              <div key={member.id || member.userId} className="flex flex-col gap-3 rounded-md bg-white p-3 text-sm ring-1 ring-emerald-100 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                   <p className="font-medium text-gray-950">{member.name || member.fullName}</p>
-                                  <p className="text-xs text-gray-500">{member.email}{member.phoneNumber ? ` | ${member.phoneNumber}` : ""}</p>
+                                  <p className="text-xs text-gray-500">{member.email}{member.phoneNumber ? ` • ${member.phoneNumber}` : ""}</p>
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => handleAssignMember(member.id || member.userId)}
                                   disabled={saving}
-                                  className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                  className="inline-flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                                 >
                                   <Plus size={14} />
-                                  Assign
+                                  Assign to class
                                 </button>
                               </div>
                             ))}
                           </div>
                         )}
+                        {!assignSlotId && (
+                          <p className="rounded-md border border-dashed border-emerald-200 bg-white/70 p-4 text-center text-sm text-gray-500">Choose a slot to find members who can be assigned.</p>
+                        )}
                         {assignSlotId && availableMembers.length === 0 && (
-                          <p className="text-sm text-gray-500">No available members. Click "Load Available Members" to refresh.</p>
+                          <p className="rounded-md border border-dashed border-emerald-200 bg-white/70 p-4 text-center text-sm text-gray-500">No available members are loaded for this slot yet.</p>
                         )}
                       </div>
                     )}
@@ -1557,8 +1635,11 @@ export default function TrainerSchedule() {
                         </div>
                         <div className="space-y-2">
                           {slotMembers.map((member) => (
-                            <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto] md:items-center">
+                            <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
                               <span className="font-medium text-gray-950">{member.user?.name || member.name || "Member"}</span>
+                              <span className="text-xs text-gray-500">
+                                Booking date: {formatDate(getBookingDateValue(member))}
+                              </span>
                               <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(member.status || member.attendanceStatus || "BOOKED")}`}>
                                 {titleCase(member.status || member.attendanceStatus || "BOOKED")}
                               </span>
@@ -1707,11 +1788,37 @@ export default function TrainerSchedule() {
                         </div>
                         <div className="space-y-2">
                           {slotChanges.map((change) => (
-                            <div key={change.id} className="rounded-md bg-white p-2 text-sm">
-                              <p className="text-gray-950">
+                            <div key={change.id || `${change.bookingId}-${change.createdAt}`} className="rounded-md bg-white p-3 text-sm">
+                              <p className="hidden">
                                 {change.isPermanent ? "Permanent" : "Temporary"} change: {formatTime(change.oldSlotId)} → {formatTime(change.newSlotId)}
                               </p>
-                              {change.date && <p className="text-xs text-gray-500">Date: {formatDate(change.date)}</p>}
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="font-semibold text-gray-950">
+                                  {change.isPermanent ? "Permanent" : "Temporary"} slot change
+                                </p>
+                                {change.createdAt && (
+                                  <span className="text-xs text-gray-500">
+                                    {formatDate(change.createdAt)} {formatTime(change.createdAt)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                <div className="rounded-md border border-gray-200 p-2">
+                                  <p className="text-xs font-semibold uppercase text-gray-500">Old slot</p>
+                                  <p className="mt-1 text-gray-900">{formatSlotRange(change.oldSlot || change.previousSlot)}</p>
+                                  {(change.oldSlot || change.previousSlot)?.capacity !== undefined && (
+                                    <p className="mt-1 text-xs text-gray-500">Capacity: {(change.oldSlot || change.previousSlot).capacity}</p>
+                                  )}
+                                </div>
+                                <div className="rounded-md border border-emerald-200 bg-emerald-50/40 p-2">
+                                  <p className="text-xs font-semibold uppercase text-emerald-700">New slot</p>
+                                  <p className="mt-1 text-gray-900">{formatSlotRange(change.newSlot || change.nextSlot)}</p>
+                                  {(change.newSlot || change.nextSlot)?.capacity !== undefined && (
+                                    <p className="mt-1 text-xs text-gray-500">Capacity: {(change.newSlot || change.nextSlot).capacity}</p>
+                                  )}
+                                </div>
+                              </div>
+                              {change.date && <p className="mt-2 text-xs text-gray-500">Booking date: {formatDate(change.date)}</p>}
                             </div>
                           ))}
                         </div>
@@ -1890,7 +1997,7 @@ export default function TrainerSchedule() {
                       return (
                         <div
                           key={slot.id || `${slot.startTime}-${slot.endTime}`}
-                          onClick={() => setSelectedSlot(slot)}
+                          onClick={() => { setSelectedSlot(slot); if (slot?.id) setAssignSlotId(slot.id); }}
                           className={`cursor-pointer rounded-md border p-3 transition hover:bg-gray-50 ${
                             isSelectedSlot ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"
                           }`}
@@ -1908,6 +2015,7 @@ export default function TrainerSchedule() {
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     setScheduleModalEdit({ ...slot, classId: selectedClass.id });
+                                    setScheduleModalPurpose("edit");
                                     setScheduleModalOpen(true);
                                   }}
                                   className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50"
@@ -1999,7 +2107,12 @@ export default function TrainerSchedule() {
                                                 type="button"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
-                                                  handleEditSchedule({ ...slot, classId: selectedClass.id, dayOfWeek: schedule.dayOfWeek });
+                                                  handleEditSchedule({
+                                                    ...slot,
+                                                    classId: selectedClass.id,
+                                                    scheduleId: slot.scheduleId || schedule.id || "",
+                                                    dayOfWeek: schedule.dayOfWeek,
+                                                  });
                                                 }}
                                                 className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50"
                                                 aria-label="Edit slot"
@@ -2170,7 +2283,7 @@ export default function TrainerSchedule() {
                     <p className="text-sm text-gray-500">Choose the class, day, time, and capacity.</p>
                   </div>
                   <div>
-                    <button onClick={() => { setScheduleModalEdit(null); setScheduleModalOpen(true); }} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
+                    <button onClick={() => { setScheduleModalEdit(null); setScheduleModalPurpose("slot"); setScheduleModalOpen(true); }} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
                       Schedule Class
                     </button>
                   </div>

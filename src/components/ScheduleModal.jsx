@@ -2,11 +2,30 @@ import { useState, useEffect } from "react";
 
 const empty = {
   classId: "",
+  scheduleId: "",
   dayOfWeek: "1",
   startTime: "",
   endTime: "",
   maxCapacity: "",
 };
+
+function getClassDuration(classItem = {}) {
+  const duration = classItem.duration ?? classItem.durationMinutes ?? classItem.raw?.duration ?? classItem.raw?.durationMinutes;
+  const minutes = Number(duration);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+}
+
+function shiftTime(value, minutesToAdd) {
+  if (!value || !Number.isFinite(minutesToAdd)) return "";
+
+  const [hours, minutes] = String(value).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return "";
+
+  const totalMinutes = (hours * 60 + minutes + minutesToAdd + 24 * 60) % (24 * 60);
+  const nextHours = Math.floor(totalMinutes / 60);
+  const nextMinutes = totalMinutes % 60;
+  return `${String(nextHours).padStart(2, "0")}:${String(nextMinutes).padStart(2, "0")}`;
+}
 
 export default function ScheduleModal({ isOpen, onClose, onSave, editData, classes = [], purpose = "slot" }) {
   const [form, setForm] = useState(empty);
@@ -15,6 +34,7 @@ export default function ScheduleModal({ isOpen, onClose, onSave, editData, class
     if (editData) {
       setForm({
         classId: editData.classId || editData.classId || "",
+        scheduleId: editData.scheduleId || editData.classScheduleId || editData.schedule?.id || editData.schedule?._id || "",
         dayOfWeek: String(editData.dayOfWeek ?? "1"),
         startTime: editData.startTime || "",
         endTime: editData.endTime || "",
@@ -30,6 +50,7 @@ export default function ScheduleModal({ isOpen, onClose, onSave, editData, class
   const fieldClass = "h-9 w-full rounded border px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
   const selectedClass = classes.find((item) => String(item.id || item._id) === String(form.classId));
   const classType = selectedClass?.type || selectedClass?.raw?.type || "ONE_TIME";
+  const classDuration = getClassDuration(selectedClass);
   const isRecurring = classType === "RECURRING";
   const isScheduleOnlyMode = purpose === "schedule";
 
@@ -53,7 +74,7 @@ export default function ScheduleModal({ isOpen, onClose, onSave, editData, class
         alert("Day is required for recurring classes");
         return;
       }
-      onSave({ classId: form.classId, dayOfWeek: form.dayOfWeek, classType });
+      onSave({ classId: form.classId, scheduleId: form.scheduleId, dayOfWeek: form.dayOfWeek, classType });
       onClose();
       return;
     }
@@ -66,6 +87,35 @@ export default function ScheduleModal({ isOpen, onClose, onSave, editData, class
 
     onSave({ ...form, classType });
     onClose();
+  };
+
+  const handleClassChange = (classId) => {
+    const nextClass = classes.find((item) => String(item.id || item._id) === String(classId));
+    const duration = getClassDuration(nextClass);
+
+    setForm((current) => {
+      const next = { ...current, classId };
+      if (!duration || isScheduleOnlyMode) return next;
+      if (next.startTime) return { ...next, endTime: shiftTime(next.startTime, duration) };
+      if (next.endTime) return { ...next, startTime: shiftTime(next.endTime, -duration) };
+      return next;
+    });
+  };
+
+  const handleStartTimeChange = (startTime) => {
+    setForm((current) => ({
+      ...current,
+      startTime,
+      endTime: classDuration ? shiftTime(startTime, classDuration) : current.endTime,
+    }));
+  };
+
+  const handleEndTimeChange = (endTime) => {
+    setForm((current) => ({
+      ...current,
+      startTime: classDuration ? shiftTime(endTime, -classDuration) : current.startTime,
+      endTime,
+    }));
   };
 
   return (
@@ -83,7 +133,7 @@ export default function ScheduleModal({ isOpen, onClose, onSave, editData, class
         </p>
 
         <div className="grid gap-2">
-          <select value={form.classId} onChange={(e) => setForm({ ...form, classId: e.target.value })} className={fieldClass}>
+          <select value={form.classId} onChange={(e) => handleClassChange(e.target.value)} className={fieldClass}>
             <option value="">Select class</option>
             {classes.map((c) => (
               <option key={c.id || c._id || c.title} value={c.id || c._id}>{c.title || c.name}</option>
@@ -100,8 +150,8 @@ export default function ScheduleModal({ isOpen, onClose, onSave, editData, class
             )}
             {!isScheduleOnlyMode && (
               <>
-                <input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} className={fieldClass} />
-                <input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} className={fieldClass} />
+                <input type="time" value={form.startTime} onChange={(e) => handleStartTimeChange(e.target.value)} className={fieldClass} />
+                <input type="time" value={form.endTime} onChange={(e) => handleEndTimeChange(e.target.value)} className={fieldClass} />
               </>
             )}
           </div>

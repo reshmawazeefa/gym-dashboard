@@ -268,7 +268,7 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
       )}
 
       <Card className="overflow-hidden">
-        <div className="grid gap-3 border-b border-gray-200 p-4 lg:grid-cols-[minmax(0,1fr)_12rem_auto]">
+        <div className="grid gap-3 border-b border-gray-200 p-4 lg:grid-cols-[minmax(0,1fr)_12rem]">
           <div className="flex items-center gap-2 rounded-md border border-gray-200 px-3">
             <Search size={17} className="text-gray-400" />
             <input className="h-10 min-w-0 flex-1 text-sm outline-none" value={exerciseSearch} onChange={(event) => setExerciseSearch(event.target.value)} placeholder="Search exercises..." />
@@ -277,16 +277,6 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
             <option value="">All Muscle Groups</option>
             {muscleGroupOptions.map((group) => <option key={group} value={group}>{titleCase(group)}</option>)}
           </select>
-          {canManage && (
-            <button
-              type="button"
-              onClick={() => { resetForm(); }}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-            >
-              <Plus size={17} />
-              Add Exercise
-            </button>
-          )}
         </div>
         <div className="divide-y divide-gray-100">
           <div className="hidden gap-3 bg-gray-100 px-0 py-3 text-xs font-semibold uppercase text-gray-500 lg:grid lg:grid-cols-[2rem_minmax(12rem,1fr)_9rem_7rem_7rem] lg:items-center">

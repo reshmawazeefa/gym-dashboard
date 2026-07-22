@@ -277,20 +277,22 @@ export default function WorkoutDays(props) {
   return (
     <section className="space-y-4">
       <Card className="p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Dumbbell size={18} className="text-gray-400" />
-            <h3 className="font-semibold text-gray-950">{selectedPlan ? nameOf(selectedPlan) : "Workout"} — Days</h3>
-            <span className="text-xs text-gray-400">({days.length} day{days.length !== 1 ? "s" : ""})</span>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Dumbbell size={18} className="text-gray-400" />
+              <h3 className="font-semibold text-gray-950">{selectedPlan ? nameOf(selectedPlan) : "Workout"} — Days</h3>
+            </div>
+            <p className="mt-1 text-sm text-gray-500">{days.length} day{days.length !== 1 ? "s" : ""} in this plan</p>
           </div>
           {canManage && (
             <button
               type="button"
               onClick={() => { setShowDayForm(!showDayForm); setEditingDayId(""); setDayForm(emptyDay()); }}
-              className={iconButtonClass}
-              aria-label="Create day"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
             >
-              <Plus size={18} />
+              <Plus size={16} />
+              {showDayForm ? "Close" : "Add Day"}
             </button>
           )}
         </div>
@@ -315,35 +317,35 @@ export default function WorkoutDays(props) {
           </form>
         )}
 
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {days.map((day) => {
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {days.length ? days.map((day) => {
             const dayId = idOf(day);
             const isSelected = selectedDayId === dayId;
             return (
-              <div key={dayId} className={`flex flex-shrink-0 items-center gap-1 rounded-md border px-2 py-1 transition ${isSelected ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDayId(isSelected ? "" : dayId)}
-                  className="flex items-center gap-1.5 py-1 text-sm font-medium"
-                >
-                  <Dumbbell size={14} className={isSelected ? "text-blue-600" : "text-gray-400"} />
-                  <span className={isSelected ? "text-blue-700" : "text-gray-700"}>Day {day.dayNumber}: {day.title || "Untitled"}</span>
-                </button>
-                {canEdit && editingDayId !== dayId && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); startEditDay(day); }} className={iconButtonClass} aria-label="Edit day">
-                    <Pencil size={13} />
-                  </button>
-                )}
-                {canDelete && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); handleDeleteDay(dayId); }} className={iconButtonClass} aria-label="Delete day">
-                    <Trash size={13} />
-                  </button>
-                )}
-              </div>
+              <button
+                key={dayId}
+                type="button"
+                onClick={() => setSelectedDayId(isSelected ? "" : dayId)}
+                className={`group flex flex-col gap-2 rounded-xl border p-4 text-left transition ${isSelected ? "border-blue-500 bg-blue-50 shadow-sm" : "border-gray-200 bg-white hover:border-blue-300 hover:bg-gray-50"}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-gray-950">Day {day.dayNumber}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+                    {day.title || "Untitled"}
+                  </span>
+                </div>
+                {day.notes && <p className="text-sm text-gray-500">{day.notes}</p>}
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>{(day.exercises || []).length} exercise{(day.exercises || []).length !== 1 ? "s" : ""}</span>
+                  <span>{displayDate(day.date)}</span>
+                </div>
+              </button>
             );
-          })}
-          {days.length === 0 && (
-            <p className="py-2 text-sm text-gray-400">No days yet. {canManage ? "Click + to add one." : ""}</p>
+          }) : (
+            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm text-gray-500">
+              No workout days yet.
+              {canManage ? " Add one to start building this plan." : ""}
+            </div>
           )}
         </div>
 

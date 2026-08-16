@@ -130,7 +130,7 @@ export const moduleDefinitions = {
   },
   workouts: {
     title: "Workout & Activity",
-    description: "Manage workout plans, exercise libraries, sessions, schedules, body measurements, fitness goals, feedback, and analytics.",
+    description: "Build workout plans, assign them to members, run sessions, and track progress through measurements, goals, feedback, and analytics.",
     storageKey: "workoutPlans",
     icon: Activity,
     primaryAction: "Manage Workouts",

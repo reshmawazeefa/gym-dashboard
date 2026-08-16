@@ -1,11 +1,12 @@
 import { Fragment, useState, useEffect, useRef } from "react";
 import { ChevronDown, Image, Pencil, Plus, Search, Trash, Upload, X } from "lucide-react";
 import toast from "react-hot-toast";
-import { createExercise, updateExercise, deleteExercise, createSubstitution, getSubstitutions, deleteSubstitution, uploadExerciseMedia, getExerciseMedia, deleteExerciseMedia, getApiError } from "../services/api";
+import { createExercise, updateExercise, deleteExercise, forkExercise, createSubstitution, getSubstitutions, deleteSubstitution, uploadExerciseMedia, getExerciseMedia, deleteExerciseMedia, getApiError } from "../services/api";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
 function nameOf(item) { return item?.name || item?.fullName || item?.title || item?.email || idOf(item) || "-"; }
-function emptyExercise() { return { name: "", muscleGroup: "", instructions: "", videoUrl: "", calories: "" }; }
+function emptyExercise() { return { name: "", muscleGroup: "", exerciseType: "STRENGTH", instructions: "", thumbnailUrl: "", videoUrl: "", calories: "" }; }
+const exerciseTypes = ["STRENGTH", "BODYWEIGHT", "CARDIO"];
 function titleCase(value) { return String(value || "").toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "); }
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
@@ -46,7 +47,7 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
   const [substituteForm, setSubstituteForm] = useState({ substituteExerciseId: "", reason: "" });
   const [mediaItems, setMediaItems] = useState({});
   const [mediaLoading, setMediaLoading] = useState({});
-  const [mediaUploadForm, setMediaUploadForm] = useState({ file: null, mediaType: "IMAGE" });
+  const [mediaUploadForm, setMediaUploadForm] = useState({ file: null, mediaType: "IMAGE", url: "", caption: "", orderIndex: 1 });
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -64,7 +65,9 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
     setExerciseForm({
       name: exercise.name || "",
       muscleGroup: exercise.muscleGroup || "",
+      exerciseType: exercise.exerciseType || "STRENGTH",
       instructions: exercise.instructions || "",
+      thumbnailUrl: exercise.thumbnailUrl || "",
       videoUrl: exercise.videoUrl || "",
       calories: exercise.calories || exercise.caloriesBurned || "",
     });
@@ -192,22 +195,44 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
   };
 
   const handleUploadMedia = async (exerciseId) => {
-    if (!mediaUploadForm.file) {
-      toast.error("Select a file to upload");
+    if (!mediaUploadForm.file && !mediaUploadForm.url?.trim()) {
+      toast.error("Select a file or provide a media URL");
       return;
     }
-    const formData = new FormData();
-    formData.append("file", mediaUploadForm.file);
-    formData.append("mediaType", mediaUploadForm.mediaType);
+
     try {
-      await uploadExerciseMedia(exerciseId, formData, user?.token);
+      if (mediaUploadForm.file) {
+        const formData = new FormData();
+        formData.append("file", mediaUploadForm.file);
+        formData.append("mediaType", mediaUploadForm.mediaType);
+        await uploadExerciseMedia(exerciseId, formData, user?.token);
+      } else {
+        const payload = {
+          type: mediaUploadForm.mediaType,
+          url: mediaUploadForm.url.trim(),
+          caption: mediaUploadForm.caption.trim(),
+          orderIndex: Number(mediaUploadForm.orderIndex || 0),
+        };
+        await uploadExerciseMedia(exerciseId, payload, user?.token);
+      }
+
       toast.success("Media uploaded");
-      setMediaUploadForm({ file: null, mediaType: "IMAGE" });
+      setMediaUploadForm({ file: null, mediaType: "IMAGE", url: "", caption: "", orderIndex: 1 });
       if (fileInputRef.current) fileInputRef.current.value = "";
       setMediaItems((prev) => ({ ...prev, [exerciseId]: undefined }));
       await loadMedia(exerciseId);
     } catch (error) {
       toast.error(getApiError(error, "Unable to upload media"));
+    }
+  };
+
+  const handleForkExercise = async (exerciseId) => {
+    try {
+      await forkExercise(exerciseId, user?.token);
+      toast.success("Exercise forked for your gym");
+      await loadExercises();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to fork exercise"));
     }
   };
 
@@ -232,7 +257,7 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <h3 className="font-semibold text-gray-950">{editingExerciseId ? "Edit Exercise" : "Add Exercise"}</h3>
-              <p className="mt-1 text-xs leading-5 text-gray-500">{editingExerciseId ? "Update exercise details." : "Create a new exercise."}</p>
+              <p className="mt-1 text-xs leading-5 text-gray-500">{editingExerciseId ? "Update the exercise details." : "Create reusable exercises for your workout plans."}</p>
             </div>
             <Plus size={18} className="mt-0.5 text-gray-400" />
           </div>
@@ -246,8 +271,16 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
                 {muscleGroupOptions.map((group) => <option key={group} value={group}>{titleCase(group)}</option>)}
               </select>
             </Field>
+            <Field label="Exercise Type">
+              <select className={inputClass} value={exerciseForm.exerciseType} onChange={(event) => setExerciseForm({ ...exerciseForm, exerciseType: event.target.value })}>
+                {exerciseTypes.map((type) => <option key={type} value={type}>{titleCase(type)}</option>)}
+              </select>
+            </Field>
             <Field label="Instructions">
               <textarea className={textareaClass} value={exerciseForm.instructions} onChange={(event) => setExerciseForm({ ...exerciseForm, instructions: event.target.value })} placeholder="Step-by-step instructions..." />
+            </Field>
+            <Field label="Thumbnail URL">
+              <input className={inputClass} type="url" value={exerciseForm.thumbnailUrl} onChange={(event) => setExerciseForm({ ...exerciseForm, thumbnailUrl: event.target.value })} placeholder="https://example.com/thumb.jpg" />
             </Field>
             <Field label="Video URL">
               <input className={inputClass} type="url" value={exerciseForm.videoUrl} onChange={(event) => setExerciseForm({ ...exerciseForm, videoUrl: event.target.value })} placeholder="https://youtube.com/watch?v=..." />
@@ -306,13 +339,29 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
                   </button>
                   <div className="min-w-0">
                     <h3 className="truncate font-semibold text-gray-950">{exercise.name || "-"}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex h-6 items-center rounded-full px-2 text-[11px] font-semibold ${exercise.gymId ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
+                        {exercise.gymId ? "Gym Custom" : "Global"}
+                      </span>
+                      {exercise.parentExerciseId && <span className="inline-flex h-6 items-center rounded-full bg-violet-50 px-2 text-[11px] font-semibold text-violet-700">Forked</span>}
+                    </div>
                   </div>
-                  <span className="inline-flex h-7 items-center justify-center rounded-full bg-blue-50 px-3 text-xs font-semibold text-blue-700">{titleCase(exercise.muscleGroup || "")}</span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="inline-flex h-7 items-center justify-center rounded-full bg-blue-50 px-3 text-xs font-semibold text-blue-700">{titleCase(exercise.muscleGroup || "")}</span>
+                    {exercise.exerciseType && (
+                      <span className="inline-flex h-7 items-center justify-center rounded-full bg-purple-50 px-3 text-xs font-semibold text-purple-700">{titleCase(exercise.exerciseType)}</span>
+                    )}
+                  </div>
                   <div className="text-sm text-center">
                     <span className="text-gray-500 lg:hidden">Calories: </span>
                     <span className="font-semibold text-gray-950">{exercise.calories || exercise.caloriesBurned || "-"}</span>
                   </div>
                   <div className="flex items-center justify-center gap-1">
+                    {canManage && !exercise.gymId && !exercise.parentExerciseId && (
+                      <button type="button" onClick={() => handleForkExercise(exerciseId)} className={buttonClass} aria-label="Fork exercise">
+                        Fork
+                      </button>
+                    )}
                     {canEdit && (
                       <button type="button" onClick={() => editExercise(exercise)} className={iconButtonClass} aria-label="Edit exercise">
                         <Pencil size={15} />
@@ -333,14 +382,27 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
                         <p className="mt-1 text-sm leading-6 text-gray-600">{exercise.instructions || "No instructions provided."}</p>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase text-gray-500">Video</p>
+                        <p className="text-xs font-semibold uppercase text-gray-500">Media</p>
+                        {exercise.thumbnailUrl ? (
+                          <img src={exercise.thumbnailUrl} alt={`${exercise.name || "Exercise"} thumbnail`} className="mt-2 h-24 w-24 rounded-md object-cover ring-1 ring-gray-200" />
+                        ) : (
+                          <div className="mt-2 flex h-24 w-24 items-center justify-center rounded-md bg-gray-100 ring-1 ring-gray-200">
+                            <Image size={20} className="text-gray-400" />
+                          </div>
+                        )}
                         {exercise.videoUrl ? (
-                          <a href={exercise.videoUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline">
+                          <a href={exercise.videoUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline">
                             {exercise.videoUrl}
                           </a>
                         ) : (
-                          <p className="mt-1 text-sm text-gray-500">No video URL.</p>
+                          <p className="mt-2 text-sm text-gray-500">No video URL.</p>
                         )}
+                        {(exercise._count?.childForks || exercise._count?.exercises) ? (
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
+                            {exercise._count?.childForks !== undefined && <span>Forked by {exercise._count.childForks} gym(s)</span>}
+                            {exercise._count?.exercises !== undefined && <span>Used in {exercise._count.exercises} plan(s)</span>}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     <div className="mt-4 border-t border-gray-200 pt-4">
@@ -381,8 +443,8 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
                         <p className="mt-2 text-sm text-gray-500">No media uploaded.</p>
                       )}
                       {canManage && (
-                        <div className="mt-3 flex flex-wrap items-end gap-3">
-                          <div className="min-w-0 flex-1">
+                        <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_1.1fr_0.8fr_0.7fr]">
+                          <div className="min-w-0">
                             <select
                               className={inputClass}
                               value={mediaUploadForm.mediaType}
@@ -390,27 +452,59 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
                             >
                               <option value="IMAGE">Image</option>
                               <option value="VIDEO">Video</option>
-                              <option value="DOCUMENT">Document</option>
+                              <option value="GIF">GIF</option>
                             </select>
                           </div>
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0">
+                            <input
+                              className={inputClass}
+                              type="url"
+                              value={mediaUploadForm.url}
+                              onChange={(event) => setMediaUploadForm({ ...mediaUploadForm, url: event.target.value })}
+                              placeholder="https://example.com/media.jpg"
+                            />
+                          </div>
+                          <div className="min-w-0">
+                            <input
+                              className={inputClass}
+                              type="text"
+                              value={mediaUploadForm.caption}
+                              onChange={(event) => setMediaUploadForm({ ...mediaUploadForm, caption: event.target.value })}
+                              placeholder="Caption"
+                            />
+                          </div>
+                          <div className="min-w-0">
                             <input
                               ref={fileInputRef}
                               type="file"
-                              accept={mediaUploadForm.mediaType === "VIDEO" ? "video/*" : mediaUploadForm.mediaType === "IMAGE" ? "image/*" : ".pdf,.doc,.docx"}
+                              accept={mediaUploadForm.mediaType === "VIDEO" ? "video/*" : mediaUploadForm.mediaType === "IMAGE" ? "image/*" : "image/gif"}
                               className="h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none file:mr-2 file:rounded-md file:border-0 file:bg-blue-50 file:px-2 file:text-xs file:font-medium file:text-blue-700 hover:file:bg-blue-100"
                               onChange={(event) => setMediaUploadForm({ ...mediaUploadForm, file: event.target.files?.[0] || null })}
                             />
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleUploadMedia(exerciseId)}
-                            className={primaryButtonClass}
-                            disabled={!mediaUploadForm.file}
-                          >
-                            <Upload size={16} />
-                            Upload
-                          </button>
+                          <div className="lg:col-span-4">
+                            <div className="flex flex-wrap items-end gap-3">
+                              <div className="min-w-0 flex-1">
+                                <input
+                                  className={inputClass}
+                                  type="number"
+                                  min="0"
+                                  value={mediaUploadForm.orderIndex}
+                                  onChange={(event) => setMediaUploadForm({ ...mediaUploadForm, orderIndex: event.target.value })}
+                                  placeholder="Order"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleUploadMedia(exerciseId)}
+                                className={primaryButtonClass}
+                                disabled={!mediaUploadForm.file && !mediaUploadForm.url?.trim()}
+                              >
+                                <Upload size={16} />
+                                Upload
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -485,7 +579,7 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
           })}
           {!filteredExercises.length && (
             <div className="p-8 text-center text-sm text-gray-500">
-              No exercises found.
+              No exercises yet. Create one to start building your workout library.
             </div>
           )}
         </div>

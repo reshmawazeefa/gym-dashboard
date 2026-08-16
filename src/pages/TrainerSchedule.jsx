@@ -98,6 +98,17 @@ function titleCase(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function getTrainerDisplayName(item = {}) {
+  const trainer = item.trainer || item.assignedTrainer || item.trainerDetails || {};
+  if (typeof trainer === "string") return trainer;
+  return trainer?.name || trainer?.fullName || trainer?.trainerName || item.trainerName || item.assignedTrainer?.name || "";
+}
+
+function getTrainerPayload(item = {}) {
+  const trainer = item.trainer || item.assignedTrainer || item.trainerDetails || {};
+  return trainer && typeof trainer === "object" ? trainer : null;
+}
+
 function readLocalList(key) {
   try {
     const value = JSON.parse(localStorage.getItem(key));
@@ -227,6 +238,8 @@ function normalizeClass(item = {}) {
     item.sessions ||
     [];
   const slots = item.slots || item.classSlots || item.availableSlots || [];
+  const trainerPayload = getTrainerPayload(item);
+  const trainerName = getTrainerDisplayName(item);
 
   return {
     id: getId(item),
@@ -236,22 +249,22 @@ function normalizeClass(item = {}) {
     type: item.type || item.classType || "ONE_TIME",
     startDate: item.startDate || item.date || "",
     endDate: item.endDate || "",
-    trainer:
-      item.trainerName ||
-      item.trainer?.name ||
-      item.assignedTrainer?.name ||
-      item.trainer ||
-      "",
+    trainer: trainerName,
+    trainerName,
+    trainerEmail: trainerPayload?.email || "",
+    trainerPhone: trainerPayload?.phoneNumber || "",
+    trainerDetails: trainerPayload || null,
     trainerId:
       item.trainerId ||
       item.trainer_id ||
-      item.trainer?.id ||
-      item.trainer?._id ||
+      trainerPayload?.id ||
+      trainerPayload?._id ||
       item.assignedTrainer?._id ||
       "",
     capacity: item.capacity ?? item.maxCapacity ?? item.memberCapacity ?? "",
     duration: item.duration || item.durationMinutes || "",
     level: item.level || "",
+    isActive: item.isActive ?? item.active ?? true,
     bookedCount:
       item.bookedCount ??
       item.totalBookings ??
@@ -296,6 +309,7 @@ function normalizeSlot(item = {}) {
     date: item.startDate || item.classDate || item.date || "",
     startTime: item.startTime || item.start || item.time || "",
     endTime: item.endTime || item.end || "",
+    dayOfWeek: item.dayOfWeek || item.schedule?.dayOfWeek || item.schedule?.weekDay || item.weekDay || item.day || "",
     capacity: item.capacity ?? item.maxCapacity ?? "",
     bookedCount: item.bookedCount ?? item.totalBookings ?? item.bookingsCount ?? 0,
     remainingSpots: item.remainingSpots ?? item.availableSpots ?? "",
@@ -382,12 +396,13 @@ export default function TrainerSchedule() {
   const [selectedClass, setSelectedClass] = useState(null);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
+  const [totalCapacityData, setTotalCapacityData] = useState(null);
   const [bookingDates, setBookingDates] = useState({});
   const [selectedDate, setSelectedDate] = useState(toDateInputValue());
   const [trainers, setTrainers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState("");
-  const [activeTab, setActiveTab] = useState("schedules");
+  const [activeTab, setActiveTab] = useState("classDetails");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const selectedClassIdRef = useRef("");
@@ -417,18 +432,27 @@ export default function TrainerSchedule() {
     const queryDate = date || selectedDate;
 
     try {
-      const [detailResponse, bookingsResponse, attendanceResponse, schedulesResponse, slotsResponse] = await Promise.allSettled([
+      const [detailResponse, bookingsResponse, attendanceResponse, schedulesResponse, slotsResponse, fullClassResponse] = await Promise.allSettled([
         getClassById(classId, authToken, queryDate),
         canManageClasses ? getClassBookings(classId, authToken) : Promise.resolve([]),
         canManageClasses ? getClassAttendance(classId, authToken) : Promise.resolve([]),
         getClassSchedules(classId, authToken),
         getClassSlots(classId, authToken),
+        getClassById(classId, authToken), // Get full class without date filter for total capacity
       ]);
 
-      const normalizedBookings =
+      const allBookings =
         bookingsResponse.status === "fulfilled"
           ? unwrapMaybeList(bookingsResponse.value, ["bookings", "classBookings"]).map(normalizeBooking)
           : [];
+      const availabilityBookings = queryDate
+        ? allBookings.filter((booking) => {
+            const bookingDate = String(
+              booking.date || booking.bookingDate || booking.raw?.bookingDate || booking.raw?.classDate || booking.raw?.date || ""
+            );
+            return bookingDate && bookingDate.startsWith(queryDate);
+          })
+        : allBookings;
 
       const apiSchedules =
         schedulesResponse.status === "fulfilled"
@@ -441,7 +465,8 @@ export default function TrainerSchedule() {
 
       if (detailResponse.status === "fulfilled") {
         const detail = normalizeClass(unwrapObject(detailResponse.value));
-        const baseSchedules = apiSchedules.length ? apiSchedules : detail.schedules;
+        // Prefer detail.schedules from getClassById which already has slots with bookedCount
+        const baseSchedules = detail.schedules.length ? detail.schedules : apiSchedules.length ? apiSchedules : [];
         let schedulesWithSlots = await Promise.all(
           baseSchedules.map(async (schedule) => {
             if (!schedule.id) return schedule;
@@ -458,11 +483,11 @@ export default function TrainerSchedule() {
             }
           })
         );
-        detail.bookedCount = detail.bookedCount || normalizedBookings.length;
+        detail.bookedCount = detail.bookedCount || allBookings.length;
 
-        // Group bookings by slotId for accurate per-slot counts
+        // Group bookings by slotId for accurate per-slot counts using ALL bookings (unfiltered by date)
         const slotBookings = {};
-        normalizedBookings.forEach((booking) => {
+        allBookings.forEach((booking) => {
           const slotId = booking.slotId || booking.raw?.slotId;
           if (slotId) {
             if (!slotBookings[slotId]) slotBookings[slotId] = 0;
@@ -473,11 +498,12 @@ export default function TrainerSchedule() {
           }
         });
 
-        // Enrich schedule slots with real booking counts
+        // Enrich schedule slots with real booking counts from the bookings list
         schedulesWithSlots = schedulesWithSlots.map((schedule) => ({
           ...schedule,
           slots: (schedule.slots || []).map((slot) => {
-            const bookedCount = slotBookings[slot.id] ?? slot.bookedCount ?? 0;
+            // Always use calculated bookedCount from allBookings for accuracy
+            const bookedCount = slotBookings[slot.id] ?? 0;
             const capacity = Number(slot.capacity) || 0;
             return { ...slot, bookedCount, remainingSpots: capacity - bookedCount, isFull: bookedCount >= capacity && capacity > 0 };
           }),
@@ -506,9 +532,19 @@ export default function TrainerSchedule() {
         setSelectedSlot((current) =>
           current && classSlots.some((slot) => slot.id === current.id) ? current : classSlots[0] || null
         );
+
+        // Extract total capacity data from full class response (without date filtering)
+        if (fullClassResponse.status === "fulfilled") {
+          const fullDetail = normalizeClass(unwrapObject(fullClassResponse.value));
+          const fullSchedules = fullDetail.schedules || [];
+          const allSlots = fullSchedules.flatMap((schedule) => schedule.slots || []);
+          const totalCap = allSlots.reduce((total, slot) => total + (Number(slot.capacity) || 0), 0);
+          const totalBooked = allSlots.reduce((total, slot) => total + (Number(slot.bookedCount) || 0), 0);
+          setTotalCapacityData({ totalCapacity: totalCap, totalBooked });
+        }
       }
 
-      setClassBookings(normalizedBookings);
+      setClassBookings(allBookings);
       setClassAttendance(
         attendanceResponse.status === "fulfilled"
           ? unwrapMaybeList(attendanceResponse.value, ["attendance", "records", "participants"]).map(normalizeAttendance)
@@ -808,7 +844,11 @@ export default function TrainerSchedule() {
     if (!selectedClass?.id || !assignSlotId) return;
     try {
       setSaving(true);
-      await bookClass(selectedClass.id, { slotId: assignSlotId, bookingDate: toCurrentBookingDateIso(), memberId }, authToken);
+      const payload = { slotId: assignSlotId, memberId };
+      if (selectedClass.type === "RECURRING") {
+        payload.bookingDate = toBookingDateIso(assignBookingDate || selectedDate || toDateInputValue(), "00:00");
+      }
+      await bookClass(selectedClass.id, payload, authToken);
       toast.success("Member assigned to class");
       setShowAssignPanel(false);
       setAvailableMembers([]);
@@ -907,7 +947,7 @@ export default function TrainerSchedule() {
       if (scheduleModalPurpose === "schedule") {
         await createClassSchedule(
           payload.classId,
-          { dayOfWeek: Number(payload.dayOfWeek) },
+          { dayOfWeek: payload.dayOfWeek },
           authToken
         );
         toast.success("Schedule created");
@@ -987,8 +1027,15 @@ export default function TrainerSchedule() {
     }
 
     try {
-      const bookingDate = toCurrentBookingDateIso();
-      await bookClass(classId, { slotId: targetSlot.id, bookingDate }, authToken);
+      const selectedClassItem = classes.find((item) => item.id === classId) || selectedClass;
+      const bookingDateValue = bookingDates[classId] || selectedDate || toDateInputValue();
+      const payload = { slotId: targetSlot.id };
+
+      if (selectedClassItem?.type === "RECURRING") {
+        payload.bookingDate = toBookingDateIso(bookingDateValue, "00:00");
+      }
+
+      await bookClass(classId, payload, authToken);
       toast.success("Class booked");
       await loadModuleData();
     } catch (error) {
@@ -1028,8 +1075,8 @@ export default function TrainerSchedule() {
       )
     : oneTimeSlots.map((slot) => ({ ...slot, schedule: null }));
   const activeSlotSchedule = selectedDaySchedules.find((schedule) => schedule.id === selectedSchedule?.id) || selectedDaySchedules[0] || null;
-  const totalCapacity = visibleSlots.reduce((total, slot) => total + (Number(slot.capacity) || 0), 0);
-  const totalBookedSlots = visibleSlots.reduce((total, slot) => total + (Number(slot.bookedCount) || 0), 0);
+  const totalCapacity = totalCapacityData?.totalCapacity ?? visibleSlots.reduce((total, slot) => total + (Number(slot.capacity) || 0), 0);
+  const totalBookedSlots = totalCapacityData?.totalBooked ?? visibleSlots.reduce((total, slot) => total + (Number(slot.bookedCount) || 0), 0);
   const classInitial = (selectedClass?.title || "C").trim().charAt(0).toUpperCase();
   const recentBookings = classBookings.slice(0, 4);
   const hasOwnerWorkspace = true; // Use the owner-style class UI for all portals, with member-specific actions hidden by permissions.
@@ -1162,42 +1209,13 @@ export default function TrainerSchedule() {
                   )}
                 </div>
 
-                <div className="mt-5 grid gap-4 md:grid-cols-5">
-                  {[
-                    ["Trainer", selectedClass.trainer || "Not assigned"],
-                    ["Level", selectedClass.level || "ALL"],
-                    ["Duration", selectedClass.duration ? `${selectedClass.duration} mins` : "-"],
-                    ["Date Range", `${formatDate(selectedClass.startDate)} - ${formatDate(selectedClass.endDate)}`],
-                    ["Bookings", classBookings.length || 0],
-                  ].map(([label, value]) => (
-                    <div key={label} className="border-gray-200 md:border-l md:pl-4 first:md:border-l-0 first:md:pl-0">
-                      <p className="text-[11px] font-medium text-gray-500">{label}</p>
-                      <p className="mt-2 truncate text-xs font-semibold text-gray-950">{value}</p>
-                    </div>
-                  ))}
-                </div>
-                {isRecurringClass && (
-                  <div className="mt-3 flex items-center gap-3">
-                    <label className="text-xs font-medium text-gray-500">View availability for date:</label>
-                    <input
-                      type="date"
-                      value={selectedDate}
-                      onChange={(e) => {
-                        setSelectedDate(e.target.value);
-                        if (selectedClassIdRef.current) {
-                          loadClassDetails(selectedClassIdRef.current, e.target.value);
-                        }
-                      }}
-                      className="h-8 rounded border border-gray-300 px-2 text-sm"
-                    />
-                  </div>
-                )}
+
               </section>
 
               <section className="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
                 <div className="flex overflow-x-auto border-b border-gray-200 px-4">
                   {[
-                    
+                    { key: "classDetails", label: "Class Details", icon: ClipboardCheck },
                     { key: "schedules", label: "Schedules", icon: CalendarClock },
                     { key: "details", label: "Class Overview", icon: ClipboardCheck },
                     { key: "bookings", label: "Bookings", icon: Users },
@@ -1222,22 +1240,53 @@ export default function TrainerSchedule() {
                   })}
                 </div>
 
-                {/* <div className="border-b border-gray-200 bg-gray-50 p-4">
-                  <div className="grid gap-4 md:grid-cols-5">
-                    {[
-                      ["Trainer", selectedClass.trainer || "Not assigned"],
-                      ["Level", selectedClass.level || "ALL"],
-                      ["Duration", selectedClass.duration ? `${selectedClass.duration} mins` : "-"],
-                      ["Date Range", `${formatDate(selectedClass.startDate)} - ${formatDate(selectedClass.endDate)}`],
-                      ["Bookings", selectedClass.bookedCount || classBookings.length || 0],
-                    ].map(([label, value]) => (
-                      <div key={label} className="border-gray-200 md:border-l md:pl-4 first:md:border-l-0 first:md:pl-0">
-                        <p className="text-[11px] font-medium text-gray-500">{label}</p>
-                        <p className="mt-2 truncate text-xs font-semibold text-gray-950">{value}</p>
+                {activeTab === "classDetails" && (
+                  <div className="space-y-4 p-4">
+                    <div className="grid gap-4 md:grid-cols-5">
+                      {[
+                        ["Trainer", selectedClass.trainerName || selectedClass.trainer || "Not assigned"],
+                        ["Level", selectedClass.level || "ALL"],
+                        ["Duration", selectedClass.duration ? `${selectedClass.duration} mins` : "-"],
+                        ["Status", selectedClass.isActive === false ? "Inactive" : "Active"],
+                        ["Date Range", `${formatDate(selectedClass.startDate)} - ${formatDate(selectedClass.endDate)}`],
+                        ["Bookings", classBookings.length || 0],
+                      ].map(([label, value]) => (
+                        <div key={label} className="border-gray-200 md:border-l md:pl-4 first:md:border-l-0 first:md:pl-0">
+                          <p className="text-[11px] font-medium text-gray-500">{label}</p>
+                          <p className="mt-2 truncate text-xs font-semibold text-gray-950">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Class overview</p>
+                          <p className="mt-1 text-sm text-gray-700">{selectedClass.description || "No class description added."}</p>
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          {selectedClass.trainerEmail ? <p>Trainer email: {selectedClass.trainerEmail}</p> : null}
+                          <p className="mt-1">Schedules: {selectedSchedules.length} • Slots: {visibleSlots.length}</p>
+                        </div>
                       </div>
-                    ))}
+                    </div>
+                    {isRecurringClass && (
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs font-medium text-gray-500">View availability for date:</label>
+                        <input
+                          type="date"
+                          value={selectedDate}
+                          onChange={(e) => {
+                            setSelectedDate(e.target.value);
+                            if (selectedClassIdRef.current) {
+                              loadClassDetails(selectedClassIdRef.current, e.target.value);
+                            }
+                          }}
+                          className="h-8 rounded border border-gray-300 px-2 text-sm"
+                        />
+                      </div>
+                    )}
                   </div>
-                </div> */}
+                )}
 
                 {activeTab === "schedules" && (
                   <div className="grid min-h-[24rem] lg:grid-cols-[16rem_minmax(0,1fr)]">
@@ -1342,8 +1391,11 @@ export default function TrainerSchedule() {
                                   <Clock3 size={22} className="mt-0.5 text-gray-600" />
                                   <div>
                                     <p className="font-semibold text-gray-950">
-                                      {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
-                                    </p>
+                                    {dayName(slot.dayOfWeek || slot.schedule?.dayOfWeek || activeScheduleDay || slot.raw?.dayOfWeek || "") !== "-"
+                                      ? `${dayName(slot.dayOfWeek || slot.schedule?.dayOfWeek || activeScheduleDay || slot.raw?.dayOfWeek || "")} • `
+                                      : ""}
+                                    {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                                  </p>
                                     <p className="mt-2 text-sm text-gray-500">
                                       Capacity: {slot.capacity || "-"} <span className="mx-2">|</span> Booked: {slot.bookedCount} {slot.remainingSpots !== "" ? <><span className="mx-2">|</span> Remaining: {slot.remainingSpots}</> : ""}
                                     </p>
@@ -1454,22 +1506,59 @@ export default function TrainerSchedule() {
                   </div>
                 )}
                 {activeTab === "details" && (
-                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    {[
-                      { label: "Total Bookings", value: classBookings.length || 0, icon: Users, tone: "bg-blue-50 text-blue-700" },
-                      { label: "Schedules", value: selectedSchedules.length, icon: CalendarClock, tone: "bg-emerald-50 text-emerald-700" },
-                      { label: "Total Slots", value: visibleSlots.length, icon: Clock3, tone: "bg-orange-50 text-orange-700" },
-                      { label: "Total Capacity", value: `${totalBookedSlots}/${totalCapacity || selectedClass.capacity || 0}`, icon: Users, tone: "bg-violet-50 text-violet-700" },
-                    ].map((metric) => {
-                      const MetricIcon = metric.icon;
-                      return (
-                        <div key={metric.label} className={`rounded-md p-4 text-center ${metric.tone}`}>
-                          <MetricIcon size={22} className="mx-auto mb-2" />
-                          <p className="text-2xl font-bold text-gray-950">{metric.value}</p>
-                          <p className="mt-1 text-xs text-gray-500">{metric.label}</p>
-                        </div>
-                      );
-                    })}
+                  <div className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-4">
+                      {[
+                        { label: "Total Bookings", value: classBookings.length || 0, icon: Users, tone: "bg-blue-50 text-blue-700" },
+                        { label: "Schedules", value: selectedSchedules.length, icon: CalendarClock, tone: "bg-emerald-50 text-emerald-700" },
+                        { label: "Total Slots", value: visibleSlots.length, icon: Clock3, tone: "bg-orange-50 text-orange-700" },
+                        { label: "Total Capacity", value: `${totalBookedSlots}/${totalCapacity || selectedClass.capacity || 0}`, icon: Users, tone: "bg-violet-50 text-violet-700" },
+                      ].map((metric) => {
+                        const MetricIcon = metric.icon;
+                        return (
+                          <div key={metric.label} className={`rounded-md p-4 text-center ${metric.tone}`}>
+                            <MetricIcon size={22} className="mx-auto mb-2" />
+                            <p className="text-2xl font-bold text-gray-950">{metric.value}</p>
+                            <p className="mt-1 text-xs text-gray-500">{metric.label}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <h4 className="text-sm font-semibold text-gray-950">Schedule summary</h4>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 ring-1 ring-gray-200">
+                          {selectedSchedules.length} day{selectedSchedules.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {selectedSchedules.length ? (
+                          selectedSchedules.map((schedule) => {
+                            const scheduleSlots = schedule.slots || [];
+                            return (
+                              <div key={schedule.id} className="flex flex-col gap-1 rounded-md bg-white p-3 text-sm text-gray-700 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <p className="font-semibold text-gray-950">{dayName(schedule.dayOfWeek || schedule.raw?.dayOfWeek || "")}</p>
+                                  <p className="text-xs text-gray-500">{scheduleSlots.length} slot{scheduleSlots.length === 1 ? "" : "s"}</p>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {scheduleSlots.length
+                                    ? scheduleSlots
+                                        .slice(0, 3)
+                                        .map((slot) => `${formatTime(slot.startTime)}-${formatTime(slot.endTime)}`)
+                                        .join(" • ")
+                                    : "No slots"}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p className="rounded-md border border-dashed border-gray-300 bg-white p-3 text-center text-sm text-gray-500">
+                            No schedule details available for this class yet.
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
 

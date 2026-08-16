@@ -6,7 +6,6 @@ import {
   ClipboardList,
   Dumbbell,
   MessageSquare,
-  Target,
   Users,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -36,7 +35,6 @@ import WorkoutSessions from "./WorkoutSessions";
 import WorkoutAssignments from "./WorkoutAssignments";
 import WorkoutSchedules from "./WorkoutSchedules";
 import WorkoutMeasurements from "./WorkoutMeasurements";
-import WorkoutGoals from "./WorkoutGoals";
 import WorkoutFeedback from "./WorkoutFeedback";
 import WorkoutAnalytics from "./WorkoutAnalytics";
 
@@ -51,6 +49,28 @@ const buttonClass =
 const primaryButtonClass =
   "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
 const adminPlanGridClass = "lg:grid-cols-[2rem_minmax(12rem,1fr)_9rem_9rem_6rem_5rem]";
+const lifecycleSteps = [
+  {
+    title: "Phase 1 — Build",
+    detail: "Create exercises, workout plans, days, and add exercises to each day.",
+    accent: "Build the structure",
+  },
+  {
+    title: "Phase 2 — Assign",
+    detail: "Send a workout plan to members with start dates, repeat schedules, and trainers.",
+    accent: "Launch the program",
+  },
+  {
+    title: "Phase 3 — Execute",
+    detail: "Members start sessions, log sets, pause or resume, and finish workouts.",
+    accent: "Capture training activity",
+  },
+  {
+    title: "Phase 4 — Manage",
+    detail: "Track progress with analytics, measurements, and trainer feedback.",
+    accent: "Monitor progress",
+  },
+];
 
 function workoutRole(user) {
   const normalizedRole = normalizeRole(user?.role, user?.loginType);
@@ -296,7 +316,7 @@ export default function AdminWorkouts() {
   const canEdit = !isMember && (canManage || canAccess(user, "workouts", "edit") || canAccess(user, "workouts", "update"));
   const canManageAssignments = !isMember && (role === "owner" || role === "admin");
   const canDelete = !isMember && (canAccess(user, "workouts", "delete") || canAccess(user, "workouts", "remove"));
-  const canAssign = !isMember && (canAccess(user, "workouts", "assign") || canManageAssignments);
+  const canAssign = !isMember && (canAccess(user, "workouts", "assign") || canManageAssignments || role === "trainer");
   const canSchedule = isMember;
   const canSession = isMember;
 
@@ -649,21 +669,54 @@ export default function AdminWorkouts() {
   }, [selectedPlanId, user?.token, isMember, selectedPlan?.trainers, selectedPlan?.trainerAssignments]);
 
   const tabs = [
-    { key: "plans", label: "Plans" },
-    { key: "days", label: "Days", hidden: !selectedPlanId },
-    { key: "exercises", label: "Exercises" },
-    { key: "sessions", label: "Sessions", hidden: !isMember },
+    { key: "plans", label: "Workout Plans" },
+    { key: "days", label: "Workout Days", hidden: !selectedPlanId },
+    { key: "exercises", label: "Exercise Library" },
     { key: "assignments", label: "Assignments", hidden: isMember },
+    { key: "sessions", label: "Sessions", hidden: !isMember },
+    { key: "calendar", label: "Calendar" },
     { key: "schedules", label: "Schedules" },
     { key: "measurements", label: "Measurements", hidden: isMember },
-    { key: "goals", label: "Goals", hidden: isMember },
     { key: "feedback", label: "Feedback" },
-    { key: "calendar", label: "Calendar" },
     { key: "analytics", label: "Analytics" },
+  ];
+
+  const summaryCards = [
+    { label: "Workout Plans", value: plans.length, icon: ClipboardList, hint: "Templates ready" },
+    { label: "Exercises", value: exercises.length || memberWorkoutExercisesCount, icon: Activity, hint: "Library items" },
+    { label: "Assigned Members", value: isMember ? plans.length : assignedMemberCount, icon: Users, hint: "Active recipients" },
+    { label: "Trainers", value: assignedTrainerCount, icon: Dumbbell, hint: "Coaching coverage" },
   ];
 
   return (
     <div className="space-y-5">
+      {/* <Card className="overflow-hidden border border-blue-100 bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-blue-100">Workout module</p>
+            <h2 className="mt-2 text-2xl font-semibold">Build, assign, run, and track progress in one place</h2>
+            <p className="mt-2 max-w-2xl text-sm text-blue-50">Manage workout plans, exercise libraries, member assignments, sessions, measurements, and analytics from a single streamlined experience.</p>
+          </div>
+          <div className="rounded-lg bg-white/15 px-4 py-3 text-sm backdrop-blur">
+            <div className="font-semibold">Lifecycle</div>
+            <div className="mt-1 text-blue-50">Build → Assign → Execute → Manage</div>
+          </div>
+        </div>
+      </Card> */}
+
+      <section className="grid gap-3 lg:grid-cols-4">
+        {lifecycleSteps.map((step, index) => (
+          <Card key={step.title} className="p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-600">
+              {index + 1}. {step.title.split(" — ")[0]}
+            </div>
+            <h4 className="mt-2 text-sm font-semibold text-gray-950">{step.title}</h4>
+            <p className="mt-2 text-sm text-gray-600">{step.detail}</p>
+            <p className="mt-3 text-xs font-semibold text-gray-500">{step.accent}</p>
+          </Card>
+        ))}
+      </section>
+
       <Card className="p-4">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -686,16 +739,14 @@ export default function AdminWorkouts() {
       </Card>
 
       <section className="grid gap-3 md:grid-cols-4">
-        {[
-          { label: "Total Workouts", value: plans.length, icon: ClipboardList },
-          { label: "Total Exercises", value: exercises.length || memberWorkoutExercisesCount, icon: Activity },
-          { label: "Assigned Members", value: isMember ? plans.length : assignedMemberCount, icon: Users },
-          { label: "Active Trainers", value: assignedTrainerCount, icon: Dumbbell },
-        ].map((card) => (
+        {summaryCards.map((card) => (
           <Card key={card.label} className="p-4">
             <card.icon size={20} className="text-blue-600" />
             <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="text-sm font-medium text-gray-500">{card.label}</p>
+              <div>
+                <p className="text-sm font-medium text-gray-500">{card.label}</p>
+                <p className="mt-1 text-xs text-gray-400">{card.hint}</p>
+              </div>
               <p className="text-2xl font-bold text-gray-950">{card.value}</p>
             </div>
           </Card>
@@ -736,6 +787,7 @@ export default function AdminWorkouts() {
           refreshSelectedPlan={refreshSelectedPlan}
           selectedPlan={selectedPlan}
           planTrainers={planTrainers}
+          setActiveTab={setActiveTab}
         />
       )}
 
@@ -842,10 +894,6 @@ export default function AdminWorkouts() {
 
       {activeTab === "measurements" && (
         <WorkoutMeasurements user={user} />
-      )}
-
-      {activeTab === "goals" && (
-        <WorkoutGoals user={user} />
       )}
 
       {activeTab === "feedback" && (

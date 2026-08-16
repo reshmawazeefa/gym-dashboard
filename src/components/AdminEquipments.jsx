@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, Dumbbell, Edit, Plus, Search, Trash } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, Edit, Plus, Search, Trash, Upload } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   getApiError,
@@ -12,6 +12,13 @@ import {
   createEquipmentMaintenance,
   updateEquipmentMaintenance,
   deleteEquipmentMaintenance,
+  bulkCreateEquipment,
+  bulkUpdateEquipment,
+  bulkDeleteEquipment,
+  exportEquipment,
+  getEquipmentDashboard,
+  getEquipmentWarrantyExpiryReport,
+  getEquipmentConditionSummaryReport,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { canAccess } from "../utils/rbac";
@@ -118,10 +125,18 @@ function toLocalDate(value) {
 
 export default function AdminEquipments() {
   const { user } = useAuth();
-  const canCreate = canAccess(user, "equipments", "create");
-  const canEdit = canAccess(user, "equipments", "edit");
-  const canDelete = canAccess(user, "equipments", "delete");
-  const canMaintain = canAccess(user, "equipments", "maintenance");
+  function hasPermission(actions) {
+    const list = Array.isArray(actions) ? actions : [actions];
+    return list.some((action) =>
+      canAccess(user, "equipments", action) || canAccess(user, "equipment", action)
+    );
+  }
+
+  const canCreate = hasPermission("create");
+  const canEdit = hasPermission(["edit", "update"]);
+  const canDelete = hasPermission("delete");
+  const canMaintain = hasPermission("maintenance");
+  const canView = hasPermission("view");
 
   const [equipments, setEquipments] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -142,6 +157,11 @@ export default function AdminEquipments() {
   const [maintenanceEditId, setMaintenanceEditId] = useState("");
   const [maintenanceModalOpen, setMaintenanceModalOpen] = useState(false);
   const [maintenanceModalEdit, setMaintenanceModalEdit] = useState(null);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [reports, setReports] = useState({ warranty: null, condition: null });
+  const [reportsLoading, setReportsLoading] = useState(false);
 
   const statsActive = useMemo(() => equipments.filter((e) => e.status === "ACTIVE").length, [equipments]);
   const statsUnderRepair = useMemo(() => equipments.filter((e) => e.condition === "DAMAGED" || e.condition === "UNDER_REPAIR").length, [equipments]);
@@ -181,6 +201,12 @@ export default function AdminEquipments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, limit, categoryFilter, conditionFilter, statusFilter]);
 
+  useEffect(() => {
+    if (!user?.token) return;
+    void loadDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.token]);
+
   const loadMaintenances = async (equipmentId) => {
     if (!equipmentId) return;
     try {
@@ -191,6 +217,27 @@ export default function AdminEquipments() {
       setMaintenances([]);
     } finally {
       setMaintenanceLoading(false);
+    }
+  };
+
+  const loadDashboardData = async () => {
+    try {
+      setReportsLoading(true);
+      const [dashboardResponse, warrantyReportResponse, conditionSummaryResponse] = await Promise.all([
+        getEquipmentDashboard(user?.token),
+        getEquipmentWarrantyExpiryReport({ days: 90 }, user?.token),
+        getEquipmentConditionSummaryReport(user?.token),
+      ]);
+
+      setDashboardData(dashboardResponse?.data || dashboardResponse);
+      setReports({
+        warranty: warrantyReportResponse?.data || warrantyReportResponse,
+        condition: conditionSummaryResponse?.data || conditionSummaryResponse,
+      });
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load equipment analytics"));
+    } finally {
+      setReportsLoading(false);
     }
   };
 
@@ -365,6 +412,129 @@ export default function AdminEquipments() {
     }
   };
 
+  const handleBulkCreate = async () => {
+    if (!canCreate) {
+      toast.error("You do not have permission to bulk create equipment");
+      return;
+    }
+    if (!bulkText.trim()) {
+      toast.error("Paste equipment rows to import");
+      return;
+    }
+
+    try {
+      setBulkBusy(true);
+      const payload = JSON.parse(bulkText);
+      const response = await bulkCreateEquipment(payload, user?.token);
+      toast.success(response?.message || "Bulk create completed");
+      setBulkText("");
+      await loadEquipments();
+      await loadDashboardData();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to import equipment"));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const validateBulkJson = () => {
+    if (!bulkText.trim()) {
+      toast.error("No input to validate");
+      return;
+    }
+    try {
+      JSON.parse(bulkText);
+      toast.success("Valid JSON payload");
+    } catch (err) {
+      toast.error(`Invalid JSON: ${err?.message || err}`);
+    }
+  };
+
+  const prettifyBulkJson = () => {
+    if (!bulkText.trim()) {
+      toast.error("No input to format");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(bulkText);
+      setBulkText(JSON.stringify(parsed, null, 2));
+      toast.success("JSON formatted");
+    } catch (err) {
+      toast.error("Cannot format: invalid JSON");
+    }
+  };
+
+  const handleBulkUpdate = async () => {
+    if (!canEdit) {
+      toast.error("You do not have permission to bulk update equipment");
+      return;
+    }
+    if (!bulkText.trim()) {
+      toast.error("Paste bulk updates to apply");
+      return;
+    }
+
+    try {
+      setBulkBusy(true);
+      const payload = JSON.parse(bulkText);
+      const response = await bulkUpdateEquipment(payload, user?.token);
+      toast.success(response?.message || "Bulk update completed");
+      setBulkText("");
+      await loadEquipments();
+      await loadDashboardData();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to update equipment in bulk"));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!canDelete) {
+      toast.error("You do not have permission to bulk delete equipment");
+      return;
+    }
+    if (!bulkText.trim()) {
+      toast.error("Paste equipment IDs to delete");
+      return;
+    }
+    if (!confirm("Delete these equipments? This action cannot be undone.")) return;
+    try {
+      setBulkBusy(true);
+      const payload = JSON.parse(bulkText);
+      const response = await bulkDeleteEquipment(payload, user?.token);
+      toast.success(response?.message || "Bulk delete completed");
+      setBulkText("");
+      await loadEquipments();
+      await loadDashboardData();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to delete equipment in bulk"));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleExport = async (format = "csv") => {
+    if (!canView) {
+      toast.error("You do not have permission to export equipment data");
+      return;
+    }
+
+    try {
+      const csv = await exportEquipment({ format, search: search.trim() || undefined, category: categoryFilter || undefined, condition: conditionFilter || undefined, status: statusFilter || undefined }, user?.token);
+      const blob = new Blob([csv], { type: format === "json" ? "application/json" : "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `equipment-export.${format}`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Equipment export downloaded");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to export equipment data"));
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
@@ -397,6 +567,118 @@ export default function AdminEquipments() {
           <p className="mt-2 text-2xl font-bold text-red-700">{statsUnderRepair}</p>
         </div>
       </section>
+
+      <section className="grid gap-4">
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-950">Advanced Equipment Operations</h2>
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Bulk + Export</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <button type="button" onClick={() => void handleBulkCreate()} className={buttonClass} disabled={bulkBusy || !canCreate}>
+              <Upload size={16} />
+              {bulkBusy ? "Working..." : "Bulk Create"}
+            </button>
+            <button type="button" onClick={() => void handleBulkUpdate()} className={buttonClass} disabled={bulkBusy || !canEdit}>
+              <Upload size={16} />
+              Bulk Update
+            </button>
+            <button type="button" onClick={() => void handleBulkDelete()} className={buttonClass} disabled={bulkBusy || !canDelete}>
+              <Trash size={16} />
+              Bulk Delete
+            </button>
+            <button type="button" onClick={() => void handleExport("csv")} className={buttonClass}>
+              <Download size={16} />
+              Export CSV
+            </button>
+          </div>
+          <textarea
+            className="mt-4 min-h-32 w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            placeholder={
+              `Example payloads:
+Bulk create: {"equipment": [{"name":"Treadmill Pro","brand":"LifeFitness","category":"CARDIO","quantity":2}]}
+Bulk update: {"updates": [{"id":"uuid","data":{"status":"OUT_OF_SERVICE"}}]}
+Bulk delete: {"ids": ["uuid-1","uuid-2"]}`
+            }
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+          />
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={validateBulkJson} className={buttonClass} disabled={!bulkText.trim()}>
+              Validate JSON
+            </button>
+            <button type="button" onClick={prettifyBulkJson} className={buttonClass} disabled={!bulkText.trim()}>
+              Format JSON
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 grid-cols-1 lg:grid-cols-3">
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-950">Dashboard Snapshot</h2>
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Live stats</span>
+          </div>
+          {reportsLoading ? (
+            <p className="text-sm text-gray-500">Loading dashboard metrics...</p>
+          ) : dashboardData ? (
+            <div className="space-y-3 text-sm text-gray-600">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-md bg-gray-50 p-3">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Total Value</p>
+                  <p className="mt-1 text-lg font-semibold text-gray-950">₹{Number(dashboardData?.overview?.totalValue || 0).toLocaleString()}</p>
+                </div>
+                <div className="rounded-md bg-gray-50 p-3">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Warranty Alerts</p>
+                  <p className="mt-1 text-lg font-semibold text-gray-950">{dashboardData?.warrantyAlerts?.expiringIn90Days || 0}</p>
+                </div>
+              </div>
+              <div className="rounded-md bg-gray-50 p-3">
+                <p className="text-xs font-semibold uppercase text-gray-500">Maintenance Overview</p>
+                <p className="mt-1 text-sm">Pending: {dashboardData?.maintenanceOverview?.pendingMaintenance || 0} • Overdue: {dashboardData?.maintenanceOverview?.overdueMaintenance || 0}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No dashboard data available.</p>
+          )}
+        </div>
+
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <h2 className="font-semibold text-gray-950">Reports</h2>
+          <div className="mt-3 space-y-3 text-sm text-gray-600">
+            <div className="rounded-md bg-gray-50 p-3">
+              <p className="text-xs font-semibold uppercase text-gray-500">Warranty Expiry</p>
+              <p className="mt-1 font-semibold text-gray-950">{reports.warranty?.summary?.totalExpiring || 0} items expiring soon</p>
+            </div>
+            <div className="rounded-md bg-gray-50 p-3">
+              <p className="text-xs font-semibold uppercase text-gray-500">Condition Summary</p>
+              <p className="mt-1 font-semibold text-gray-950">{reports.condition?.totalEquipment || 0} items tracked</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+          <h2 className="font-semibold text-gray-950">Recent Activity</h2>
+          {dashboardData?.recentActivity?.length ? (
+            <ul className="mt-3 space-y-2 text-sm text-gray-600">
+              {dashboardData.recentActivity.slice(0, 5).map((activity) => (
+                <li key={activity.id} className="rounded-md bg-gray-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-gray-900">{activity.equipmentName}</span>
+                    <span className="text-xs uppercase text-gray-500">{activity.action}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">{new Date(activity.date).toLocaleString()}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-gray-500">No recent activity available.</p>
+          )}
+        </div>
+      </section>
+
+      
 
       <section className="grid gap-6 items-start xl:grid-cols-[20rem_minmax(0,1fr)]">
         <form onSubmit={submitEquipment} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200 xl:max-w-[22rem]">

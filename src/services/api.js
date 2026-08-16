@@ -759,6 +759,26 @@ function getClassAuthConfig(token = null, params = null) {
   return params ? { ...getAuthConfig(token), params } : getAuthConfig(token);
 }
 
+function normalizeDayOfWeek(value) {
+  if (value === null || value === undefined || value === "") return value;
+  if (typeof value === "number") return value;
+
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber)) return asNumber;
+
+  const dayMap = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+
+  return dayMap[String(value).trim().toLowerCase()] ?? value;
+}
+
 export async function createClass(classData, token = null) {
   const response = await api.post(CLASS_CLASSES_API, classData, getAuthConfig(token));
   return response.data;
@@ -791,7 +811,11 @@ export async function getTrainerClasses(token = null) {
 }
 
 export async function createClassSchedule(classId, scheduleData, token = null) {
-  const response = await api.post(`${CLASS_CLASSES_API}/${classId}/schedules`, scheduleData, getAuthConfig(token));
+  const response = await api.post(
+    `${CLASS_CLASSES_API}/${classId}/schedules`,
+    { ...scheduleData, dayOfWeek: normalizeDayOfWeek(scheduleData?.dayOfWeek) },
+    getAuthConfig(token)
+  );
   return response.data;
 }
 
@@ -806,7 +830,17 @@ export async function deleteClassSchedule(scheduleId, token = null) {
 }
 
 export async function createClassSlot(classId, slotData, token = null) {
-  const response = await api.post(`${CLASS_CLASSES_API}/${classId}/slots`, slotData, getAuthConfig(token));
+  const payload = { ...slotData };
+
+  if (payload.scheduleId === "" || payload.scheduleId === null || payload.scheduleId === undefined) {
+    delete payload.scheduleId;
+  }
+
+  if (payload.capacity !== undefined && payload.capacity !== null) {
+    payload.capacity = Number(payload.capacity);
+  }
+
+  const response = await api.post(`${CLASS_CLASSES_API}/${classId}/slots`, payload, getAuthConfig(token));
   return response.data;
 }
 
@@ -971,6 +1005,11 @@ export async function getExercise(exerciseId, token = null) {
 
 export async function createExercise(payload, token = null) {
   const response = await api.post(`${WORKOUT_API_PREFIX}/exercises`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function forkExercise(exerciseId, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/fork`, {}, getAuthConfig(token));
   return response.data;
 }
 
@@ -1360,6 +1399,72 @@ export async function getMyHeatmap(token = null) {
   return response.data;
 }
 
+export async function getExerciseProgress(exerciseId, params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/exercises/${exerciseId}/progress`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getDurationTrend(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/duration-trend`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getCaloriesTrend(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/calories-trend`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getExerciseDistribution(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/exercise-distribution`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getVolumePerExercise(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/volume-per-exercise`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getWorkoutFrequency(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/workout-frequency`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getAdherenceTrend(params = {}, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/adherence-trend`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getGoalHistory(goalId, token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/goal-history/${goalId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getStrengthScore(token = null) {
+  const response = await api.get(`${WORKOUT_API_PREFIX}/my/analytics/strength-score`, getAuthConfig(token));
+  return response.data;
+}
+
 // ===== Workout Supersets =====
 export async function createSupersetGroup(dayId, payload, token = null) {
   const response = await api.post(`${WORKOUT_API_PREFIX}/days/${dayId}/supersets`, payload, getAuthConfig(token));
@@ -1398,12 +1503,16 @@ export async function deleteSubstitution(id, token = null) {
 }
 
 // ===== Workout Exercise Media =====
-export async function uploadExerciseMedia(exerciseId, formData, token = null) {
+export async function uploadExerciseMedia(exerciseId, payload, token = null) {
   const config = getAuthConfig(token);
-  if (config) {
-    config.headers = { ...config.headers, "Content-Type": "multipart/form-data" };
+
+  if (payload instanceof FormData) {
+    const formConfig = config ? { ...config, headers: { ...config.headers, "Content-Type": "multipart/form-data" } } : { headers: { "Content-Type": "multipart/form-data" } };
+    const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/media`, payload, formConfig);
+    return response.data;
   }
-  const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/media`, formData, config || { headers: { "Content-Type": "multipart/form-data" } });
+
+  const response = await api.post(`${WORKOUT_API_PREFIX}/exercises/${exerciseId}/media`, payload, config);
   return response.data;
 }
 
@@ -1585,6 +1694,67 @@ export async function updateEquipment(id, payload, token = null) {
 
 export async function deleteEquipment(id, token = null) {
   const response = await api.delete(`${EQUIPMENT_API_PREFIX}/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function bulkCreateEquipment(payload, token = null) {
+  const response = await api.post(`${EQUIPMENT_API_PREFIX}/bulk`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function bulkUpdateEquipment(payload, token = null) {
+  const response = await api.patch(`${EQUIPMENT_API_PREFIX}/bulk`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function bulkDeleteEquipment(payload, token = null) {
+  const response = await api.delete(`${EQUIPMENT_API_PREFIX}/bulk`, {
+    ...getAuthConfig(token),
+    data: payload,
+  });
+  return response.data;
+}
+
+export async function exportEquipment(params = {}, token = null) {
+  const response = await api.get(`${EQUIPMENT_API_PREFIX}/export`, {
+    ...getAuthConfig(token),
+    params,
+    responseType: "text",
+  });
+  return response.data;
+}
+
+export async function getEquipmentDashboard(token = null) {
+  const response = await api.get(`${EQUIPMENT_API_PREFIX}/dashboard`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getEquipmentMaintenanceCostReport(params = {}, token = null) {
+  const response = await api.get(`${EQUIPMENT_API_PREFIX}/reports/maintenance-costs`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getEquipmentWarrantyExpiryReport(params = {}, token = null) {
+  const response = await api.get(`${EQUIPMENT_API_PREFIX}/reports/warranty-expiry`, {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getEquipmentConditionSummaryReport(token = null) {
+  const response = await api.get(`${EQUIPMENT_API_PREFIX}/reports/condition-summary`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getEquipmentUtilizationReport(params = {}, token = null) {
+  const response = await api.get(`${EQUIPMENT_API_PREFIX}/reports/utilization`, {
+    ...getAuthConfig(token),
+    params,
+  });
   return response.data;
 }
 

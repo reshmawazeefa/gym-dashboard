@@ -65,6 +65,8 @@ export default function WorkoutAssignments(props) {
   const [editingId, setEditingId] = useState("");
   const [editForm, setEditForm] = useState({ startDate: "", endDate: "" });
   const [confirmingId, setConfirmingId] = useState("");
+  const [unassignReason, setUnassignReason] = useState("");
+  const [unassignNote, setUnassignNote] = useState("");
   const [reassignId, setReassignId] = useState("");
   const [reassignForm, setReassignForm] = useState({ newPlanId: "", reason: "" });
 
@@ -144,7 +146,8 @@ export default function WorkoutAssignments(props) {
       if (memberForm.repeatType && memberForm.repeatType !== "NONE") {
         payload.repeatType = memberForm.repeatType;
         if (memberForm.repeatType === "CUSTOM" && memberForm.repeatDays.length) {
-          payload.repeatDays = memberForm.repeatDays;
+          const dayMap = { MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6, SUNDAY: 7 };
+          payload.repeatDays = memberForm.repeatDays.map((d) => dayMap[d] || d);
         }
       }
       await assignWorkoutToMember(memberPlanId, payload, user?.token);
@@ -177,9 +180,14 @@ export default function WorkoutAssignments(props) {
 
   const handleUnassign = async (aId) => {
     try {
-      await unassignWorkout(aId, user?.token);
+      const payload = {};
+      if (unassignReason) payload.reason = unassignReason;
+      if (unassignNote) payload.note = unassignNote;
+      await unassignWorkout(aId, payload, user?.token);
       toast.success("Member unassigned");
       setConfirmingId("");
+      setUnassignReason("");
+      setUnassignNote("");
       if (setAssignments) setAssignments((prev) => prev.filter((a) => idOf(a) !== aId));
       setCurrentMembers((prev) => prev.filter((a) => idOf(a) !== aId));
       await loadPlans();
@@ -207,7 +215,7 @@ export default function WorkoutAssignments(props) {
         <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 self-start">
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
             <UserPlus size={18} className="text-gray-500" />
-            <h3 className="font-semibold text-gray-950">Trainer Assignment</h3>
+            <h3 className="font-semibold text-gray-950">Assign Trainers</h3>
           </div>
           <div className="space-y-4 p-4">
             <div>
@@ -250,7 +258,7 @@ export default function WorkoutAssignments(props) {
                 </div>
 
                 <form onSubmit={handleAssignTrainer} className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
-                  <p className="text-xs font-semibold uppercase text-gray-500">Assign Trainer</p>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Add a trainer to this plan</p>
                   <select className={inputClass} value={trainerForm.trainerId} onChange={(e) => setTrainerForm({ ...trainerForm, trainerId: e.target.value })}>
                     <option value="">Select trainer</option>
                     {trainers.map((t) => (
@@ -276,7 +284,7 @@ export default function WorkoutAssignments(props) {
         <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 self-start">
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
             <Users size={18} className="text-gray-500" />
-            <h3 className="font-semibold text-gray-950">Member Assignment</h3>
+            <h3 className="font-semibold text-gray-950">Assign Members</h3>
           </div>
           <div className="space-y-4 p-4">
             <div>
@@ -319,10 +327,19 @@ export default function WorkoutAssignments(props) {
                               </div>
                                <div className="flex shrink-0 items-center gap-1">
                                 {confirmingId === aId ? (
-                                  <>
+                                  <div className="flex items-center gap-2">
+                                    <select className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs" value={unassignReason} onChange={(e) => setUnassignReason(e.target.value)}>
+                                      <option value="">Select reason</option>
+                                      <option value="MEMBER_REQUEST">Member request</option>
+                                      <option value="TRAINER_DECISION">Trainer decision</option>
+                                      <option value="INJURY">Injury</option>
+                                      <option value="GOAL_COMPLETE">Goal complete</option>
+                                      <option value="OTHER">Other</option>
+                                    </select>
+                                    <input className="h-8 rounded-md border border-gray-300 px-2 text-xs" placeholder="Optional note" value={unassignNote} onChange={(e) => setUnassignNote(e.target.value)} />
                                     <button type="button" onClick={() => handleUnassign(aId)} className="inline-flex h-8 items-center justify-center rounded-md bg-red-600 px-2.5 text-xs font-semibold text-white transition hover:bg-red-700">Confirm</button>
-                                    <button type="button" onClick={() => setConfirmingId("")} className={iconButtonClass} title="Cancel"><X size={15} /></button>
-                                  </>
+                                    <button type="button" onClick={() => { setConfirmingId(""); setUnassignReason(""); setUnassignNote(""); }} className={iconButtonClass} title="Cancel"><X size={15} /></button>
+                                  </div>
                                 ) : (
                                   <>
                                     <button type="button" onClick={() => { setReassignId(aId); setReassignForm({ newPlanId: "", reason: "" }); }} className={iconButtonClass} title="Reassign to different plan"><ArrowRightLeft size={15} /></button>
@@ -372,7 +389,7 @@ export default function WorkoutAssignments(props) {
                 </div>
 
                 <form onSubmit={handleAssignMember} className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
-                  <p className="text-xs font-semibold uppercase text-gray-500">Assign Member</p>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Assign this plan to a member</p>
                   <select className={inputClass} value={memberForm.memberId} onChange={(e) => setMemberForm({ ...memberForm, memberId: e.target.value })}>
                     <option value="">Select member</option>
                     {members.map((m) => (

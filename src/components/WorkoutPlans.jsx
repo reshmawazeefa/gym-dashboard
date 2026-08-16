@@ -48,7 +48,7 @@ function trainerAssignmentName(assignment) {
 }
 
 export default function WorkoutPlans(props) {
-  const { user, role, canManage, canEdit, canDelete, canAssign, canManageAssignments, plans, setPlans, loading, planSearch, setPlanSearch, goalFilter, setGoalFilter, difficultyFilter, setDifficultyFilter, selectedPlanId, setSelectedPlanId, expandedPlanId, setExpandedPlanId, editingPlanId, setEditingPlanId, planForm, setPlanForm, filteredPlans, assignedMemberCount, memberWorkoutDaysCount, memberWorkoutExercisesCount, loadPlans, refreshSelectedPlan, selectedPlan, planTrainers } = props;
+  const { user, role, canManage, canEdit, canDelete, canAssign, canManageAssignments, plans, setPlans, loading, planSearch, setPlanSearch, goalFilter, setGoalFilter, difficultyFilter, setDifficultyFilter, selectedPlanId, setSelectedPlanId, expandedPlanId, setExpandedPlanId, editingPlanId, setEditingPlanId, planForm, setPlanForm, filteredPlans, assignedMemberCount, memberWorkoutDaysCount, memberWorkoutExercisesCount, loadPlans, refreshSelectedPlan, selectedPlan, planTrainers, setActiveTab } = props;
 
   const handleSavePlan = async (event) => {
     event.preventDefault();
@@ -144,7 +144,7 @@ export default function WorkoutPlans(props) {
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <h3 className="font-semibold text-gray-950">{editingPlanId ? "Edit Workout" : "Create Workout"}</h3>
-              <p className="mt-1 text-xs leading-5 text-gray-500">Add workout basics.</p>
+              <p className="mt-1 text-xs leading-5 text-gray-500">Create a clear plan with a name, goal, and schedule.</p>
             </div>
             <Plus size={18} className="mt-0.5 text-gray-400" />
           </div>
@@ -278,8 +278,15 @@ export default function WorkoutPlans(props) {
                       </div>
                       {role !== "member" && (
                         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                          <button type="button" onClick={() => { setSelectedPlanId(planId); }} className="inline-flex h-8 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
-                            View
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPlanId(planId);
+                              setActiveTab("days");
+                            }}
+                            className="inline-flex h-8 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                          >
+                            Add Days
                           </button>
                           {canEdit && (
                             <button type="button" onClick={() => editPlan(plan)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
@@ -309,7 +316,7 @@ export default function WorkoutPlans(props) {
           })}
           {!filteredPlans.length && (
             <div className="p-8 text-center text-sm text-gray-500">
-              {loading ? "Loading workout plans..." : "No workout plans found."}
+              {loading ? "Loading workout plans..." : "No workout plans yet. Create your first plan to get started."}
             </div>
           )}
         </div>

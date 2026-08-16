@@ -504,7 +504,7 @@ export default function WorkoutSessions(props) {
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <h3 className="font-semibold text-gray-950">Start Workout Session</h3>
-              <p className="mt-1 text-xs leading-5 text-gray-500">Begin a new workout session.</p>
+              <p className="mt-1 text-xs leading-5 text-gray-500">Start a fresh session and log your progress as you work out.</p>
             </div>
             <Play size={18} className="mt-0.5 text-gray-400" />
           </div>
@@ -587,7 +587,7 @@ export default function WorkoutSessions(props) {
           </table>
           {!sessions.length && (
             <div className="p-8 text-center text-sm text-gray-500">
-              {sessionsLoading ? "Loading sessions..." : "No workout sessions found."}
+              {sessionsLoading ? "Loading sessions..." : "No sessions yet. Start your first workout to see it here."}
             </div>
           )}
         </div>
@@ -619,7 +619,7 @@ export default function WorkoutSessions(props) {
       {selectedSessionId && (
         <Card className="overflow-hidden">
           <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-            <h3 className="font-semibold text-gray-950">Set Logs</h3>
+            <h3 className="font-semibold text-gray-950">Workout Log</h3>
             <div className="flex items-center gap-2">
               <button type="button" onClick={() => { setShowSwapForm(!showSwapForm); if (!showSwapForm) { const sid = idOf(activeSession) || selectedSessionId; if (sid) loadSessionSwaps(sid); } }} className={buttonClass}>
                 <ArrowRightLeft size={16} />
@@ -830,7 +830,7 @@ export default function WorkoutSessions(props) {
             </table>
             {(!Array.isArray(setLogs) || !setLogs.length) && (
               <div className="p-6 text-center text-sm text-gray-500">
-                No sets logged yet.
+                No sets logged yet. Use the form above to add your first set.
               </div>
             )}
           </div>

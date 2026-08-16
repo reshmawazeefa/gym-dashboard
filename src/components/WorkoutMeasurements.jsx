@@ -10,7 +10,7 @@ import {
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
 function displayDate(value) { if (!value) return "-"; const date = new Date(value); if (Number.isNaN(date.getTime())) return value; return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
-function emptyMeasurement() { return { date: new Date().toISOString().slice(0, 10), weight: "", bodyFat: "", chest: "", waist: "", hips: "", arms: "", thighs: "", calves: "", shoulders: "", notes: "" }; }
+function emptyMeasurement() { return { date: new Date().toISOString().slice(0, 10), weight: "", bodyFat: "", chest: "", waist: "", hips: "", arms: "", thighs: "", calves: "", shoulders: "", notes: "", photoFront: "", photoSide: "", photoBack: "" }; }
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
 const textareaClass = "min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
@@ -74,9 +74,10 @@ export default function WorkoutMeasurements({ user }) {
     setSaving(true);
     try {
       const payload = {};
+      const numberFields = ["weight", "bodyFat", "chest", "waist", "hips", "arms", "thighs", "calves", "shoulders"];
       for (const [key, value] of Object.entries(form)) {
         if (value !== "" && value !== null && value !== undefined) {
-          payload[key] = key === "date" ? value : Number(value);
+          payload[key] = numberFields.includes(key) ? Number(value) : value;
         }
       }
       if (editingId) {
@@ -122,6 +123,9 @@ export default function WorkoutMeasurements({ user }) {
       calves: item.calves ?? "",
       shoulders: item.shoulders ?? "",
       notes: item.notes ?? "",
+      photoFront: item.photoFront ?? "",
+      photoSide: item.photoSide ?? "",
+      photoBack: item.photoBack ?? "",
     });
   };
 
@@ -133,9 +137,10 @@ export default function WorkoutMeasurements({ user }) {
     setSaving(true);
     try {
       const payload = {};
+      const numberFields = ["weight", "bodyFat", "chest", "waist", "hips", "arms", "thighs", "calves", "shoulders"];
       for (const [key, value] of Object.entries(inlineForm)) {
         if (value !== "" && value !== null && value !== undefined) {
-          payload[key] = key === "date" ? value : Number(value);
+          payload[key] = numberFields.includes(key) ? Number(value) : value;
         }
       }
       await updateMeasurement(id, payload, token);
@@ -267,6 +272,15 @@ export default function WorkoutMeasurements({ user }) {
             </Field>
             <Field label="Notes" className="sm:col-span-2 lg:col-span-4">
               <textarea className={textareaClass} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes..." />
+            </Field>
+            <Field label="Photo Front URL" className="sm:col-span-2">
+              <input className={inputClass} type="url" value={form.photoFront} onChange={(e) => setForm({ ...form, photoFront: e.target.value })} placeholder="https://example.com/front.jpg" />
+            </Field>
+            <Field label="Photo Side URL" className="sm:col-span-2">
+              <input className={inputClass} type="url" value={form.photoSide} onChange={(e) => setForm({ ...form, photoSide: e.target.value })} placeholder="https://example.com/side.jpg" />
+            </Field>
+            <Field label="Photo Back URL" className="sm:col-span-2">
+              <input className={inputClass} type="url" value={form.photoBack} onChange={(e) => setForm({ ...form, photoBack: e.target.value })} placeholder="https://example.com/back.jpg" />
             </Field>
             <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-4">
               <button type="submit" className={primaryButtonClass} disabled={saving}>

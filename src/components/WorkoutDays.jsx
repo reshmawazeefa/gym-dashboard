@@ -1,12 +1,12 @@
 import { Fragment, useState, useEffect } from "react";
-import { ChevronDown, Dumbbell, Pencil, Plus, Search, Trash, X } from "lucide-react";
+import { ChevronDown, Dumbbell, Pencil, Play, Plus, Search, Trash, X } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   getWorkoutDays,
   createWorkoutDay, updateWorkoutDay, deleteWorkoutDay,
   assignExerciseToWorkoutDay, updateWorkoutDayExercise, removeWorkoutDayExercise,
   createSupersetGroup, getSupersetGroups, updateSupersetGroup, deleteSupersetGroup,
-  getApiError
+  getApiError, startWorkoutSession
 } from "../services/api";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
@@ -38,8 +38,27 @@ function Field({ label, children, className = "" }) {
   return <label className={`grid gap-1 text-xs font-semibold uppercase text-gray-500 ${className}`}>{label}{children}</label>;
 }
 
+function normalizeDayExerciseLinks(day) {
+  if (!day) return [];
+  const candidates = [
+    day?.exercises,
+    day?.workoutExercises,
+    day?.items,
+    day?.links,
+    day?.exerciseLinks,
+    day?.workoutExerciseLinks,
+    day?.exerciseLinksData,
+    day?.data?.exercises,
+    day?.data?.workoutExercises,
+    day?.data?.items,
+    day?.data?.links,
+    day?.data?.exerciseLinks,
+  ];
+  return candidates.find(Array.isArray) || [];
+}
+
 export default function WorkoutDays(props) {
-  const { user, role, canManage, canEdit, canDelete, selectedPlan, selectedPlanId, days, setDays, selectedDayId, setSelectedDayId, exercises, refreshSelectedPlan } = props;
+  const { user, role, canManage, canEdit, canDelete, selectedPlan, selectedPlanId, days, setDays, selectedDayId, setSelectedDayId, activeSession, assignmentId, onStartWorkout, onResumeWorkout, exercises, refreshSelectedPlan } = props;
 
   const [dayForm, setDayForm] = useState(emptyDay());
   const [editingDayId, setEditingDayId] = useState("");
@@ -62,36 +81,28 @@ export default function WorkoutDays(props) {
     setExerciseConfig(emptyConfig());
     setExerciseSearch("");
     setMuscleFilter("");
-    if (!selectedPlanId) {
-      setDays([]);
-      return;
-    }
-    (async () => {
-      try {
-        const data = await getWorkoutDays(selectedPlanId, user?.token);
-        const list = Array.isArray(data) ? data : data?.data || data?.days || [];
-        setDays(list);
-      } catch (error) {
-        toast.error(getApiError(error, "Unable to load workout days"));
-      }
-    })();
-  }, [selectedPlanId]);
+  }, []);
 
   useEffect(() => {
     if (!selectedDayId) {
       setSupersetGroups([]);
       return;
     }
+
+    let active = true;
+
     (async () => {
       try {
         const data = await getSupersetGroups(selectedDayId, user?.token);
         const list = Array.isArray(data) ? data : data?.data || data?.supersets || [];
-        setSupersetGroups(list);
+        if (active) setSupersetGroups(list);
       } catch (error) {
-        toast.error(getApiError(error, "Unable to load superset groups"));
+        if (active) toast.error(getApiError(error, "Unable to load superset groups"));
       }
     })();
-  }, [selectedDayId]);
+
+    return () => { active = false; };
+  }, [selectedDayId, user?.token]);
 
   const handleCreateDay = async (event) => {
     event.preventDefault();
@@ -99,13 +110,16 @@ export default function WorkoutDays(props) {
       toast.error("Day title and number are required");
       return;
     }
+    if (!selectedPlanId) {
+      toast.error("Select a workout plan before creating a workout day");
+      return;
+    }
     try {
       await createWorkoutDay(selectedPlanId, { ...dayForm, dayNumber: Number(dayForm.dayNumber) }, user?.token);
       toast.success("Workout day created");
       setShowDayForm(false);
       setDayForm(emptyDay());
-      const data = await getWorkoutDays(selectedPlanId, user?.token);
-      setDays(Array.isArray(data) ? data : data?.data || data?.days || []);
+      await refreshSelectedPlan();
     } catch (error) {
       toast.error(getApiError(error, "Unable to create workout day"));
     }
@@ -122,8 +136,7 @@ export default function WorkoutDays(props) {
       toast.success("Workout day updated");
       setEditingDayId("");
       setDayForm(emptyDay());
-      const data = await getWorkoutDays(selectedPlanId, user?.token);
-      setDays(Array.isArray(data) ? data : data?.data || data?.days || []);
+      await refreshSelectedPlan();
     } catch (error) {
       toast.error(getApiError(error, "Unable to update workout day"));
     }
@@ -135,10 +148,26 @@ export default function WorkoutDays(props) {
       await deleteWorkoutDay(dayId, user?.token);
       toast.success("Workout day deleted");
       if (selectedDayId === dayId) setSelectedDayId("");
-      const data = await getWorkoutDays(selectedPlanId, user?.token);
-      setDays(Array.isArray(data) ? data : data?.data || data?.days || []);
+      await refreshSelectedPlan();
     } catch (error) {
       toast.error(getApiError(error, "Unable to delete workout day"));
+    }
+  };
+
+  const handleStartWorkout = async (dayId) => {
+    if (activeSession) {
+      onResumeWorkout?.();
+      return;
+    }
+    try {
+      if (onStartWorkout) {
+        await onStartWorkout(dayId);
+      } else {
+        await startWorkoutSession({ workoutDayId: dayId, workoutPlanId: selectedPlanId, ...(assignmentId && { assignmentId }) }, user?.token);
+      }
+      toast.success("Workout started");
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to start workout"));
     }
   };
 
@@ -258,21 +287,13 @@ export default function WorkoutDays(props) {
   };
 
   const selectedDay = days.find((d) => idOf(d) === selectedDayId);
-  const dayExercises = selectedDay?.exercises || [];
+  const selectedDayExercises = normalizeDayExerciseLinks(selectedDay);
 
   const filteredExercises = (exercises || []).filter((ex) => {
     const nameMatch = !exerciseSearch || nameOf(ex).toLowerCase().includes(exerciseSearch.toLowerCase());
     const muscleMatch = !muscleFilter || (ex.muscleGroup || "").toUpperCase() === muscleFilter;
     return nameMatch && muscleMatch;
   });
-
-  if (!selectedPlanId) {
-    return (
-      <Card className="p-8 text-center text-sm text-gray-500">
-        Select a workout plan to manage its days and exercises.
-      </Card>
-    );
-  }
 
   return (
     <section className="space-y-4">
@@ -285,6 +306,13 @@ export default function WorkoutDays(props) {
             </div>
             <p className="mt-1 text-sm text-gray-500">{days.length} day{days.length !== 1 ? "s" : ""} in this plan</p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+          {role === "member" && selectedDayId && (
+            <button type="button" onClick={() => handleStartWorkout(selectedDayId)} className={primaryButtonClass}>
+              <Play size={15} />
+              {activeSession ? "Resume Workout" : "Start Workout"}
+            </button>
+          )}
           {canManage && (
             <button
               type="button"
@@ -295,6 +323,7 @@ export default function WorkoutDays(props) {
               {showDayForm ? "Close" : "Add Day"}
             </button>
           )}
+          </div>
         </div>
 
         {showDayForm && canManage && (
@@ -322,24 +351,27 @@ export default function WorkoutDays(props) {
             const dayId = idOf(day);
             const isSelected = selectedDayId === dayId;
             return (
-              <button
-                key={dayId}
-                type="button"
-                onClick={() => setSelectedDayId(isSelected ? "" : dayId)}
-                className={`group flex flex-col gap-2 rounded-xl border p-4 text-left transition ${isSelected ? "border-blue-500 bg-blue-50 shadow-sm" : "border-gray-200 bg-white hover:border-blue-300 hover:bg-gray-50"}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-gray-950">Day {day.dayNumber}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
-                    {day.title || "Untitled"}
-                  </span>
-                </div>
-                {day.notes && <p className="text-sm text-gray-500">{day.notes}</p>}
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>{(day.exercises || []).length} exercise{(day.exercises || []).length !== 1 ? "s" : ""}</span>
-                  <span>{displayDate(day.date)}</span>
-                </div>
-              </button>
+              <div key={dayId} className={`group flex flex-col gap-2 rounded-xl border p-4 text-left transition ${isSelected ? "border-blue-500 bg-blue-50 shadow-sm" : "border-gray-200 bg-white hover:border-blue-300 hover:bg-gray-50"}`}>
+                <button type="button" onClick={() => setSelectedDayId(isSelected ? "" : dayId)} className="text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-gray-950">Day {day.dayNumber}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+                      {day.title || "Untitled"}
+                    </span>
+                  </div>
+                  {day.notes && <p className="mt-2 text-sm text-gray-500">{day.notes}</p>}
+                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                    <span>{normalizeDayExerciseLinks(day).length} exercise{normalizeDayExerciseLinks(day).length !== 1 ? "s" : ""}</span>
+                    <span>{displayDate(day.date)}</span>
+                  </div>
+                </button>
+                {role === "member" && (
+                  <button type="button" onClick={() => handleStartWorkout(dayId)} className={`${primaryButtonClass} mt-2 w-full`}>
+                    <Play size={15} />
+                    {activeSession ? "Resume Workout" : "Start Workout"}
+                  </button>
+                )}
+              </div>
             );
           }) : (
             <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm text-gray-500">
@@ -371,8 +403,8 @@ export default function WorkoutDays(props) {
       </Card>
 
       {selectedDayId && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <Card className="p-3">
+        <div className={role === "member" ? "space-y-4" : "grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"}>
+          {role !== "member" && <Card className="p-3">
             <div className="mb-3 flex items-center gap-2">
               <Search size={16} className="text-gray-400" />
               <h3 className="font-semibold text-gray-950">Exercise Library</h3>
@@ -410,10 +442,10 @@ export default function WorkoutDays(props) {
                 <p className="py-4 text-center text-sm text-gray-400">No exercises found.</p>
               )}
             </div>
-          </Card>
+          </Card>}
 
           <div className="space-y-4">
-            {selectedExerciseId && (
+            {selectedExerciseId && role !== "member" && (
               <Card className="p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="font-semibold text-gray-950">Link Exercise</h3>
@@ -491,7 +523,7 @@ export default function WorkoutDays(props) {
                 {selectedDay ? `Day ${selectedDay.dayNumber}: ${selectedDay.title || "Untitled"}` : "Day"} — Exercises
               </h3>
               <div className="divide-y divide-gray-100">
-                {dayExercises.map((we) => {
+                {selectedDayExercises.map((we) => {
                   const weId = idOf(we);
                   const exercise = we.exercise || {};
                   const exName = nameOf(exercise);
@@ -534,12 +566,12 @@ export default function WorkoutDays(props) {
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
-                            {canEdit && (
+                            {canEdit && role !== "member" && (
                               <button type="button" onClick={() => startEditExercise(we)} className={iconButtonClass} aria-label="Edit exercise">
                                 <Pencil size={13} />
                               </button>
                             )}
-                            {canDelete && (
+                            {canDelete && role !== "member" && (
                               <button type="button" onClick={() => handleDeleteExercise(weId)} className={iconButtonClass} aria-label="Remove exercise">
                                 <Trash size={13} />
                               </button>
@@ -550,7 +582,7 @@ export default function WorkoutDays(props) {
                     </div>
                   );
                 })}
-                {dayExercises.length === 0 && (
+                {selectedDayExercises.length === 0 && (
                   <p className="py-4 text-center text-sm text-gray-400">No exercises linked to this day. Select an exercise from the library and link it.</p>
                 )}
               </div>

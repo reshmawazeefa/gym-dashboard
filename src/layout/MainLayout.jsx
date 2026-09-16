@@ -12,6 +12,7 @@ import {
   registerNotificationDeviceToken,
   unregisterNotificationDeviceToken,
 } from "../services/api";
+import { getWebPushToken } from "../services/webNotifications";
 
 export default function MainLayout({ children }) {
   const { user, logout } = useAuth();
@@ -52,12 +53,11 @@ export default function MainLayout({ children }) {
       try {
         if (active) setLoadingNotifications(true);
 
-        const deviceToken = localStorage.getItem("notificationDeviceToken") || createDeviceToken();
-        if (!localStorage.getItem("notificationDeviceToken")) {
+        const deviceToken = await getWebPushToken();
+        if (deviceToken) {
           localStorage.setItem("notificationDeviceToken", deviceToken);
+          await registerNotificationDeviceToken({ token: deviceToken, platform: "web" }, sessionToken);
         }
-
-        await registerNotificationDeviceToken({ token: deviceToken, platform: "web" }, sessionToken);
 
         const [historyResponse, unreadResponse] = await Promise.all([
           getNotifications({ page: 1, limit: 5 }, sessionToken),
@@ -66,13 +66,17 @@ export default function MainLayout({ children }) {
 
         if (!active) return;
 
-        const historyItems = Array.isArray(historyResponse?.data)
-          ? historyResponse.data
-          : Array.isArray(historyResponse?.data?.data)
-            ? historyResponse.data.data
-            : [];
+        const historyItems = Array.isArray(historyResponse)
+          ? historyResponse
+          : Array.isArray(historyResponse?.data)
+            ? historyResponse.data
+            : Array.isArray(historyResponse?.data?.data)
+              ? historyResponse.data.data
+              : Array.isArray(historyResponse?.notifications)
+                ? historyResponse.notifications
+                : [];
         const unreadValue = Number(
-          unreadResponse?.data?.unreadCount ?? unreadResponse?.unreadCount ?? unreadResponse?.data?.data?.unreadCount ?? 0
+          unreadResponse?.data?.unreadCount ?? unreadResponse?.unreadCount ?? unreadResponse?.data?.data?.unreadCount ?? unreadResponse?.count ?? 0
         );
 
         setNotifications(historyItems);
@@ -91,14 +95,6 @@ export default function MainLayout({ children }) {
     };
   }, [sessionToken]);
 
-  function createDeviceToken() {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return `web-${crypto.randomUUID()}`;
-    }
-
-    return `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  }
-
   async function refreshNotifications() {
     if (!sessionToken) return;
 
@@ -109,13 +105,17 @@ export default function MainLayout({ children }) {
         getUnreadNotificationCount(sessionToken),
       ]);
 
-      const historyItems = Array.isArray(historyResponse?.data)
-        ? historyResponse.data
-        : Array.isArray(historyResponse?.data?.data)
-          ? historyResponse.data.data
-          : [];
+      const historyItems = Array.isArray(historyResponse)
+        ? historyResponse
+        : Array.isArray(historyResponse?.data)
+          ? historyResponse.data
+          : Array.isArray(historyResponse?.data?.data)
+            ? historyResponse.data.data
+            : Array.isArray(historyResponse?.notifications)
+              ? historyResponse.notifications
+              : [];
       const unreadValue = Number(
-        unreadResponse?.data?.unreadCount ?? unreadResponse?.unreadCount ?? unreadResponse?.data?.data?.unreadCount ?? 0
+        unreadResponse?.data?.unreadCount ?? unreadResponse?.unreadCount ?? unreadResponse?.data?.data?.unreadCount ?? unreadResponse?.count ?? 0
       );
 
       setNotifications(historyItems);

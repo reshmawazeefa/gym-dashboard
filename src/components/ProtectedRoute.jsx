@@ -1,12 +1,30 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
+import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
-import { canAccess } from "../utils/rbac";
+import { canAccess, getPortalHomePath, getPortalKey, isUserAllowedInPortal } from "../utils/rbac";
+
+function getPortalLabel(portalKey) {
+  if (portalKey === "platform_admin") return "Platform Admin portal";
+  if (portalKey === "gym_owner") return "Gym Owner portal";
+  if (portalKey === "staff") return "Staff portal";
+  return "Member portal";
+}
 
 export default function ProtectedRoute({ children, moduleKey = "dashboard", action = "view" }) {
   const { user } = useAuth();
+  const location = useLocation();
 
   if (!user) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!isUserAllowedInPortal(user, location.pathname)) {
+    const portalKey = getPortalKey(user);
+    const roleName = user.role || user.loginType || "User";
+    const correctPortal = getPortalLabel(portalKey);
+
+    toast.error(`Portal mismatch: ${roleName} users must use the ${correctPortal}.`);
+    return <Navigate to={getPortalHomePath(user)} replace />;
   }
 
   if (moduleKey && !canAccess(user, moduleKey, action)) {

@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash, UserPlus, Users, Pencil, X, CalendarDays, ArrowRightLeft } from "lucide-react";
+import { Plus, Trash, UserPlus, Users, Pencil, X, CalendarDays, ArrowRightLeft, ClipboardList } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   assignTrainerToWorkoutPlan, getWorkoutTrainers, removeWorkoutTrainerAssignment,
-  assignWorkoutToMember, getMyWorkoutAssignments, getUserWorkouts,
+  assignWorkoutToMember,
   updateWorkoutAssignment, unassignWorkout, reassignWorkout,
   getApiError
 } from "../services/api";
@@ -17,7 +17,6 @@ const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 
 const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
 const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
-const softButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
 
 const trainerRoles = ["PRIMARY", "ASSISTANT", "SUBSTITUTE"];
 const repeatTypes = ["NONE", "DAILY", "WEEKLY", "CUSTOM"];
@@ -31,10 +30,6 @@ function trainerAssignmentName(assignment) {
   return assignment?.trainer?.name || assignment?.trainer?.fullName || assignment?.user?.name || assignment?.user?.fullName || assignment?.trainerDetails?.name || assignment?.trainerDetails?.fullName || assignment?.trainerName || assignment?.userName || nameOf(assignment?.trainer || assignment?.user || assignment?.trainerDetails || assignment?.userDetails || assignment);
 }
 
-function assignmentMemberId(assignment) {
-  return assignment?.memberId || assignment?.userId || idOf(assignment?.member) || idOf(assignment?.user) || idOf(assignment?.memberDetails) || idOf(assignment?.userDetails) || "";
-}
-
 function assignmentMemberName(assignment) {
   return assignment?.member?.name || assignment?.member?.fullName || assignment?.user?.name || assignment?.user?.fullName || assignment?.memberDetails?.name || assignment?.memberDetails?.fullName || assignment?.memberName || assignment?.userName || nameOf(assignment?.member || assignment?.user || assignment?.memberDetails || assignment?.userDetails || assignment);
 }
@@ -45,6 +40,52 @@ function assignmentDates(assignment) {
   return { startDate: sd, endDate: ed };
 }
 
+function assignmentPlanId(assignment) {
+  return (
+    assignment?.planId ||
+    assignment?.workoutId ||
+    assignment?.workoutPlanId ||
+    assignment?.assignment?.planId ||
+    assignment?.assignment?.workoutId ||
+    assignment?.assignment?.workoutPlanId ||
+    idOf(assignment?.plan || assignment?.workout || assignment?.workoutPlan || assignment?.workoutDetails || assignment?.assignment?.plan || assignment?.assignment?.workout || assignment?.assignment?.workoutPlan) ||
+    idOf(assignment?.memberAssignment?.plan || assignment?.memberAssignment?.workout || assignment?.memberAssignment?.workoutPlan) ||
+    idOf(assignment?.workoutAssignment?.plan || assignment?.workoutAssignment?.workout || assignment?.workoutAssignment?.workoutPlan) ||
+    ""
+  );
+}
+
+function assignmentRecordId(assignment) {
+  return (
+    assignment?.id ||
+    assignment?._id ||
+    assignment?.uuid ||
+    assignment?.assignmentId ||
+    assignment?.memberAssignmentId ||
+    assignment?.workoutAssignmentId ||
+    assignment?.assignment?.id ||
+    assignment?.assignment?._id ||
+    assignment?.assignment?.uuid ||
+    assignment?.memberAssignment?.id ||
+    assignment?.memberAssignment?._id ||
+    assignment?.workoutAssignment?.id ||
+    assignment?.workoutAssignment?._id ||
+    assignment?.workoutAssignment?.uuid ||
+    ""
+  );
+}
+
+function assignmentPlanName(assignment, plans) {
+  const plan = assignment?.plan || assignment?.workout || assignment?.workoutPlan || assignment?.workoutDetails;
+  const planId = assignmentPlanId(assignment);
+  return plan?.name || plan?.title || assignment?.planName || assignment?.workoutName || plans.find((item) => String(idOf(item)) === String(planId))?.name || "Workout plan";
+}
+
+function assignmentAssignedBy(assignment) {
+  const assignedBy = assignment?.assignedBy || assignment?.assignedByUser || assignment?.creator || assignment?.createdBy;
+  return assignedBy?.name || assignedBy?.fullName || assignment?.assignedByName || nameOf(assignedBy) || "-";
+}
+
 function toDateInputValue(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -53,7 +94,7 @@ function toDateInputValue(value) {
 }
 
 export default function WorkoutAssignments(props) {
-  const { user, role, canManage, canEdit, canDelete, canAssign, canManageAssignments, plans, selectedPlan, selectedPlanId, members, trainers, planTrainers, setPlanTrainers, assignments, setAssignments, loadPlans, refreshSelectedPlan } = props;
+  const { user, role, canManage, canEdit, canDelete, canAssign, canManageAssignments, plans, selectedPlan, selectedPlanId, members, trainers, planTrainers, setPlanTrainers, assignments, setAssignments, loadPlans, refreshAssignments, refreshSelectedPlan } = props;
 
   const [trainerPlanId, setTrainerPlanId] = useState("");
   const [currentTrainers, setCurrentTrainers] = useState([]);
@@ -61,7 +102,7 @@ export default function WorkoutAssignments(props) {
 
   const [memberPlanId, setMemberPlanId] = useState("");
   const [currentMembers, setCurrentMembers] = useState([]);
-  const [memberForm, setMemberForm] = useState({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [] });
+  const [memberForm, setMemberForm] = useState({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" });
   const [editingId, setEditingId] = useState("");
   const [editForm, setEditForm] = useState({ startDate: "", endDate: "" });
   const [confirmingId, setConfirmingId] = useState("");
@@ -69,6 +110,47 @@ export default function WorkoutAssignments(props) {
   const [unassignNote, setUnassignNote] = useState("");
   const [reassignId, setReassignId] = useState("");
   const [reassignForm, setReassignForm] = useState({ newPlanId: "", reason: "" });
+  const [showTrainerModal, setShowTrainerModal] = useState(false);
+  const [showMemberModal, setShowMemberModal] = useState(false);
+
+  const memberActionMode = editingId ? "edit" : reassignId ? "reassign" : confirmingId ? "unassign" : "assign";
+  const visibleMembers = currentMembers;
+
+  const openMemberAssignmentModal = () => {
+    setEditingId("");
+    setEditForm({ startDate: "", endDate: "" });
+    setConfirmingId("");
+    setUnassignReason("");
+    setUnassignNote("");
+    setReassignId("");
+    setReassignForm({ newPlanId: "", reason: "" });
+    setMemberForm({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" });
+    setShowMemberModal(true);
+  };
+
+  const openActionMemberModal = (assignment, mode) => {
+    const planId = assignmentPlanId(assignment);
+    if (planId) setMemberPlanId(planId);
+    if (mode === "edit") {
+      const { startDate, endDate } = assignmentDates(assignment);
+      setEditingId(assignmentRecordId(assignment));
+      setEditForm({ startDate: toDateInputValue(startDate), endDate: toDateInputValue(endDate) });
+      setConfirmingId("");
+      setReassignId("");
+      setReassignForm({ newPlanId: "", reason: "" });
+    } else if (mode === "reassign") {
+      setReassignId(assignmentRecordId(assignment));
+      setReassignForm({ newPlanId: "", reason: "" });
+      setEditingId("");
+      setConfirmingId("");
+    } else if (mode === "unassign") {
+      setConfirmingId(assignmentRecordId(assignment));
+      setEditingId("");
+      setReassignId("");
+      setReassignForm({ newPlanId: "", reason: "" });
+    }
+    setShowMemberModal(true);
+  };
 
   useEffect(() => {
     if (!trainerPlanId) { setCurrentTrainers([]); return; }
@@ -88,24 +170,18 @@ export default function WorkoutAssignments(props) {
   }, [trainerPlanId, user?.token]);
 
   useEffect(() => {
-    if (!memberPlanId) { setCurrentMembers([]); return; }
     let cancelled = false;
     const load = async () => {
       try {
-        const plan = plans.find((p) => idOf(p) === memberPlanId);
-        const planMembers = plan?.assignments || plan?.memberAssignments || plan?.workoutAssignments || plan?.members || [];
-        const filtered = assignments.filter((a) => {
-          const pid = a?.planId || a?.workoutId || a?.workoutPlanId || idOf(a?.plan) || idOf(a?.workout) || idOf(a?.workoutPlan);
-          return String(pid) === String(memberPlanId);
-        });
-        if (!cancelled) setCurrentMembers(filtered.length ? filtered : planMembers);
+        const allAssignments = Array.isArray(assignments) ? assignments : [];
+        if (!cancelled) setCurrentMembers(allAssignments);
       } catch (error) {
         if (!cancelled) setCurrentMembers([]);
       }
     };
     load();
     return () => { cancelled = true; };
-  }, [memberPlanId, plans, assignments, user?.token]);
+  }, [assignments]);
 
   const handleAssignTrainer = async (e) => {
     e.preventDefault();
@@ -113,6 +189,7 @@ export default function WorkoutAssignments(props) {
     try {
       await assignTrainerToWorkoutPlan(trainerPlanId, { trainerId: trainerForm.trainerId, role: trainerForm.role }, user?.token);
       toast.success("Trainer assigned");
+      setShowTrainerModal(false);
       setTrainerForm({ trainerId: "", role: "PRIMARY" });
       const response = await getWorkoutTrainers(trainerPlanId, user?.token);
       const list = Array.isArray(response) ? response : (response?.trainers || response?.trainerAssignments || response?.data || []);
@@ -145,6 +222,7 @@ export default function WorkoutAssignments(props) {
       if (memberForm.endDate) payload.endDate = memberForm.endDate;
       if (memberForm.repeatType && memberForm.repeatType !== "NONE") {
         payload.repeatType = memberForm.repeatType;
+        if (memberForm.repeatEndDate) payload.repeatEndDate = memberForm.repeatEndDate;
         if (memberForm.repeatType === "CUSTOM" && memberForm.repeatDays.length) {
           const dayMap = { MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6, SUNDAY: 7 };
           payload.repeatDays = memberForm.repeatDays.map((d) => dayMap[d] || d);
@@ -152,8 +230,10 @@ export default function WorkoutAssignments(props) {
       }
       await assignWorkoutToMember(memberPlanId, payload, user?.token);
       toast.success("Workout assigned to member");
-      setMemberForm({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [] });
+      setShowMemberModal(false);
+      setMemberForm({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" });
       await loadPlans();
+      await refreshAssignments?.();
     } catch (error) {
       toast.error(getApiError(error, "Unable to assign workout"));
     }
@@ -168,10 +248,11 @@ export default function WorkoutAssignments(props) {
       toast.success("Assignment updated");
       setEditingId("");
       setEditForm({ startDate: "", endDate: "" });
+      setShowMemberModal(false);
       if (setAssignments) {
-        setAssignments((prev) => prev.map((a) => (idOf(a) === aId ? { ...a, ...payload } : a)));
+        setAssignments((prev) => prev.map((a) => (assignmentRecordId(a) === aId ? { ...a, ...payload } : a)));
       }
-      setCurrentMembers((prev) => prev.map((a) => (idOf(a) === aId ? { ...a, ...payload } : a)));
+      setCurrentMembers((prev) => prev.map((a) => (assignmentRecordId(a) === aId ? { ...a, ...payload } : a)));
       await loadPlans();
     } catch (error) {
       toast.error(getApiError(error, "Unable to update assignment"));
@@ -188,8 +269,9 @@ export default function WorkoutAssignments(props) {
       setConfirmingId("");
       setUnassignReason("");
       setUnassignNote("");
-      if (setAssignments) setAssignments((prev) => prev.filter((a) => idOf(a) !== aId));
-      setCurrentMembers((prev) => prev.filter((a) => idOf(a) !== aId));
+      setShowMemberModal(false);
+      if (setAssignments) setAssignments((prev) => prev.filter((a) => assignmentRecordId(a) !== aId));
+      setCurrentMembers((prev) => prev.filter((a) => assignmentRecordId(a) !== aId));
       await loadPlans();
     } catch (error) {
       toast.error(getApiError(error, "Unable to unassign member"));
@@ -203,6 +285,7 @@ export default function WorkoutAssignments(props) {
       toast.success("Workout reassigned");
       setReassignId("");
       setReassignForm({ newPlanId: "", reason: "" });
+      setShowMemberModal(false);
       await loadPlans();
     } catch (error) {
       toast.error(getApiError(error, "Unable to reassign workout"));
@@ -210,14 +293,89 @@ export default function WorkoutAssignments(props) {
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      {canManageAssignments && (
-        <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 self-start">
+    <div className="space-y-6">
+      <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <ClipboardList size={18} className="text-gray-500" />
+            <div>
+              <h3 className="font-semibold text-gray-950">Workout Assignments</h3>
+              <p className="mt-0.5 text-xs text-gray-500">Plans assigned to members and their active dates.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs font-medium text-gray-500 sm:inline">{currentMembers.length} selected</span>
+            {canManageAssignments && (
+              <button type="button" onClick={() => setShowTrainerModal(true)} className={buttonClass}>
+                <UserPlus size={16} /> Assign Trainers
+              </button>
+            )}
+            {canAssign && (
+              <button type="button" onClick={openMemberAssignmentModal} className={primaryButtonClass}>
+                <Users size={16} /> Assign Members
+              </button>
+            )}
+          </div>
+        </div>
+        {currentMembers.length === 0 ? (
+          <p className="p-6 text-center text-sm text-gray-500">No active assignments found for the workout plans.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Member</th>
+                  <th className="px-4 py-3 font-semibold">Workout Plan</th>
+                  <th className="px-4 py-3 font-semibold">Start Date</th>
+                  <th className="px-4 py-3 font-semibold">End Date</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Assigned By</th>
+                  <th className="px-4 py-3 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {currentMembers.map((assignment) => {
+                  const { startDate, endDate } = assignmentDates(assignment);
+                  const status = assignment.status || "ACTIVE";
+                  return (
+                    <tr key={idOf(assignment)} className="align-top">
+                      <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{assignmentMemberName(assignment)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-gray-700">{assignmentPlanName(assignment, plans)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-gray-600">{displayDate(startDate)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-gray-600">{displayDate(endDate)}</td>
+                      <td className="whitespace-nowrap px-4 py-3"><span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{titleCase(status)}</span></td>
+                      <td className="whitespace-nowrap px-4 py-3 text-gray-600">{assignmentAssignedBy(assignment)}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          {canEdit && <button type="button" onClick={() => { openActionMemberModal(assignment, "edit"); }} className={iconButtonClass} title="Update dates"><Pencil size={15} /></button>}
+                          {canAssign && <button type="button" onClick={() => { openActionMemberModal(assignment, "reassign"); }} className={iconButtonClass} title="Reassign workout"><ArrowRightLeft size={15} /></button>}
+                          {canDelete && <button type="button" onClick={() => { openActionMemberModal(assignment, "unassign"); }} className={iconButtonClass} title="Unassign workout"><Trash size={15} /></button>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <div>
+      {canManageAssignments && showTrainerModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-950/40 p-4 sm:p-8" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowTrainerModal(false); }}>
+        <section className="w-full max-w-xl rounded-lg bg-white shadow-xl ring-1 ring-gray-200">
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
             <UserPlus size={18} className="text-gray-500" />
-            <h3 className="font-semibold text-gray-950">Assign Trainers</h3>
+            <h3 className="flex-1 font-semibold text-gray-950">Assign Trainers</h3>
+            <button type="button" onClick={() => setShowTrainerModal(false)} className={iconButtonClass} title="Close"><X size={17} /></button>
           </div>
           <div className="space-y-4 p-4">
+            {memberActionMode !== "assign" && (
+              <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                {memberActionMode === "edit" ? "Edit this member's assignment dates." : memberActionMode === "reassign" ? "Reassign this member's workout plan." : "Unassign this member's workout."}
+              </p>
+            )}
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase text-gray-500">Workout Plan</label>
               <select className={inputClass} value={trainerPlanId} onChange={(e) => setTrainerPlanId(e.target.value)}>
@@ -278,16 +436,19 @@ export default function WorkoutAssignments(props) {
             )}
           </div>
         </section>
+        </div>
       )}
 
-      {canAssign && (
-        <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 self-start">
+      {canAssign && showMemberModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-950/40 p-4 sm:p-8" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowMemberModal(false); }}>
+        <section className="w-full max-w-xl rounded-lg bg-white shadow-xl ring-1 ring-gray-200">
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
             <Users size={18} className="text-gray-500" />
-            <h3 className="font-semibold text-gray-950">Assign Members</h3>
+            <h3 className="flex-1 font-semibold text-gray-950">Assign Members</h3>
+            <button type="button" onClick={() => setShowMemberModal(false)} className={iconButtonClass} title="Close"><X size={17} /></button>
           </div>
           <div className="space-y-4 p-4">
-            <div>
+            {memberActionMode === "assign" && <div>
               <label className="mb-1 block text-xs font-semibold uppercase text-gray-500">Workout Plan</label>
               <select className={inputClass} value={memberPlanId} onChange={(e) => setMemberPlanId(e.target.value)}>
                 <option value="">Select a plan</option>
@@ -295,21 +456,21 @@ export default function WorkoutAssignments(props) {
                   <option key={idOf(plan)} value={idOf(plan)}>{plan.name || plan.title || "Workout plan"}</option>
                 ))}
               </select>
-            </div>
+            </div>}
 
             {memberPlanId && (
               <>
-                <div>
+                {memberActionMode !== "assign" && <div>
                   <div className="mb-1 flex items-center justify-between">
                     <span className="text-xs font-semibold uppercase text-gray-500">Current Members</span>
-                    <span className="text-xs text-gray-400">{currentMembers.length}</span>
+                    <span className="text-xs text-gray-400">{visibleMembers.length}</span>
                   </div>
-                  {currentMembers.length === 0 ? (
+                  {visibleMembers.length === 0 ? (
                     <p className="py-3 text-center text-sm text-gray-400">No members assigned</p>
                   ) : (
                     <div className="divide-y divide-gray-100 rounded-md border border-gray-200">
-                      {currentMembers.map((a) => {
-                        const aId = idOf(a);
+                      {visibleMembers.map((a) => {
+                        const aId = assignmentRecordId(a) || idOf(a);
                         const isEditing = editingId === aId;
                         const { startDate, endDate } = assignmentDates(a);
                         return (
@@ -342,9 +503,24 @@ export default function WorkoutAssignments(props) {
                                   </div>
                                 ) : (
                                   <>
-                                    <button type="button" onClick={() => { setReassignId(aId); setReassignForm({ newPlanId: "", reason: "" }); }} className={iconButtonClass} title="Reassign to different plan"><ArrowRightLeft size={15} /></button>
-                                    <button type="button" onClick={() => { setEditingId(aId); setEditForm({ startDate: toDateInputValue(startDate), endDate: toDateInputValue(endDate) }); }} className={iconButtonClass} title="Update dates"><Pencil size={15} /></button>
-                                    <button type="button" onClick={() => setConfirmingId(aId)} className={iconButtonClass} title="Unassign"><Trash size={15} /></button>
+                                    <button type="button" onClick={() => {
+                                      const rowPlanId = assignmentPlanId(a);
+                                      if (rowPlanId) setMemberPlanId(rowPlanId);
+                                      setReassignId(aId);
+                                      setReassignForm({ newPlanId: "", reason: "" });
+                                    }} className={iconButtonClass} title="Reassign to different plan"><ArrowRightLeft size={15} /></button>
+                                    <button type="button" onClick={() => {
+                                      const { startDate, endDate } = assignmentDates(a);
+                                      const rowPlanId = assignmentPlanId(a);
+                                      if (rowPlanId) setMemberPlanId(rowPlanId);
+                                      setEditingId(aId);
+                                      setEditForm({ startDate: toDateInputValue(startDate), endDate: toDateInputValue(endDate) });
+                                    }} className={iconButtonClass} title="Update dates"><Pencil size={15} /></button>
+                                    <button type="button" onClick={() => {
+                                      const rowPlanId = assignmentPlanId(a);
+                                      if (rowPlanId) setMemberPlanId(rowPlanId);
+                                      setConfirmingId(aId);
+                                    }} className={iconButtonClass} title="Unassign"><Trash size={15} /></button>
                                   </>
                                 )}
                               </div>
@@ -386,9 +562,9 @@ export default function WorkoutAssignments(props) {
                       })}
                     </div>
                   )}
-                </div>
+                </div>}
 
-                <form onSubmit={handleAssignMember} className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+                {memberActionMode === "assign" && <form onSubmit={handleAssignMember} className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
                   <p className="text-xs font-semibold uppercase text-gray-500">Assign this plan to a member</p>
                   <select className={inputClass} value={memberForm.memberId} onChange={(e) => setMemberForm({ ...memberForm, memberId: e.target.value })}>
                     <option value="">Select member</option>
@@ -437,15 +613,23 @@ export default function WorkoutAssignments(props) {
                       </div>
                     </div>
                   )}
+                  {memberForm.repeatType !== "NONE" && (
+                    <div>
+                      <label className="mb-0.5 block text-xs font-semibold uppercase text-gray-500">Repeat Until</label>
+                      <input type="date" className={inputClass} value={memberForm.repeatEndDate} onChange={(e) => setMemberForm({ ...memberForm, repeatEndDate: e.target.value })} />
+                    </div>
+                  )}
                   <button type="submit" className={primaryButtonClass} disabled={!memberForm.memberId}>
                     <Plus size={16} /> Assign
                   </button>
-                </form>
+                </form>}
               </>
             )}
           </div>
         </section>
+        </div>
       )}
+      </div>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   Loader2,
   Mail,
   MailCheck,
+  Users,
   Send,
   Upload,
   X,
@@ -16,15 +17,19 @@ import toast from "react-hot-toast";
 import {
   getApiError,
   getNotifications,
+  getSentNotificationById,
+  getSentNotifications,
   getTenantUsers,
   getUnreadNotificationCount,
   markAllNotificationsAsRead,
   markNotificationAsRead,
+  registerNotificationDeviceToken,
   sendNotification,
   uploadNotificationImage,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
-import { canAccess } from "../utils/rbac";
+import { canAccess, normalizeRole } from "../utils/rbac";
+import { requestWebPushPermission } from "../services/webNotifications";
 
 const NOTIFICATION_TYPES = [
   "MEMBERSHIP_EXPIRY",
@@ -38,6 +43,7 @@ const NOTIFICATION_TYPES = [
   "ATTENDANCE_ALERT",
   "WORKOUT_REMINDER",
   "MEAL_REMINDER",
+  "EQUIPMENT_WARRANTY_EXPIRY",
   "GENERAL",
 ];
 
@@ -53,18 +59,50 @@ const TYPE_COLORS = {
   ATTENDANCE_ALERT: "bg-cyan-100 text-cyan-700",
   WORKOUT_REMINDER: "bg-indigo-100 text-indigo-700",
   MEAL_REMINDER: "bg-yellow-100 text-yellow-700",
+  EQUIPMENT_WARRANTY_EXPIRY: "bg-orange-100 text-orange-700",
   GENERAL: "bg-gray-100 text-gray-700",
 };
 
+function normalizeNotificationList(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.data?.data)) return response.data.data;
+  if (Array.isArray(response?.notifications)) return response.notifications;
+  return [];
+}
+
+function normalizeMeta(response) {
+  const meta = response?.meta ?? response?.data?.meta ?? {};
+  return {
+    total: Number(meta.total ?? response?.total ?? response?.data?.total ?? 0),
+    totalPages: Number(meta.totalPages ?? meta.total_pages ?? response?.totalPages ?? response?.data?.totalPages ?? 1),
+  };
+}
+
+function normalizeUnreadCount(response) {
+  const value = response?.data?.unreadCount ?? response?.unreadCount ?? response?.data?.data?.unreadCount ?? response?.count ?? 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export default function AdminNotifications() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState("history");
+  const isGymOwner = normalizeRole(user?.role, user?.loginType) === "gym_owner";
+  const [activeTab, setActiveTab] = useState(() => (isGymOwner ? "sent" : "history"));
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [sentNotifications, setSentNotifications] = useState([]);
+  const [sentPage, setSentPage] = useState(1);
+  const [sentTotalPages, setSentTotalPages] = useState(1);
+  const [sentTotalCount, setSentTotalCount] = useState(0);
+  const [sentLoading, setSentLoading] = useState(false);
+  const [selectedSentNotification, setSelectedSentNotification] = useState(null);
+  const [sentDetailLoading, setSentDetailLoading] = useState(false);
+  const [pushEnabling, setPushEnabling] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
   const [members, setMembers] = useState([]);
   const [sendForm, setSendForm] = useState({
@@ -90,16 +128,12 @@ export default function AdminNotifications() {
         getNotifications(params, user.token),
         getUnreadNotificationCount(user.token),
       ]);
-      const items = Array.isArray(listRes?.data)
-        ? listRes.data
-        : Array.isArray(listRes?.data?.data)
-          ? listRes.data.data
-          : [];
+      const items = normalizeNotificationList(listRes);
+      const meta = normalizeMeta(listRes);
       setNotifications(items);
-      setTotalCount(listRes?.meta?.total ?? listRes?.data?.meta?.total ?? items.length);
-      setTotalPages(listRes?.meta?.totalPages ?? listRes?.data?.meta?.totalPages ?? 1);
-      const unreadVal = Number(unreadRes?.data?.unreadCount ?? unreadRes?.unreadCount ?? 0);
-      setUnreadCount(Number.isFinite(unreadVal) ? unreadVal : 0);
+      setTotalCount(meta.total || items.length);
+      setTotalPages(Math.max(1, meta.totalPages || 1));
+      setUnreadCount(normalizeUnreadCount(unreadRes));
     } catch (error) {
       toast.error(getApiError(error, "Failed to load notifications"));
     } finally {
@@ -128,6 +162,36 @@ export default function AdminNotifications() {
     }
   }
 
+  async function fetchSentNotifications() {
+    if (!user?.token || !canSend) return;
+    setSentLoading(true);
+    try {
+      const response = await getSentNotifications({ page: sentPage, limit }, user.token);
+      const items = normalizeNotificationList(response);
+      const meta = normalizeMeta(response);
+      setSentNotifications(items);
+      setSentTotalCount(meta.total || items.length);
+      setSentTotalPages(Math.max(1, meta.totalPages || 1));
+    } catch (error) {
+      toast.error(getApiError(error, "Failed to load sent notifications"));
+    } finally {
+      setSentLoading(false);
+    }
+  }
+
+  async function handleSentNotificationDetails(notificationId) {
+    if (!user?.token) return;
+    setSentDetailLoading(true);
+    try {
+      const response = await getSentNotificationById(notificationId, user.token);
+      setSelectedSentNotification(response?.data ?? response);
+    } catch (error) {
+      toast.error(getApiError(error, "Failed to load notification recipients"));
+    } finally {
+      setSentDetailLoading(false);
+    }
+  }
+
   useEffect(() => {
     fetchNotifications();
   }, [page, typeFilter, user?.token]);
@@ -137,6 +201,14 @@ export default function AdminNotifications() {
       fetchMembers();
     }
   }, [activeTab, canSend, user?.token]);
+
+  useEffect(() => {
+    if (activeTab === "sent" && canSend) fetchSentNotifications();
+  }, [activeTab, sentPage, canSend, user?.token]);
+
+  useEffect(() => {
+    if (isGymOwner && activeTab === "history") setActiveTab("sent");
+  }, [activeTab, isGymOwner]);
 
   async function handleMarkRead(id) {
     if (!user?.token) return;
@@ -158,6 +230,25 @@ export default function AdminNotifications() {
       toast.success("All notifications marked as read");
     } catch (error) {
       toast.error(getApiError(error, "Failed to mark all as read"));
+    }
+  }
+
+  async function handleEnablePush() {
+    if (!user?.token) return;
+    setPushEnabling(true);
+    try {
+      const token = await requestWebPushPermission();
+      if (!token) {
+        toast.error("Web push is unavailable. Configure VITE_FIREBASE_VAPID_KEY first.");
+        return;
+      }
+      await registerNotificationDeviceToken({ token, platform: "web" }, user.token);
+      localStorage.setItem("notificationDeviceToken", token);
+      toast.success("Push notifications enabled");
+    } catch (error) {
+      toast.error(getApiError(error, "Could not enable push notifications"));
+    } finally {
+      setPushEnabling(false);
     }
   }
 
@@ -227,11 +318,13 @@ export default function AdminNotifications() {
           body: sendForm.body,
           type: sendForm.type,
           imageUrl: sendForm.imageUrl || undefined,
+          data: {},
         },
         user.token,
       );
       toast.success("Notification sent");
       setSendForm({ userIds: [], title: "", body: "", type: "GENERAL", imageUrl: "" });
+      await fetchNotifications();
     } catch (error) {
       toast.error(getApiError(error, "Failed to send notification"));
     } finally {
@@ -244,7 +337,8 @@ export default function AdminNotifications() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-        <div className="flex items-start gap-3">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
             <Bell size={22} />
           </div>
@@ -254,13 +348,18 @@ export default function AdminNotifications() {
               Send push notifications and view notification history.
             </p>
           </div>
+          </div>
+          <button type="button" onClick={handleEnablePush} disabled={pushEnabling} className="inline-flex items-center justify-center gap-2 rounded-md border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50">
+            <Bell size={16} />{pushEnabling ? "Enabling..." : "Enable Push"}
+          </button>
         </div>
       </section>
 
       <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
         <div className="flex flex-wrap gap-2">
           {[
-            { key: "history", label: "History", icon: Mail },
+            ...(!isGymOwner ? [{ key: "history", label: "History", icon: Mail }] : []),
+            ...(canSend ? [{ key: "sent", label: "Sent", icon: Send }] : []),
             ...(canSend ? [{ key: "send", label: "Send", icon: Send }] : []),
           ].map((tab) => (
             <button
@@ -280,7 +379,7 @@ export default function AdminNotifications() {
         </div>
       </section>
 
-      {activeTab === "history" && (
+      {!isGymOwner && activeTab === "history" && (
         <>
           <section className="grid gap-4 md:grid-cols-3">
             <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
@@ -544,6 +643,49 @@ export default function AdminNotifications() {
             </div>
           </div>
         </section>
+      )}
+
+      {activeTab === "sent" && canSend && (
+        <section className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
+          <div className="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-semibold text-gray-950">Sent Notifications</h2>
+              <p className="text-sm text-gray-500">{sentTotalCount} send action{sentTotalCount === 1 ? "" : "s"} from this gym</p>
+            </div>
+            <Send size={21} className="text-gray-400" />
+          </div>
+          {sentLoading ? (
+            <div className="flex items-center justify-center px-4 py-12 text-sm text-gray-500"><Loader2 size={16} className="mr-2 animate-spin" />Loading sent notifications...</div>
+          ) : sentNotifications.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-gray-500"><Send size={32} className="mx-auto mb-2 text-gray-300" />No sent notifications found</div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {sentNotifications.map((notification) => (
+                <button key={notification.id} type="button" onClick={() => handleSentNotificationDetails(notification.id)} className="flex w-full flex-col gap-3 px-4 py-4 text-left transition hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${TYPE_COLORS[notification.type] || TYPE_COLORS.GENERAL}`}>{notification.type || "GENERAL"}</span><p className="truncate font-semibold text-gray-900">{notification.title || "Untitled notification"}</p></div>
+                    <p className="mt-1 line-clamp-2 text-sm text-gray-600">{notification.body || "-"}</p>
+                    <p className="mt-1 text-xs text-gray-500">{notification.sentAt ? new Date(notification.sentAt).toLocaleString() : "-"} · Sent by {notification.sender?.name || "Admin"}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 text-xs text-gray-500"><Users size={14} />{notification.recipientCount ?? 0} recipients</div>
+                </button>
+              ))}
+            </div>
+          )}
+          {sentTotalPages > 1 && <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3 text-sm text-gray-600"><span>Page {sentPage} of {sentTotalPages}</span><div className="flex items-center gap-2"><button type="button" disabled={sentPage <= 1} onClick={() => setSentPage((current) => Math.max(1, current - 1))} className="rounded-md px-2 py-1 text-gray-400 disabled:opacity-30" aria-label="Previous sent notifications"><ChevronLeft size={17} /></button><span className="rounded-md bg-blue-600 px-3 py-2 font-semibold text-white">{sentPage}</span><button type="button" disabled={sentPage >= sentTotalPages} onClick={() => setSentPage((current) => Math.min(sentTotalPages, current + 1))} className="rounded-md px-2 py-1 text-gray-400 disabled:opacity-30" aria-label="Next sent notifications"><ChevronRight size={17} /></button></div></div>}
+        </section>
+      )}
+
+      {selectedSentNotification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4" onMouseDown={(event) => event.target === event.currentTarget && setSelectedSentNotification(null)}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-lg font-bold text-gray-950">{selectedSentNotification.title || "Sent notification"}</h2><p className="mt-1 text-sm text-gray-500">{selectedSentNotification.type || "GENERAL"} · {selectedSentNotification.sentAt ? new Date(selectedSentNotification.sentAt).toLocaleString() : "-"}</p></div><button type="button" onClick={() => setSelectedSentNotification(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><X size={19} /></button></div>
+            <p className="mt-4 rounded-md bg-gray-50 p-3 text-sm text-gray-700">{selectedSentNotification.body || "-"}</p>
+            {selectedSentNotification.imageUrl && <img src={selectedSentNotification.imageUrl} alt="Notification" className="mt-4 max-h-48 rounded-md border border-gray-200 object-contain" />}
+            <div className="mt-5 flex items-center justify-between"><h3 className="font-semibold text-gray-950">Recipients</h3><span className="text-xs text-gray-500">{selectedSentNotification.recipientCount ?? selectedSentNotification.recipients?.length ?? 0} total</span></div>
+            {sentDetailLoading ? <div className="py-8 text-center text-sm text-gray-500"><Loader2 size={16} className="mx-auto mb-2 animate-spin" />Loading recipients...</div> : <div className="mt-2 divide-y divide-gray-100 rounded-md border border-gray-200">{(selectedSentNotification.recipients || []).map((recipient) => <div key={recipient.id || recipient.userId} className="flex items-center justify-between gap-3 p-3"><div><p className="text-sm font-medium text-gray-900">{recipient.user?.name || recipient.user?.email || recipient.userId}</p>{recipient.user?.email && <p className="text-xs text-gray-500">{recipient.user.email}</p>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${recipient.deliveryStatus === "FAILED" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>{recipient.deliveryStatus || "SENT"}</span></div>)}</div>}
+          </div>
+        </div>
       )}
     </div>
   );

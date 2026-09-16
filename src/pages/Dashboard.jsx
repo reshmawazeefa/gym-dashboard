@@ -366,6 +366,29 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [user?.token, isMember]);
 
+  if (userRole === "platform_admin") {
+    return (
+      <div className="space-y-6">
+        <section className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          {/* <h1 className="text-xl font-semibold text-gray-950">Platform Admin Portal</h1> */}
+          <p className="mt-1 text-sm text-gray-500">Manage gyms and SaaS plans from the platform administration area.</p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <Link to="/platform/gyms" className="rounded-md border border-gray-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+              <Building2 size={20} className="text-blue-600" />
+              <p className="mt-2 font-semibold text-gray-950">Gyms</p>
+              <p className="mt-1 text-sm text-gray-500">Manage platform gyms and owners.</p>
+            </Link>
+            <Link to="/platform/saas-plans" className="rounded-md border border-gray-200 p-4 transition hover:border-blue-300 hover:bg-blue-50">
+              <ClipboardList size={20} className="text-blue-600" />
+              <p className="mt-2 font-semibold text-gray-950">SaaS Plans</p>
+              <p className="mt-1 text-sm text-gray-500">Manage subscription plans and features.</p>
+            </Link>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   // replace stats for member portal: hide total members
   const visibleStats = isMember
     ? stats.filter((s) => s.label !== "Total Members")

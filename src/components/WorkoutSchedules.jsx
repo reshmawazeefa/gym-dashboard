@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import {
   createSchedule, getMySchedules, getUpcomingSchedules,
   updateSchedule, deleteSchedule, checkInToSchedule,
-  getApiError
+  startWorkoutSession, getApiError
 } from "../services/api";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
@@ -28,7 +28,7 @@ function getStatusClass(status) {
   return "bg-gray-50 text-gray-600 ring-gray-200";
 }
 
-export default function WorkoutSchedules({ user, role, canSchedule, canSession }) {
+export default function WorkoutSchedules({ user, role, canSchedule, canSession, workoutDays = [], onSessionStarted }) {
   const [upcoming, setUpcoming] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [page, setPage] = useState(1);
@@ -43,6 +43,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
   const [editForm, setEditForm] = useState({ scheduledDate: "", scheduledTime: "", notes: "" });
   const [creating, setCreating] = useState(false);
   const [checkingIn, setCheckingIn] = useState(null);
+  const [starting, setStarting] = useState(null);
 
   const loadUpcoming = async () => {
     setLoadingUpcoming(true);
@@ -122,6 +123,26 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
     }
   };
 
+  const handleStart = async (schedule) => {
+    const scheduleId = idOf(schedule);
+    const workoutDayId = schedule.workoutDayId || idOf(schedule.workoutDay);
+    setStarting(scheduleId);
+    try {
+      await startWorkoutSession({
+        ...(workoutDayId && { workoutDayId }),
+        ...(schedule.workoutPlanId && { workoutPlanId: schedule.workoutPlanId }),
+        ...(schedule.assignmentId && { assignmentId: schedule.assignmentId }),
+      }, user?.token);
+      toast.success("Workout started");
+      await Promise.all([loadUpcoming(), loadSchedules()]);
+      onSessionStarted?.();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to start workout"));
+    } finally {
+      setStarting(null);
+    }
+  };
+
   const startEdit = (schedule) => {
     setEditingId(idOf(schedule));
     const rawDate = schedule.scheduledDate ? schedule.scheduledDate.slice(0, 10) : "";
@@ -195,7 +216,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
       <div className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
         <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
           <CalendarDays size={18} className="text-gray-400" />
-          <h3 className="font-semibold text-gray-950">Upcoming Schedules</h3>
+          <h3 className="font-semibold text-gray-950">{canSession ? "My Schedule" : "Upcoming Schedules"}</h3>
         </div>
         <div className="divide-y divide-gray-100">
           {loadingUpcoming ? (
@@ -219,11 +240,16 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {canSession && status === "SCHEDULED" && (
+                    {canSession && status === "SCHEDULED" && (
                     <button type="button" onClick={() => handleCheckIn(scheduleId)} disabled={checkingIn === scheduleId} className={primaryButtonClass}>
                       {checkingIn === scheduleId ? "Checking in..." : "Check In"}
                     </button>
                   )}
+                    {canSession && status === "CHECKED_IN" && (
+                      <button type="button" onClick={() => handleStart(schedule)} disabled={starting === scheduleId} className={primaryButtonClass}>
+                        {starting === scheduleId ? "Starting..." : "Start Workout"}
+                      </button>
+                    )}
                 </div>
               </div>
             );
@@ -242,8 +268,24 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
           </div>
           <form onSubmit={handleCreate} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label className="grid gap-1 text-xs font-semibold uppercase text-gray-500">
-              Workout Day ID
-              <input className={inputClass} value={createForm.workoutDayId} onChange={(e) => setCreateForm({ ...createForm, workoutDayId: e.target.value })} placeholder="e.g. push-day-monday" />
+              Workout Day
+              <select
+                className={inputClass}
+                value={createForm.workoutDayId}
+                onChange={(e) => setCreateForm({ ...createForm, workoutDayId: e.target.value })}
+                disabled={!workoutDays.length}
+                required
+              >
+                <option value="">
+                  {workoutDays.length ? "Select a workout day" : "No workout days available"}
+                </option>
+                {workoutDays.map((day) => {
+                  const dayId = idOf(day);
+                  const planName = day.workoutPlan?.name || day.workoutPlan?.title || "Workout";
+                  const dayName = day.title || day.name || `Day ${day.dayNumber || ""}`;
+                  return <option key={dayId} value={dayId}>{planName} - {dayName}</option>;
+                })}
+              </select>
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase text-gray-500">
               Date
@@ -266,7 +308,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
         </div>
       )}
 
-      <div className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 overflow-hidden">
+      {!canSession && <div className="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 border-b border-gray-200 p-4">
           <label className="grid gap-0.5 text-xs font-semibold uppercase text-gray-500">
             From
@@ -390,7 +432,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession }
             </button>
           </div>
         )}
-      </div>
+      </div>}
     </section>
   );
 }

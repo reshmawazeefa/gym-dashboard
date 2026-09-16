@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef } from "react";
 import { ChevronDown, Image, Pencil, Plus, Search, Trash, Upload, X } from "lucide-react";
 import toast from "react-hot-toast";
-import { createExercise, updateExercise, deleteExercise, forkExercise, createSubstitution, getSubstitutions, deleteSubstitution, uploadExerciseMedia, getExerciseMedia, deleteExerciseMedia, getApiError } from "../services/api";
+import { createExercise, updateExercise, deleteExercise, forkExercise, uploadExerciseMedia, getExerciseMedia, deleteExerciseMedia, getApiError } from "../services/api";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
 function nameOf(item) { return item?.name || item?.fullName || item?.title || item?.email || idOf(item) || "-"; }
@@ -30,21 +30,10 @@ function Field({ label, children, className = "" }) {
   );
 }
 
-function unwrapSubstitutions(response) {
-  if (Array.isArray(response)) return response;
-  if (Array.isArray(response?.data)) return response.data;
-  if (Array.isArray(response?.substitutions)) return response.substitutions;
-  if (Array.isArray(response?.exercises)) return response.exercises;
-  return [];
-}
-
 export default function WorkoutExercises({ user, role, canManage, canEdit, canDelete, exercises, setExercises, exerciseSearch, setExerciseSearch, muscleFilter, setMuscleFilter, filteredExercises, loadExercises }) {
   const [editingExerciseId, setEditingExerciseId] = useState("");
   const [exerciseForm, setExerciseForm] = useState(emptyExercise);
   const [expandedExerciseId, setExpandedExerciseId] = useState("");
-  const [substitutions, setSubstitutions] = useState({});
-  const [substitutionsLoading, setSubstitutionsLoading] = useState({});
-  const [substituteForm, setSubstituteForm] = useState({ substituteExerciseId: "", reason: "" });
   const [mediaItems, setMediaItems] = useState({});
   const [mediaLoading, setMediaLoading] = useState({});
   const [mediaUploadForm, setMediaUploadForm] = useState({ file: null, mediaType: "IMAGE", url: "", caption: "", orderIndex: 1 });
@@ -116,68 +105,13 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
     }
   };
 
-  const loadSubstitutions = async (exerciseId) => {
-    if (substitutions[exerciseId] !== undefined) return;
-    setSubstitutionsLoading((prev) => ({ ...prev, [exerciseId]: true }));
-    try {
-      const response = await getSubstitutions(exerciseId, user?.token);
-      const list = unwrapSubstitutions(response);
-      setSubstitutions((prev) => ({ ...prev, [exerciseId]: list }));
-    } catch (error) {
-      setSubstitutions((prev) => ({ ...prev, [exerciseId]: [] }));
-      toast.error(getApiError(error, "Unable to load substitutions"));
-    } finally {
-      setSubstitutionsLoading((prev) => ({ ...prev, [exerciseId]: false }));
-    }
-  };
-
   const handleToggleExpand = async (exerciseId) => {
     if (expandedExerciseId === exerciseId) {
       setExpandedExerciseId("");
       return;
     }
     setExpandedExerciseId(exerciseId);
-    setSubstituteForm({ substituteExerciseId: "", reason: "" });
-    await Promise.all([loadSubstitutions(exerciseId), loadMedia(exerciseId)]);
-  };
-
-  const substituteExerciseName = (sub) => {
-    return sub?.substituteExercise?.name || sub?.exercise?.name || sub?.substituteName || sub?.name || "-";
-  };
-
-  const handleAddSubstitute = async (exerciseId) => {
-    if (!substituteForm.substituteExerciseId || !substituteForm.reason.trim()) {
-      toast.error("Select an exercise and provide a reason");
-      return;
-    }
-    try {
-      await createSubstitution(exerciseId, { substituteExerciseId: substituteForm.substituteExerciseId, reason: substituteForm.reason.trim() }, user?.token);
-      toast.success("Substitution added");
-      setSubstituteForm({ substituteExerciseId: "", reason: "" });
-      const response = await getSubstitutions(exerciseId, user?.token);
-      setSubstitutions((prev) => ({ ...prev, [exerciseId]: unwrapSubstitutions(response) }));
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to add substitution"));
-    }
-  };
-
-  const handleDeleteSubstitution = async (exerciseId, substitutionId) => {
-    if (!window.confirm("Are you sure you want to remove this substitution?")) return;
-    try {
-      await deleteSubstitution(substitutionId, user?.token);
-      toast.success("Substitution removed");
-      setSubstitutions((prev) => ({
-        ...prev,
-        [exerciseId]: (prev[exerciseId] || []).filter((sub) => idOf(sub) !== substitutionId),
-      }));
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to delete substitution"));
-    }
-  };
-
-  const availableSubstituteExercises = (exerciseId) => {
-    const existingSubIds = (substitutions[exerciseId] || []).map((sub) => idOf(sub?.substituteExercise || sub?.exercise || sub));
-    return filteredExercises.filter((ex) => idOf(ex) !== exerciseId && !existingSubIds.includes(idOf(ex)));
+    await loadMedia(exerciseId);
   };
 
   const loadMedia = async (exerciseId) => {
@@ -257,7 +191,7 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <h3 className="font-semibold text-gray-950">{editingExerciseId ? "Edit Exercise" : "Add Exercise"}</h3>
-              <p className="mt-1 text-xs leading-5 text-gray-500">{editingExerciseId ? "Update the exercise details." : "Create reusable exercises for your workout plans."}</p>
+              <p className="mt-1 text-xs leading-5 text-gray-500">{editingExerciseId ? "Update exercise details." : "Create a new exercise."}</p>
             </div>
             <Plus size={18} className="mt-0.5 text-gray-400" />
           </div>
@@ -322,9 +256,6 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
           {filteredExercises.map((exercise) => {
             const exerciseId = idOf(exercise);
             const isExpanded = expandedExerciseId === exerciseId;
-            const exSubstitutions = substitutions[exerciseId];
-            const exSubstitutionsLoading = substitutionsLoading[exerciseId];
-            const availableSubs = availableSubstituteExercises(exerciseId);
 
             return (
               <div key={exerciseId} className="bg-white">
@@ -508,70 +439,6 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
                         </div>
                       )}
                     </div>
-                    <div className="mt-4 border-t border-gray-200 pt-4">
-                      <p className="text-xs font-semibold uppercase text-gray-500">Substitutions</p>
-                      {exSubstitutionsLoading ? (
-                        <p className="mt-2 text-sm text-gray-500">Loading substitutions...</p>
-                      ) : exSubstitutions && exSubstitutions.length > 0 ? (
-                        <ul className="mt-2 space-y-2">
-                          {exSubstitutions.map((sub) => {
-                            const subId = idOf(sub);
-                            return (
-                              <li key={subId} className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-gray-200">
-                                <div className="min-w-0 flex-1">
-                                  <p className="font-medium text-gray-900">{substituteExerciseName(sub)}</p>
-                                  {sub.reason && <p className="mt-0.5 text-xs text-gray-500">{sub.reason}</p>}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteSubstitution(exerciseId, subId)}
-                                  className={iconButtonClass}
-                                  aria-label="Remove substitution"
-                                >
-                                  <X size={14} />
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : (
-                        <p className="mt-2 text-sm text-gray-500">No substitutions added.</p>
-                      )}
-                      {canManage && (
-                        <div className="mt-3 flex flex-wrap items-end gap-3">
-                          <div className="min-w-0 flex-1">
-                            <select
-                              className={inputClass}
-                              value={substituteForm.substituteExerciseId}
-                              onChange={(event) => setSubstituteForm({ ...substituteForm, substituteExerciseId: event.target.value })}
-                            >
-                              <option value="">Select substitute exercise</option>
-                              {availableSubs.map((ex) => (
-                                <option key={idOf(ex)} value={idOf(ex)}>{ex.name || "-"}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <input
-                              className={inputClass}
-                              type="text"
-                              value={substituteForm.reason}
-                              onChange={(event) => setSubstituteForm({ ...substituteForm, reason: event.target.value })}
-                              placeholder="Reason for substitution"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleAddSubstitute(exerciseId)}
-                            className={primaryButtonClass}
-                            disabled={!substituteForm.substituteExerciseId || !substituteForm.reason.trim()}
-                          >
-                            <Plus size={16} />
-                            Add
-                          </button>
-                        </div>
-                      )}
-                    </div>
                   </div>
                 )}
               </div>
@@ -579,7 +446,7 @@ export default function WorkoutExercises({ user, role, canManage, canEdit, canDe
           })}
           {!filteredExercises.length && (
             <div className="p-8 text-center text-sm text-gray-500">
-              No exercises yet. Create one to start building your workout library.
+              No exercises found.
             </div>
           )}
         </div>

@@ -3,59 +3,60 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import toast from "react-hot-toast";
 import { getApiError } from "../services/api";
+import { getPortalHomePath } from "../utils/rbac";
 
 const loginModes = [
   {
     id: "owner",
     label: "Gym Owner",
-    email: "gym1@gmail.com",
-    gymId: "504d9d9c-6c55-43be-a802-018693024a30",
+    email: "",
+    gymSlug: "",
   },
   {
     id: "staff",
     label: "Gym Staff",
-    email: "gymadmin@wazeefa.in",
-    gymId: "c695080e-3fb3-483b-9c1c-2ecb41d1ec8e",
+    // email: "gymadmin@wazeefa.in",
+    // gymSlug: "t1gym",
   },
   {
     id: "member",
     label: "Gym Member",
-    email: "user3@wazeefa.in",
-    gymId: "c695080e-3fb3-483b-9c1c-2ecb41d1ec8e",
+    // email: "user3@wazeefa.in",
+    // gymSlug: "t1gym",
   },
   {
     id: "platform",
     label: "Platform Admin",
-    email: "admin@wazeefa.in",
-    gymId: "",
+    // email: "admin@wazeefa.in",
+    // gymSlug: "",
   },
 ];
 
 export default function Login() {
   const [loginType, setLoginType] = useState("owner");
-  const [email, setEmail] = useState("gym1@gmail.com");
-  const [gymId, setGymId] = useState("504d9d9c-6c55-43be-a802-018693024a30");
-  const [password, setPassword] = useState("123456");
+  const [email, setEmail] = useState("");
+  const [gymSlug, setGymSlug] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const selectMode = (mode) => {
     setLoginType(mode.id);
-    setEmail(mode.email);
-    setGymId(mode.gymId);
-    setPassword("QWERTY1029384756");
+    setEmail("");
+    setGymSlug("");
+    setPassword("");
   };
 
   const handleLogin = async () => {
-    if (!email || !password || (loginType !== "platform" && !gymId)) {
+    if (!email || !password || (loginType !== "platform" && !gymSlug)) {
       toast.error("Please fill all required fields");
       return;
     }
 
     try {
       setLoading(true);
-      const session = await login({ email, password, gymId, loginType });
+      const session = await login({ email, password, gymSlug, loginType });
 
       if (!session) {
         toast.error("Login response did not include a token");
@@ -63,7 +64,7 @@ export default function Login() {
       }
 
       toast.success("Login successful");
-      navigate("/");
+      navigate(getPortalHomePath(session), { replace: true });
     } catch (error) {
       toast.error(getApiError(error, "Invalid credentials"));
     } finally {
@@ -122,14 +123,14 @@ export default function Login() {
           {loginType !== "platform" && (
             <>
               <label className="mt-4 block text-sm font-medium text-gray-700">
-                Gym ID
+                Gym Code
               </label>
               <input
                 type="text"
-                value={gymId}
-                placeholder="Gym ID"
+                value={gymSlug}
+                placeholder="t1gym"
                 className="mt-2 w-full rounded-md border border-gray-300 p-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                onChange={(e) => setGymId(e.target.value)}
+                onChange={(e) => setGymSlug(e.target.value)}
               />
             </>
           )}
@@ -155,13 +156,22 @@ export default function Login() {
           >
             {loading ? "Logging in..." : "Login"}
           </button>
-          <p className="mt-4 text-center text-sm text-gray-500">
-            Need a new member account?{" "}
+          {/* <div className="mt-5 flex items-center justify-between text-sm">
+            <span className="text-gray-500">Need a new member account?</span>
             <span
               className="cursor-pointer font-semibold text-blue-600"
               onClick={() => navigate("/register")}
             >
               Register
+            </span>
+          </div> */}
+
+          <p className="mt-3 text-center text-sm text-gray-500">
+            <span
+              className="cursor-pointer font-semibold text-blue-600"
+              onClick={() => navigate("/forgot-password")}
+            >
+              Forgot password?
             </span>
           </p>
         </div>

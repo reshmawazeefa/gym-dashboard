@@ -22,6 +22,7 @@ import {
   getWorkoutSessionById,
   getWorkoutSessions,
   getWorkoutSets,
+  startWorkoutSession,
   getWorkoutTrainers,
   getMyCalendar,
   unwrapList,
@@ -37,6 +38,7 @@ import WorkoutSchedules from "./WorkoutSchedules";
 import WorkoutMeasurements from "./WorkoutMeasurements";
 import WorkoutFeedback from "./WorkoutFeedback";
 import WorkoutAnalytics from "./WorkoutAnalytics";
+import WorkoutGoals from "./WorkoutGoals";
 
 const goals = ["WEIGHT_LOSS", "MUSCLE_GAIN", "STRENGTH", "ENDURANCE", "FAT_BURN"];
 const difficulties = ["BEGINNER", "INTERMEDIATE", "ADVANCED"];
@@ -106,6 +108,9 @@ function assignmentPlanId(assignment) {
     assignment?.planId ||
     assignment?.workoutId ||
     assignment?.workoutPlanId ||
+    idOf(assignment?.assignment?.plan) ||
+    idOf(assignment?.assignment?.workout) ||
+    idOf(assignment?.assignment?.workoutPlan) ||
     idOf(assignment?.plan) ||
     idOf(assignment?.workout) ||
     idOf(assignment?.workoutPlan) ||
@@ -233,6 +238,25 @@ function normalizeWorkoutPlan(item) {
   };
 }
 
+function normalizeDayExerciseLinks(day) {
+  if (!day) return [];
+  const candidates = [
+    day?.exercises,
+    day?.workoutExercises,
+    day?.items,
+    day?.links,
+    day?.exerciseLinks,
+    day?.workoutExerciseLinks,
+    day?.exerciseLinksData,
+    day?.data?.exercises,
+    day?.data?.workoutExercises,
+    day?.data?.items,
+    day?.data?.links,
+    day?.data?.exerciseLinks,
+  ];
+  return candidates.find(Array.isArray) || [];
+}
+
 function planDays(plan) {
   return plan?.days || plan?.workoutDays || [];
 }
@@ -240,7 +264,7 @@ function planDays(plan) {
 function planExerciseCount(plan) {
   const explicitCount = Number(plan?.totalExercises || plan?.exerciseCount || 0);
   if (explicitCount) return explicitCount;
-  return planDays(plan).reduce((total, day) => total + countOf(day.exercises || day.workoutExercises || day.items), 0);
+  return planDays(plan).reduce((total, day) => total + normalizeDayExerciseLinks(day).length, 0);
 }
 
 function isMemberAssignment(assignment) {
@@ -288,6 +312,20 @@ function countOf(value) {
   return Array.isArray(value) ? value.length : Number(value || 0) || 0;
 }
 
+function calendarEvents(payload) {
+  const source = payload?.data ?? payload?.calendar ?? payload;
+  if (Array.isArray(source)) return source;
+  if (!source || typeof source !== "object") return [];
+
+  return Object.entries(source).flatMap(([date, items]) => {
+    const events = Array.isArray(items) ? items : [items];
+    return events.filter(Boolean).map((event) => ({
+      ...event,
+      date: event.date || event.scheduledDate || date,
+    }));
+  });
+}
+
 function Card({ children, className = "" }) {
   return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
 }
@@ -311,14 +349,16 @@ export default function AdminWorkouts() {
   const { user } = useAuth();
   const role = workoutRole(user);
   const isMember = role === "member";
+  const isReceptionist = role === "receptionist";
   const isWorkoutManager = role === "owner" || role === "admin" || role === "trainer";
-  const canManage = !isMember && (isWorkoutManager || canAccess(user, "workouts", "create"));
-  const canEdit = !isMember && (canManage || canAccess(user, "workouts", "edit") || canAccess(user, "workouts", "update"));
-  const canManageAssignments = !isMember && (role === "owner" || role === "admin");
-  const canDelete = !isMember && (canAccess(user, "workouts", "delete") || canAccess(user, "workouts", "remove"));
-  const canAssign = !isMember && (canAccess(user, "workouts", "assign") || canManageAssignments || role === "trainer");
-  const canSchedule = isMember;
-  const canSession = isMember;
+  const canManage = !isMember && !isReceptionist && (isWorkoutManager || canAccess(user, "workouts", "create"));
+  const canEdit = !isMember && !isReceptionist && (canManage || canAccess(user, "workouts", "edit") || canAccess(user, "workouts", "update"));
+  const canManageAssignments = !isMember && !isReceptionist && (role === "owner" || role === "admin" || role === "trainer");
+  const canDelete = !isMember && !isReceptionist && (canAccess(user, "workouts", "delete") || canAccess(user, "workouts", "remove"));
+  const canAssign = !isMember && !isReceptionist && (canAccess(user, "workouts", "assign") || canManageAssignments || role === "trainer");
+  const canSchedule = isMember || isReceptionist;
+  const canSession = isMember || isReceptionist;
+  const canViewProgress = isMember || isReceptionist;
 
   const [activeTab, setActiveTab] = useState("plans");
   const [plans, setPlans] = useState([]);
@@ -341,6 +381,7 @@ export default function AdminWorkouts() {
   const [expandedPlanId, setExpandedPlanId] = useState("");
   const [expandedExerciseId, setExpandedExerciseId] = useState("");
   const [editingPlanId, setEditingPlanId] = useState("");
+  const [showCreatePlanModal, setShowCreatePlanModal] = useState(false);
   const [planForm, setPlanForm] = useState({ name: "", description: "", goal: goals[0], difficulty: difficulties[0], duration: "" });
   const [sessions, setSessions] = useState([]);
   const [setLogs, setSetLogs] = useState([]);
@@ -439,6 +480,18 @@ export default function AdminWorkouts() {
   }, [planTrainers, plans]);
   const memberWorkoutDaysCount = useMemo(() => plans.reduce((total, plan) => total + countOf(planDays(plan) || plan.totalDays), 0), [plans]);
   const memberWorkoutExercisesCount = useMemo(() => plans.reduce((total, plan) => total + planExerciseCount(plan), 0), [plans]);
+  const scheduleDays = useMemo(() => {
+    const seen = new Set();
+    return [
+      ...days.map((day) => ({ ...day, workoutPlan: selectedPlan })),
+      ...plans.flatMap((plan) => planDays(plan).map((day) => ({ ...day, workoutPlan: plan }))),
+    ].filter((day) => {
+      const dayId = idOf(day);
+      if (!dayId || seen.has(dayId)) return false;
+      seen.add(dayId);
+      return true;
+    });
+  }, [days, plans, selectedPlan]);
 
   const filteredPlans = useMemo(() => {
     const query = planSearch.trim().toLowerCase();
@@ -467,16 +520,20 @@ export default function AdminWorkouts() {
     };
     let response;
     try {
-      response = await getWorkoutPlans(params, user?.token);
+      response = isMember
+        ? await getMyWorkoutAssignments(user?.token)
+        : await getWorkoutPlans(params, user?.token);
     } catch (error) {
-      if (!isMember) throw error;
-      response = await getMyWorkoutAssignments(user?.token);
+      throw error;
     }
     const nextPlans = listOf(response, ["plans", "workouts", "assignments"]).map(normalizeWorkoutPlan);
     const nextAssignments = listOf(response, ["assignments", "members", "memberAssignments", "workoutAssignments"]);
     setPlans(nextPlans);
+    const nextDays = nextPlans.flatMap((plan) => planDays(plan));
+    setDays(nextDays);
     setAssignments((current) => (nextAssignments.length ? nextAssignments : current));
     if (!selectedPlanId && nextPlans.length) setSelectedPlanId(idOf(nextPlans[0]));
+    return nextPlans;
   };
 
   const loadExercises = async () => {
@@ -500,8 +557,23 @@ export default function AdminWorkouts() {
       getTenantUsers("member", user?.token),
       getTenantUsers("trainer", user?.token),
     ]);
-    setMembers(unwrapList(memberResponse));
+    const nextMembers = unwrapList(memberResponse);
+    setMembers(nextMembers);
     setTrainers(unwrapList(trainerResponse));
+
+    const assignmentResults = await Promise.allSettled(
+      nextMembers.filter((member) => idOf(member)).map(async (member) => {
+        const response = await getUserWorkouts(idOf(member), user?.token);
+        return listOf(response, ["assignments", "workouts", "workoutAssignments", "plans"]).map((assignment) => ({
+          ...assignment,
+          userId: assignmentMemberId(assignment) || idOf(member),
+          member: assignment?.member || member,
+        }));
+      })
+    );
+    setAssignments(assignmentResults
+      .filter((result) => result.status === "fulfilled")
+      .flatMap((result) => result.value));
   };
 
   const loadUserWorkouts = async (memberId) => {
@@ -577,19 +649,30 @@ export default function AdminWorkouts() {
   };
 
   const refreshSelectedPlan = async () => {
-    await loadPlans();
-    if (selectedPlanId) {
-      const response = await getWorkoutDays(selectedPlanId, user?.token);
-      setDays(listOf(response, ["days", "workoutDays"]));
-    }
+    const refreshedPlans = await loadPlans();
+    const nextDays = (refreshedPlans || plans).flatMap((plan) => planDays(plan));
+    setDays(nextDays);
+  };
+
+  const handleMemberStartWorkout = async (workoutDayId) => {
+    const assignment = selectedMemberAssignments[0];
+    const response = await startWorkoutSession({
+      workoutDayId,
+      workoutPlanId: selectedPlanId,
+      ...(idOf(assignment) && { assignmentId: idOf(assignment) }),
+    }, user?.token);
+    const startedSession = response?.data || response;
+    setActiveSession(startedSession);
+    setSelectedSessionId(idOf(startedSession));
+    setActiveTab("sessions");
+    await loadActiveSession();
   };
 
   const loadCalendar = async () => {
     setCalendarLoading(true);
     try {
       const response = await getMyCalendar({ month: calendarMonth, year: calendarYear }, user?.token);
-      const list = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : Array.isArray(response?.events) ? response.events : Array.isArray(response?.calendar) ? response.calendar : [];
-      setCalendarData(list);
+      setCalendarData(calendarEvents(response));
     } catch (error) {
       toast.error(getApiError(error, "Unable to load calendar"));
       setCalendarData([]);
@@ -626,33 +709,39 @@ export default function AdminWorkouts() {
   }, [user?.token, isMember]);
 
   useEffect(() => {
-    if (!isMember) return;
-    void loadSessions();
+    if (activeTab !== "calendar") return;
+    void loadCalendar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionStatusFilter, sessionMemberSearch, sessionPage]);
+  }, [activeTab, calendarMonth, calendarYear]);
 
   useEffect(() => {
-    if (!selectedPlanId) return;
+    if (!canSession) return;
+    void loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatusFilter, sessionMemberSearch, sessionPage, canSession]);
+
+  useEffect(() => {
+    if (!canSession || String(activeSession?.status || "").toUpperCase() !== "IN_PROGRESS") return undefined;
     let isCurrent = true;
-    const loadPlanDays = async () => {
+
+    const pollActiveSession = async () => {
       try {
-        const response = await getWorkoutDays(selectedPlanId, user?.token);
-        const nextDays = listOf(response, ["days", "workoutDays"]);
-        if (isCurrent) {
-          setDays(nextDays);
-          setSelectedDayId((current) => (nextDays.some((day) => idOf(day) === current) ? current : idOf(nextDays[0]) || ""));
-        }
-      } catch (error) {
-        if (isCurrent) {
-          setDays(selectedPlan?.days || selectedPlan?.workoutDays || []);
-          toast.error(getApiError(error, "Unable to load workout days"));
-        }
+        const response = await getActiveSession(user?.token);
+        const data = response?.data || response;
+        if (isCurrent) setActiveSession(data?.id ? data : null);
+      } catch {
+        // Keep the current session visible when a background poll fails.
       }
     };
-    void loadPlanDays();
-    return () => { isCurrent = false; };
-  }, [selectedPlanId, user?.token, selectedPlan?.days, selectedPlan?.workoutDays]);
 
+    const interval = setInterval(pollActiveSession, 10000);
+    return () => {
+      isCurrent = false;
+      clearInterval(interval);
+    };
+  }, [activeSession?.id, activeSession?.status, canSession, user?.token]);
+
+  
   useEffect(() => {
     if (!selectedPlanId || isMember) return;
     let isCurrent = true;
@@ -669,24 +758,32 @@ export default function AdminWorkouts() {
   }, [selectedPlanId, user?.token, isMember, selectedPlan?.trainers, selectedPlan?.trainerAssignments]);
 
   const tabs = [
-    { key: "plans", label: "Workout Plans" },
-    { key: "days", label: "Workout Days", hidden: !selectedPlanId },
-    { key: "exercises", label: "Exercise Library" },
+    { key: "plans", label: isMember ? "My Workouts" : "Workout Plans" },
+    { key: "days", label: isMember ? "Workout Details" : "Workout Days", hidden: !selectedPlanId },
+    { key: "exercises", label: "Exercise Library", hidden: isMember || isReceptionist },
     { key: "assignments", label: "Assignments", hidden: isMember },
-    { key: "sessions", label: "Sessions", hidden: !isMember },
-    { key: "calendar", label: "Calendar" },
-    { key: "schedules", label: "Schedules" },
-    { key: "measurements", label: "Measurements", hidden: isMember },
-    { key: "feedback", label: "Feedback" },
-    { key: "analytics", label: "Analytics" },
+    { key: "sessions", label: "Sessions", hidden: !canSession },
+    { key: "calendar", label: isMember ? "Schedule Calendar" : "Calendar", hidden: !isReceptionist && !isMember },
+    { key: "schedules", label: "Schedules", hidden: !canSchedule },
+    { key: "analytics", label: "Progress", hidden: !canViewProgress },
+    { key: "measurements", label: "Measurements", hidden: !isMember },
+    { key: "goals", label: "Goals", hidden: !isMember },
+    { key: "feedback", label: "Trainer Feedback", hidden: !isWorkoutManager },
   ];
 
-  const summaryCards = [
-    { label: "Workout Plans", value: plans.length, icon: ClipboardList, hint: "Templates ready" },
-    { label: "Exercises", value: exercises.length || memberWorkoutExercisesCount, icon: Activity, hint: "Library items" },
-    { label: "Assigned Members", value: isMember ? plans.length : assignedMemberCount, icon: Users, hint: "Active recipients" },
-    { label: "Trainers", value: assignedTrainerCount, icon: Dumbbell, hint: "Coaching coverage" },
-  ];
+  const summaryCards = isMember
+    ? [
+        { label: "Today's Workout", value: activeSession ? "In progress" : plans[0]?.name || "No workout", icon: Dumbbell, hint: activeSession ? "Resume your active session" : "Next assigned workout" },
+        { label: "This Week", value: sessions.filter((session) => session.status === "COMPLETED").length, icon: CalendarDays, hint: "Completed sessions" },
+        { label: "Workout Streak", value: "-", icon: Activity, hint: "Keep training to build your streak" },
+        { label: "Current Weight", value: "-", icon: BarChart3, hint: "Add a measurement" },
+      ]
+    : [
+        { label: "Workout Plans", value: plans.length, icon: ClipboardList, hint: "Templates ready" },
+        { label: "Exercises", value: exercises.length || memberWorkoutExercisesCount, icon: Activity, hint: "Library items" },
+        { label: "Assigned Members", value: assignedMemberCount, icon: Users, hint: "Active recipients" },
+        { label: "Trainers", value: assignedTrainerCount, icon: Dumbbell, hint: "Coaching coverage" },
+      ];
 
   return (
     <div className="space-y-5">
@@ -704,7 +801,7 @@ export default function AdminWorkouts() {
         </div>
       </Card> */}
 
-      <section className="grid gap-3 lg:grid-cols-4">
+      {/* {!isMember && <section className="grid gap-3 lg:grid-cols-4">
         {lifecycleSteps.map((step, index) => (
           <Card key={step.title} className="p-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-600">
@@ -715,7 +812,7 @@ export default function AdminWorkouts() {
             <p className="mt-3 text-xs font-semibold text-gray-500">{step.accent}</p>
           </Card>
         ))}
-      </section>
+      </section>} */}
 
       <Card className="p-4">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -735,6 +832,21 @@ export default function AdminWorkouts() {
                 </button>
               ))}
           </div>
+          {canManage && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPlanId("");
+                  setPlanForm({ name: "", description: "", goal: goals[0], difficulty: difficulties[0], duration: "" });
+                  setShowCreatePlanModal(true);
+                }}
+                className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              >
+                Add workout
+              </button>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -747,11 +859,41 @@ export default function AdminWorkouts() {
                 <p className="text-sm font-medium text-gray-500">{card.label}</p>
                 <p className="mt-1 text-xs text-gray-400">{card.hint}</p>
               </div>
-              <p className="text-2xl font-bold text-gray-950">{card.value}</p>
+              <p className="max-w-[10rem] text-right text-2xl font-bold text-gray-950">{card.value}</p>
             </div>
           </Card>
         ))}
       </section>
+
+      {isMember && (
+        <Card className="overflow-hidden border-l-4 border-l-blue-600">
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Today's Workout</p>
+              <h2 className="mt-2 text-2xl font-bold text-gray-950">
+                {activeSession?.workoutDay?.title || activeSession?.workoutPlan?.name || plans[0]?.name || "No workout scheduled"}
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                {activeSession ? "Your workout is in progress. Continue logging your sets." : "Open your assigned plan to review the next workout."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {activeSession ? (
+                <button type="button" className={primaryButtonClass} onClick={() => setActiveTab("sessions")}>
+                  Resume Workout
+                </button>
+              ) : plans[0] ? (
+                <button type="button" className={primaryButtonClass} onClick={() => { setSelectedPlanId(idOf(plans[0])); setActiveTab("days"); }}>
+                  View Workout
+                </button>
+              ) : null}
+              <button type="button" className={buttonClass} onClick={() => setActiveTab("schedules")}>
+                View Schedule
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {activeTab === "plans" && (
         <WorkoutPlans
@@ -784,14 +926,19 @@ export default function AdminWorkouts() {
           memberWorkoutDaysCount={memberWorkoutDaysCount}
           memberWorkoutExercisesCount={memberWorkoutExercisesCount}
           loadPlans={loadPlans}
+          refreshAssignments={loadUsers}
           refreshSelectedPlan={refreshSelectedPlan}
           selectedPlan={selectedPlan}
           planTrainers={planTrainers}
+          members={members}
+          exercises={exercises}
           setActiveTab={setActiveTab}
+          showCreatePlanModal={showCreatePlanModal}
+          setShowCreatePlanModal={setShowCreatePlanModal}
         />
       )}
 
-      {activeTab === "days" && selectedPlanId && (
+      {activeTab === "days" && (
         <WorkoutDays
           user={user}
           role={role}
@@ -804,6 +951,10 @@ export default function AdminWorkouts() {
           setDays={setDays}
           selectedDayId={selectedDayId}
           setSelectedDayId={setSelectedDayId}
+          activeSession={activeSession}
+          assignmentId={idOf(selectedMemberAssignments[0])}
+          onStartWorkout={handleMemberStartWorkout}
+          onResumeWorkout={() => setActiveTab("sessions")}
           exercises={exercises}
           refreshSelectedPlan={refreshSelectedPlan}
         />
@@ -889,20 +1040,21 @@ export default function AdminWorkouts() {
           role={role}
           canSchedule={canSchedule}
           canSession={canSession}
+          workoutDays={scheduleDays}
+          onSessionStarted={() => { setActiveTab("sessions"); void loadActiveSession(); }}
         />
       )}
 
-      {activeTab === "measurements" && (
+      {activeTab === "analytics" && canViewProgress && (
+        <WorkoutAnalytics user={user} />
+      )}
+
+      {activeTab === "feedback" && isWorkoutManager && (
+        <WorkoutFeedback user={user} role={role} canManage={canManage} members={members} />
+      )}
+
+      {activeTab === "measurements" && isMember && (
         <WorkoutMeasurements user={user} />
-      )}
-
-      {activeTab === "feedback" && (
-        <WorkoutFeedback
-          user={user}
-          role={role}
-          canManage={canManage}
-          members={members}
-        />
       )}
 
       {activeTab === "calendar" && (
@@ -940,48 +1092,67 @@ export default function AdminWorkouts() {
             <div className="flex items-center justify-center py-12">
               <div className="h-6 w-6 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
             </div>
-          ) : calendarData.length > 0 ? (
-            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {calendarData.map((event, idx) => {
-                const eventDate = event.date || event.scheduledDate || event.sessionDate || "";
-                const eventTitle = event.title || event.workoutName || event.planName || event.name || "Workout";
-                const eventType = event.type || event.eventType || event.status || "";
-                const eventTime = event.time || event.startTime || "";
-                return (
-                  <div key={idOf(event) || idx} className="rounded-md border border-gray-200 bg-white p-3 shadow-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-semibold text-gray-950">{eventTitle}</p>
-                      {eventType && (
-                        <span className="shrink-0 inline-flex h-5 items-center rounded-full bg-blue-50 px-2 text-[10px] font-semibold text-blue-700">{titleCase(eventType)}</span>
-                      )}
-                    </div>
-                    <p className="mt-1 text-xs text-gray-500">
-                      <CalendarDays size={12} className="inline -mt-0.5 me-1" />
-                      {eventDate ? displayDate(eventDate) : "-"}
-                      {eventTime && ` at ${eventTime}`}
-                    </p>
-                    {event.member && (
-                      <p className="mt-1 text-xs text-gray-500">{nameOf(event.member)}</p>
-                    )}
-                    {event.exercises && (
-                      <p className="mt-1 text-xs text-gray-400">{countOf(event.exercises)} exercise(s)</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-md bg-gray-50 py-12 text-sm text-gray-400">
-              <CalendarDays size={32} className="mb-2 text-gray-300" />
-              <p>No workout events for this month. Click "Load" to fetch data.</p>
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50 text-center text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                  <div key={day} className="px-2 py-3 border-r border-gray-100 last:border-r-0">{day}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7">
+                {Array.from({ length: new Date(calendarYear, calendarMonth - 1, 1).getDay() }, (_, idx) => (
+                  <div key={`empty-start-${idx}`} className="min-h-28 border-r border-b border-gray-100 bg-gray-50" />
+                ))}
+                {Array.from({ length: new Date(calendarYear, calendarMonth, 0).getDate() }, (_, idx) => {
+                  const day = idx + 1;
+                  const dateKey = `${calendarYear}-${String(calendarMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                  const dayEvents = calendarData.filter((event) => {
+                    const schedule = event.schedule || event.workoutSchedule || event;
+                    const eventDate = event.date || schedule.scheduledDate || schedule.date || event.sessionDate || "";
+                    return eventDate && String(eventDate).slice(0, 10) === dateKey;
+                  });
+                  return (
+                    <div key={dateKey} className="min-h-28 border-r border-b border-gray-100 p-2">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-gray-700">{day}</span>
+                        {dayEvents.length > 0 && (
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">{dayEvents.length}</span>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        {dayEvents.slice(0, 2).map((event, idx) => {
+                          const schedule = event.schedule || event.workoutSchedule || event;
+                          const plan = event.workoutPlan || event.workout || event.plan || schedule.workoutPlan || schedule.workout || schedule.plan || {};
+                          const eventTitle = event.title || schedule.title || event.workoutName || event.planName || plan.name || plan.title || event.name || "Workout";
+                          const eventType = event.type || event.eventType || event.status || "";
+                          const eventTime = event.time || schedule.scheduledTime || event.startTime || "";
+                          return (
+                            <div key={idOf(event) || `${dateKey}-${idx}`} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-800 shadow-sm">
+                              <div className="truncate">{eventTitle}</div>
+                              {eventType && <span className="text-[10px] text-blue-700">{titleCase(eventType)}</span>}
+                              {eventTime && <span className="ml-1 text-[10px] text-blue-700">{eventTime}</span>}
+                            </div>
+                          );
+                        })}
+                        {dayEvents.length > 2 && (
+                          <div className="text-[10px] font-semibold text-gray-500">+{dayEvents.length - 2} more</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {calendarData.length === 0 && (
+                <div className="flex flex-col items-center justify-center rounded-md bg-gray-50 py-12 text-sm text-gray-400">
+                  <CalendarDays size={32} className="mb-2 text-gray-300" />
+                  <p>No workout events for this month. Click "Load" to fetch data.</p>
+                </div>
+              )}
             </div>
           )}
         </Card>
       )}
 
-      {activeTab === "analytics" && (
-        <WorkoutAnalytics user={user} />
-      )}
     </div>
   );
 }

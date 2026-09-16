@@ -20,8 +20,15 @@ import {
   getCurrentSubscription,
   cancelSubscription,
   renewSubscription,
+  upgradeSubscription,
   getPaymentHistory,
+  getPaymentOrders,
+  getPaymentOrder,
+  createPaymentRefund,
   subscribeToBillingPlan,
+  createPaymentCheckout,
+  verifyPayment,
+  recordBillingPayment,
   getMembershipPlans,
   subscribeToPlan,
   unwrapList,
@@ -1797,15 +1804,49 @@ function StaffModule({ user }) {
   );
 }
 
+function loadRazorpayScript() {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("Razorpay checkout is only available in the browser."));
+      return;
+    }
+
+    if (window.Razorpay) {
+      resolve(window.Razorpay);
+      return;
+    }
+
+    const existing = document.querySelector('script[data-razorpay="true"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.Razorpay), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Unable to load Razorpay script.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.setAttribute("data-razorpay", "true");
+    script.onload = () => resolve(window.Razorpay);
+    script.onerror = () => reject(new Error("Unable to load Razorpay script."));
+    document.body.appendChild(script);
+  });
+}
+
 function OwnerSubscriptionsModule({ user }) {
   const token = user?.accessToken || user?.token;
   const [plans, setPlans] = useState([]);
   const [subscription, setSubscription] = useState(null);
   const [payments, setPayments] = useState([]);
+  const [paymentOrders, setPaymentOrders] = useState([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [subscribingPlanId, setSubscribingPlanId] = useState("");
+  const [processingAction, setProcessingAction] = useState("");
+  const [paymentForm, setPaymentForm] = useState({ amount: "", method: "CASH", transactionId: "", notes: "" });
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [refundForm, setRefundForm] = useState({ amount: "", reason: "" });
 
   const loadPlans = async () => {
     try {
@@ -1850,48 +1891,245 @@ function OwnerSubscriptionsModule({ user }) {
     }
   };
 
+  const loadPaymentOrders = async () => {
+    if (!token) return;
+
+    try {
+      const response = await getPaymentOrders({ purpose: "SAAS_SUBSCRIPTION", limit: 20 }, token);
+      const data = response?.data || response || {};
+      setPaymentOrders(Array.isArray(data) ? data : data.items || []);
+    } catch {
+      setPaymentOrders([]);
+    }
+  };
+
   useEffect(() => {
     if (!token) return;
     void loadPlans();
     void loadSubscription();
     void loadPayments();
+    void loadPaymentOrders();
   }, [token]);
 
-  const handleSubscribe = async (planId) => {
+  const refreshBilling = async () => {
+    await Promise.all([loadSubscription(), loadPayments(), loadPaymentOrders()]);
+  };
+
+  const openCheckout = async (checkout, successMessage) => {
+    if (!checkout) return false;
+    if (checkout.checkoutUrl) {
+      window.location.assign(checkout.checkoutUrl);
+      return true;
+    }
+    if (checkout.provider !== "RAZORPAY" || !checkout.clientKey || !checkout.providerOrderId) {
+      throw new Error("This payment provider is not available in the web portal.");
+    }
+
+    await loadRazorpayScript();
+    const razorpayInstance = new window.Razorpay({
+      key: checkout.clientKey,
+      amount: Number(checkout.amount || 0) * 100,
+      currency: checkout.currency || "INR",
+      name: "Gym Dashboard",
+      description: "SaaS subscription payment",
+      order_id: checkout.providerOrderId,
+      handler: async (response) => {
+        try {
+          const verification = await verifyPayment({
+            providerOrderId: response.razorpay_order_id,
+            providerPaymentId: response.razorpay_payment_id,
+            signature: response.razorpay_signature,
+          }, token);
+          const verified = verification?.data || verification || {};
+          if (verified.success || verified.status === "CAPTURED") {
+            toast.success(successMessage);
+            await refreshBilling();
+          } else {
+            toast.error(getApiError({ response: { data: verified } }, "Payment verification failed"));
+          }
+        } catch (error) {
+          toast.error(getApiError(error, "Payment verification failed"));
+        }
+      },
+      modal: { ondismiss: () => toast.error("Payment cancelled") },
+      theme: { color: "#2563eb" },
+    });
+    razorpayInstance.on("payment.failed", (response) => {
+      toast.error(response?.error?.description || "Payment failed");
+      void refreshBilling();
+    });
+    razorpayInstance.open();
+    return true;
+  };
+
+  const getCheckout = async (data, plan, purpose = "SAAS_SUBSCRIPTION") => {
+    if (data?.checkout) return data.checkout;
+
+    const currentSubscription = data?.subscription || data;
+    const currentStatus = String(currentSubscription?.status || "").toUpperCase();
+    if (!currentSubscription?.id || !["PENDING_PAYMENT", "PAYMENT_FAILED"].includes(currentStatus)) return null;
+
+    const response = await createPaymentCheckout({
+      purpose,
+      saasSubscriptionId: currentSubscription.id,
+      amount: Number(data?.amountDue || plan?.price || currentSubscription?.saasPlan?.price || 0),
+      currency: String(plan?.currency || currentSubscription?.currency || "INR").toUpperCase(),
+      receipt: `saas_${currentSubscription.id}_${Date.now()}`.slice(0, 40),
+    }, token);
+    return response?.data || response || null;
+  };
+
+  const handleViewOrder = async (orderId) => {
+    try {
+      setProcessingAction(`order-${orderId}`);
+      const response = await getPaymentOrder(orderId, token);
+      setSelectedOrder(response?.data || response || null);
+      setRefundForm({ amount: "", reason: "" });
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to load payment order"));
+    } finally {
+      setProcessingAction("");
+    }
+  };
+
+  const handleRefund = async (event) => {
+    event.preventDefault();
+    const amount = Number(refundForm.amount);
+    if (!selectedOrder?.id || selectedOrder.status !== "CAPTURED" || !amount || amount <= 0) {
+      toast.error("Enter a valid refund amount for a captured order");
+      return;
+    }
+    try {
+      setProcessingAction("refund");
+      await createPaymentRefund({ orderId: selectedOrder.id, amount, reason: refundForm.reason.trim() || undefined }, token);
+      toast.success("Refund requested");
+      setSelectedOrder(null);
+      setRefundForm({ amount: "", reason: "" });
+      await loadPaymentOrders();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to create refund"));
+    } finally {
+      setProcessingAction("");
+    }
+  };
+
+  const handleSubscribe = async (plan) => {
+    const planId = plan?.id || plan?._id;
+
     try {
       setSubscribingPlanId(planId);
-      await subscribeToBillingPlan({ saasPlanId: planId, autoRenew: false }, token);
-      toast.success("Subscribed to plan successfully");
-      await Promise.all([loadSubscription(), loadPayments()]);
+      const response = await subscribeToBillingPlan({ saasPlanId: planId, autoRenew: false }, token);
+      const data = response?.data || response || {};
+      const checkout = await getCheckout(data, plan);
+      if (!(await openCheckout(checkout, "Payment successful"))) {
+        toast.success("Subscribed to plan successfully");
+        await refreshBilling();
+      }
     } catch (error) {
+      const providerUnavailable = error?.response?.status === 503 || getApiError(error, "").toLowerCase().includes("no payment provider");
+      if (providerUnavailable) {
+        try {
+          const currentResponse = await getCurrentSubscription(token);
+          const current = currentResponse?.data || currentResponse || {};
+          const checkout = await getCheckout({ subscription: current }, plan);
+          if (await openCheckout(checkout, "Payment successful")) return;
+        } catch (fallbackError) {
+          error = fallbackError;
+        }
+      }
+      console.error("Subscription payment flow failed:", error);
       toast.error(getApiError(error, "Subscription failed"));
     } finally {
       setSubscribingPlanId("");
     }
   };
 
-  const handleCancel = async () => {
+  const handleUpgrade = async (plan) => {
     try {
+      setProcessingAction(`upgrade-${plan.id}`);
+      const response = await upgradeSubscription({ saasPlanId: plan.id, autoRenew: false }, token);
+      const data = response?.data || response || {};
+      const checkout = await getCheckout(data, plan);
+      if (!(await openCheckout(checkout, "Upgrade payment successful"))) {
+        toast.success("Subscription upgraded");
+        await refreshBilling();
+      }
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to upgrade subscription"));
+    } finally {
+      setProcessingAction("");
+    }
+  };
+
+  const handleRecordPayment = async (event) => {
+    event.preventDefault();
+    if (!subscription?.id || !paymentForm.amount || Number(paymentForm.amount) <= 0) {
+      toast.error("Enter a valid payment amount");
+      return;
+    }
+    try {
+      setProcessingAction("payment");
+      await recordBillingPayment({ ...paymentForm, subscriptionId: subscription.id, amount: Number(paymentForm.amount) }, token);
+      toast.success("Payment recorded");
+      setPaymentForm({ amount: "", method: "CASH", transactionId: "", notes: "" });
+      await refreshBilling();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to record payment"));
+    } finally {
+      setProcessingAction("");
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!hasActiveSubscription) return;
+    try {
+      setProcessingAction("cancel");
       const response = await cancelSubscription(token);
       setSubscription(response?.data || response || null);
       toast.success("Subscription cancelled");
     } catch (error) {
       toast.error(getApiError(error, "Unable to cancel subscription"));
+    } finally {
+      setProcessingAction("");
     }
   };
 
   const handleRenew = async () => {
     try {
+      setProcessingAction("renew");
       const response = await renewSubscription(token);
-      setSubscription(response?.data || response || null);
-      toast.success("Subscription renewed");
+      const data = response?.data || response || {};
+      setSubscription(data.subscription || data);
+      const checkout = await getCheckout(data, subscription?.saasPlan);
+      if (!(await openCheckout(checkout, "Renewal payment successful"))) {
+        toast.success("Subscription renewed");
+        await refreshBilling();
+      }
     } catch (error) {
       toast.error(getApiError(error, "Unable to renew subscription"));
+    } finally {
+      setProcessingAction("");
     }
   };
 
   const status = String(subscription?.status || "").toUpperCase();
   const hasActiveSubscription = ["ACTIVE", "TRIAL"].includes(status);
+  const canRenew = ["EXPIRED", "CANCELLED", "PENDING_PAYMENT", "PAYMENT_FAILED"].includes(status);
+  const canPay = Boolean(subscription?.id) && ["PENDING_PAYMENT", "PAYMENT_FAILED", "EXPIRED", "CANCELLED", "ACTIVE"].includes(status);
+  const currentPlanPrice = Number(subscription?.saasPlan?.price || 0);
+
+  const formatMoney = (amount, currency = "INR") => {
+    const normalizedCurrency = String(currency || "INR").toUpperCase();
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: normalizedCurrency,
+        minimumFractionDigits: 2,
+      }).format(Number(amount || 0));
+    } catch {
+      return `${normalizedCurrency} ${Number(amount || 0).toFixed(2)}`;
+    }
+  };
 
   const formatFeatureLabel = (feature) => {
     if (typeof feature === "string") return feature;
@@ -1932,26 +2170,69 @@ function OwnerSubscriptionsModule({ user }) {
             <div className="flex flex-wrap gap-2">
               {subscription ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => void handleRenew()}
-                    className="rounded-full border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50"
-                  >
-                    Renew
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleCancel()}
-                    className="rounded-full border border-red-500 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
-                  >
-                    Cancel
-                  </button>
+                  {canRenew && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRenew()}
+                      disabled={processingAction === "renew"}
+                      className="rounded-full border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+                    >
+                      {processingAction === "renew" ? "Renewing..." : "Renew"}
+                    </button>
+                  )}
+                  {hasActiveSubscription && (
+                    <button
+                      type="button"
+                      onClick={() => void handleCancel()}
+                      disabled={processingAction === "cancel"}
+                      className="rounded-full border border-red-500 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                    >
+                      {processingAction === "cancel" ? "Cancelling..." : "Cancel"}
+                    </button>
+                  )}
                 </>
               ) : (
                 <span className="rounded-full bg-gray-100 px-3 py-2 text-sm text-gray-600">No current subscription</span>
               )}
             </div>
           </div>
+          {canPay && (
+            <form onSubmit={handleRecordPayment} className="mt-4 border-t border-gray-200 pt-4">
+              <p className="text-sm font-semibold text-gray-900">Record a payment</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder={`Amount (${subscription?.currency || subscription?.saasPlan?.currency || "INR"})`}
+                  value={paymentForm.amount}
+                  onChange={(event) => setPaymentForm((form) => ({ ...form, amount: event.target.value }))}
+                  className="rounded-md border border-gray-300 p-2 text-sm"
+                  required
+                />
+                <select
+                  value={paymentForm.method}
+                  onChange={(event) => setPaymentForm((form) => ({ ...form, method: event.target.value }))}
+                  className="rounded-md border border-gray-300 p-2 text-sm"
+                >
+                  {['CASH', 'CARD', 'BANK_TRANSFER', 'ONLINE'].map((method) => <option key={method}>{method}</option>)}
+                </select>
+                <input
+                  placeholder="Transaction ID (optional)"
+                  value={paymentForm.transactionId}
+                  onChange={(event) => setPaymentForm((form) => ({ ...form, transactionId: event.target.value }))}
+                  className="rounded-md border border-gray-300 p-2 text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={processingAction === "payment"}
+                  className="rounded-md bg-gray-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {processingAction === "payment" ? "Recording..." : "Record payment"}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </section>
 
@@ -1982,17 +2263,32 @@ function OwnerSubscriptionsModule({ user }) {
 
                   <div className="mt-4 flex items-end justify-between">
                     <div>
-                      <p className="text-2xl font-semibold text-gray-950">${Number(plan.price || 0).toFixed(2)}</p>
+                      <p className="text-2xl font-semibold text-gray-950">{formatMoney(plan.price, plan.currency || subscription?.currency || subscription?.saasPlan?.currency || "INR")}</p>
                       <p className="text-sm text-gray-500">{plan.durationDays || 0} days</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSubscribe(plan.id)}
-                      disabled={subscribingPlanId === plan.id || hasActiveSubscription}
-                      className="rounded-full bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {subscribingPlanId === plan.id ? "Subscribing..." : hasActiveSubscription ? "Active" : "Subscribe"}
-                    </button>
+                    {(() => {
+                      const isCurrentPlan = String(subscription?.saasPlan?.id) === String(plan.id);
+                      const canUpgrade = hasActiveSubscription && !isCurrentPlan && Number(plan.price || 0) >= currentPlanPrice;
+                      const isRetry = isCurrentPlan && ["PENDING_PAYMENT", "PAYMENT_FAILED"].includes(status);
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => void (canUpgrade ? handleUpgrade(plan) : handleSubscribe(plan))}
+                          disabled={subscribingPlanId === plan.id || processingAction === `upgrade-${plan.id}` || (hasActiveSubscription && !canUpgrade)}
+                          className="rounded-full bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {subscribingPlanId === plan.id || processingAction === `upgrade-${plan.id}`
+                            ? "Processing..."
+                            : canUpgrade
+                              ? "Upgrade"
+                              : isRetry
+                                ? "Retry payment"
+                                : hasActiveSubscription
+                                  ? "Active"
+                                  : "Subscribe"}
+                        </button>
+                      );
+                    })()}
                   </div>
 
                   <div className="mt-4 space-y-2 text-sm text-gray-600">
@@ -2016,25 +2312,87 @@ function OwnerSubscriptionsModule({ user }) {
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2">
             <CalendarDays size={18} className="text-blue-600" />
-            <h2 className="text-lg font-semibold text-gray-950">Payment history</h2>
+            <h2 className="text-lg font-semibold text-gray-950">Payment orders</h2>
           </div>
 
           {loadingPayments ? (
             <p className="mt-4 text-sm text-gray-500">Loading payments...</p>
-          ) : payments.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-500">No payments recorded yet.</p>
+          ) : paymentOrders.length === 0 && payments.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500">No payment orders recorded yet.</p>
           ) : (
             <div className="mt-4 space-y-3">
-              {payments.map((payment) => (
+              {paymentOrders.map((order) => (
+                <div key={order.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-gray-900">{order.provider || "Payment"} order</span>
+                    <span className="font-semibold text-gray-900">{formatMoney(order.amount, order.currency)}</span>
+                  </div>
+                  <div className="mt-1 text-gray-500">{order.status || "-"} • {order.providerOrderId || order.id}</div>
+                  <div className="mt-1 flex items-center justify-between gap-2 text-xs text-gray-400">
+                    <span>{order.paidAt || order.createdAt ? new Date(order.paidAt || order.createdAt).toLocaleDateString() : "-"}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleViewOrder(order.id)}
+                      disabled={processingAction === `order-${order.id}`}
+                      className="font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-60"
+                    >
+                      {processingAction === `order-${order.id}` ? "Loading..." : "View details"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {paymentOrders.length === 0 && payments.map((payment) => (
                 <div key={payment.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium text-gray-900">{payment.subscription?.saasPlan?.name || "Plan"}</span>
-                    <span className="font-semibold text-gray-900">${Number(payment.amount || 0).toFixed(2)}</span>
+                    <span className="font-semibold text-gray-900">{formatMoney(payment.amount, payment.currency)}</span>
                   </div>
                   <div className="mt-1 text-gray-500">{payment.method || "-"} • {payment.status || "-"}</div>
                   <div className="mt-1 text-xs text-gray-400">{payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "-"}</div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {selectedOrder && (
+            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-gray-900">Order details</p>
+                  <p className="mt-1 text-xs text-gray-600">{selectedOrder.providerOrderId || selectedOrder.id}</p>
+                </div>
+                <button type="button" onClick={() => setSelectedOrder(null)} className="font-semibold text-gray-500 hover:text-gray-900">Close</button>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-700">
+                <span>Status: <strong>{selectedOrder.status || "-"}</strong></span>
+                <span>Amount: <strong>{formatMoney(selectedOrder.amount, selectedOrder.currency)}</strong></span>
+                <span>Transactions: <strong>{selectedOrder.transactions?.length || 0}</strong></span>
+                <span>Refunds: <strong>{selectedOrder.refunds?.length || 0}</strong></span>
+              </div>
+              {selectedOrder.status === "CAPTURED" && (
+                <form onSubmit={handleRefund} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.5fr_auto]">
+                  <input
+                    type="number"
+                    min="0.01"
+                    max={Number(selectedOrder.amount || 0)}
+                    step="0.01"
+                    placeholder="Refund amount"
+                    value={refundForm.amount}
+                    onChange={(event) => setRefundForm((form) => ({ ...form, amount: event.target.value }))}
+                    className="rounded-md border border-gray-300 bg-white p-2 text-xs"
+                    required
+                  />
+                  <input
+                    placeholder="Reason (optional)"
+                    value={refundForm.reason}
+                    onChange={(event) => setRefundForm((form) => ({ ...form, reason: event.target.value }))}
+                    className="rounded-md border border-gray-300 bg-white p-2 text-xs"
+                  />
+                  <button type="submit" disabled={processingAction === "refund"} className="rounded-md bg-red-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">
+                    {processingAction === "refund" ? "Requesting..." : "Refund"}
+                  </button>
+                </form>
+              )}
             </div>
           )}
         </div>

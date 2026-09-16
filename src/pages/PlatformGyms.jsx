@@ -13,6 +13,7 @@ import {
 
 const initialForm = {
   gymName: "",
+  slug: "",
   ownerName: "",
   email: "",
   password: "",
@@ -24,6 +25,7 @@ function normaliseGym(gym) {
   return {
     id: gym.id || gym._id || gym.gymId || gym.email,
     gymName: gym.name || gym.gymName || gym.gym?.name || "-",
+    slug: gym.slug || gym.gym?.slug || "-",
     ownerName:
       gym.ownerName || owner?.name || gym.owner?.name || gym.owner || "-",
     email:
@@ -63,6 +65,11 @@ function AddGymModal({ isOpen, onClose, onCreate, onUpdate, editData, creating }
       return;
     }
 
+    if (!form.slug) {
+      toast.error("Please enter gym code");
+      return;
+    }
+
     if (!editData && (!form.ownerName || !form.email || !form.password)) {
       toast.error("Please fill all fields");
       return;
@@ -97,6 +104,12 @@ function AddGymModal({ isOpen, onClose, onCreate, onUpdate, editData, creating }
           placeholder="Gym name"
           value={form.gymName}
           onChange={(e) => updateField("gymName", e.target.value)}
+        />
+        <input
+          className="mb-3 w-full rounded border p-3"
+          placeholder="Slug, e.g. 123-gym"
+          value={form.slug}
+          onChange={(e) => updateField("slug", e.target.value)}
         />
         {!editData && (
           <>
@@ -195,9 +208,9 @@ export default function PlatformGyms() {
     try {
       setCreating(true);
       console.log("Updating gym with ID:", payload.id);
-      console.log("Payload:", { name: payload.gymName });
+      console.log("Payload:", { name: payload.gymName, slug: payload.slug });
       
-      const response = await updateGym(payload.id, { name: payload.gymName });
+      const response = await updateGym(payload.id, { name: payload.gymName, slug: payload.slug });
       console.log("Update response:", response);
       
       const updated = gyms.map((gym) => (gym.id === payload.id ? { ...gym, ...payload } : gym));
@@ -229,7 +242,7 @@ export default function PlatformGyms() {
   };
 
   const filteredGyms = gyms.filter((gym) =>
-    [gym.gymName, gym.ownerName, gym.email, gym.status]
+    [gym.gymName, gym.slug, gym.ownerName, gym.email, gym.status]
       .join(" ")
       .toLowerCase()
       .includes(search.toLowerCase())
@@ -273,6 +286,7 @@ export default function PlatformGyms() {
           <thead className="bg-gray-100">
             <tr>
               <th className="p-3">Gym Name</th>
+              <th className="p-3">Slug</th>
               <th className="p-3">QR Code</th>
               <th className="p-3">Owner</th>
               <th className="p-3">Email</th>
@@ -285,6 +299,7 @@ export default function PlatformGyms() {
             {filteredGyms.map((gym) => (
               <tr key={gym.id} className="border-t">
                 <td className="p-3 font-medium text-gray-950 text-sm">{gym.gymName}</td>
+                <td className="p-3 text-sm text-gray-700">{gym.slug}</td>
                 <td className="p-3">
                   {gym.gymId && gym.gymId !== "-" ? (
                     <div className="flex justify-center">
@@ -367,7 +382,7 @@ export default function PlatformGyms() {
 
             {filteredGyms.length === 0 && (
               <tr>
-                <td colSpan="7" className="p-6 text-center text-gray-500">
+                <td colSpan="8" className="p-6 text-center text-gray-500">
                   {loading ? "Loading gyms..." : "No gyms found"}
                 </td>
               </tr>

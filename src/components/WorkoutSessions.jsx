@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import {
   startWorkoutSession, getWorkoutSessionById, completeWorkoutSession, updateWorkoutSession, deleteWorkoutSession,
   getMySessions, getUserSessions, getWorkoutSets, logWorkoutSet, bulkLogSets, updateWorkoutSet, deleteWorkoutSet,
-  getWorkoutDayExercises, pauseSession, resumeSession, substituteSessionExercise, getSessionSwaps, getApiError
+  pauseSession, resumeSession, substituteSessionExercise, getSessionSwaps, getApiError
 } from "../services/api";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
@@ -91,23 +91,46 @@ export default function WorkoutSessions(props) {
   const [swapOriginalExerciseId, setSwapOriginalExerciseId] = useState("");
   const [swapReason, setSwapReason] = useState("");
   const [showSwapForm, setShowSwapForm] = useState(false);
+  const [completedExerciseIds, setCompletedExerciseIds] = useState(() => new Set());
+  const [restSeconds, setRestSeconds] = useState(0);
+  const [restRunning, setRestRunning] = useState(false);
 
   useEffect(() => {
-    if (activeSession?.startTime) {
-      const updateTimer = () => {
-        const start = new Date(activeSession.startTime).getTime();
-        setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
-      };
-      updateTimer();
-      timerRef.current = setInterval(updateTimer, 1000);
-    }
+    if (!activeSession?.startTime) return undefined;
+
+    const start = new Date(activeSession.startTime).getTime();
+    const isPaused = String(activeSession.status || "").toUpperCase() === "PAUSED";
+    const pauseTime = activeSession.pausedAt ? new Date(activeSession.pausedAt).getTime() : Date.now();
+    const totalPausedSeconds = Number(activeSession.totalPausedSeconds || activeSession.pausedDuration || 0);
+    const updateTimer = () => {
+      const end = isPaused ? pauseTime : Date.now();
+      setElapsedSeconds(Math.max(0, Math.floor((end - start) / 1000) - totalPausedSeconds));
+    };
+
+    updateTimer();
+    if (!isPaused) timerRef.current = setInterval(updateTimer, 1000);
+
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [activeSession?.startTime]);
+  }, [activeSession?.startTime, activeSession?.status, activeSession?.pausedAt, activeSession?.totalPausedSeconds, activeSession?.pausedDuration]);
+
+  useEffect(() => {
+    if (!restRunning || restSeconds <= 0) return undefined;
+    const timer = setInterval(() => {
+      setRestSeconds((seconds) => {
+        if (seconds <= 1) {
+          setRestRunning(false);
+          return 0;
+        }
+        return seconds - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [restRunning, restSeconds]);
 
   useEffect(() => {
     loadActiveSession();
@@ -132,10 +155,6 @@ export default function WorkoutSessions(props) {
 
       if (sessionData?.workoutDay?.exercises) {
         exercises = sessionData.workoutDay.exercises;
-      } else if (sessionData?.workoutDayId || sessionData?.workoutDay?.id) {
-        const dayId = sessionData?.workoutDayId || sessionData?.workoutDay?._id || sessionData?.workoutDay?.id;
-        const response = await getWorkoutDayExercises(dayId, user?.token);
-        exercises = Array.isArray(response) ? response : (response?.data || response?.exercises || response?.results || []);
       } else {
         const response = await getWorkoutSessionById(sessionId, user?.token);
         const sessionDetail = response?.data || response;
@@ -229,9 +248,15 @@ export default function WorkoutSessions(props) {
     if (!sessionId) return;
     setPausing(true);
     try {
-      await pauseSession(sessionId, user?.token);
+      const response = await pauseSession(sessionId, user?.token);
+      const pausedSession = response?.data || response;
       toast.success("Session paused");
-      await loadActiveSession();
+      setActiveSession((current) => current ? {
+        ...current,
+        ...(pausedSession && typeof pausedSession === "object" ? pausedSession : {}),
+        status: "PAUSED",
+        pausedAt: pausedSession?.pausedAt || current.pausedAt || new Date().toISOString(),
+      } : current);
     } catch (error) {
       toast.error(getApiError(error, "Unable to pause session"));
     } finally {
@@ -244,9 +269,14 @@ export default function WorkoutSessions(props) {
     if (!sessionId) return;
     setResuming(true);
     try {
-      await resumeSession(sessionId, user?.token);
+      const response = await resumeSession(sessionId, user?.token);
+      const resumedSession = response?.data || response;
       toast.success("Session resumed");
-      await loadActiveSession();
+      setActiveSession((current) => current ? {
+        ...current,
+        ...(resumedSession && typeof resumedSession === "object" ? resumedSession : {}),
+        status: "IN_PROGRESS",
+      } : current);
     } catch (error) {
       toast.error(getApiError(error, "Unable to resume session"));
     } finally {
@@ -325,6 +355,8 @@ export default function WorkoutSessions(props) {
       }, user?.token);
       toast.success("Set logged");
       setSetForm(emptySetForm());
+      setRestSeconds(90);
+      setRestRunning(true);
       loadSetLogs(selectedSessionId);
     } catch (error) {
       toast.error(getApiError(error, "Unable to log set"));
@@ -431,6 +463,26 @@ export default function WorkoutSessions(props) {
     setSessionPage(page);
   };
 
+  const activeExerciseList = sessionExercises.length
+    ? sessionExercises
+    : (activeSession?.workoutDay?.exercises || []);
+  const loggedExerciseIds = new Set((Array.isArray(setLogs) ? setLogs : []).map((item) => item.workoutExerciseId || item.workoutExercise?.id));
+  const currentExerciseIndex = Math.min(
+    activeExerciseList.findIndex((exercise) => !completedExerciseIds.has(idOf(exercise)) && !loggedExerciseIds.has(idOf(exercise))) >= 0
+      ? activeExerciseList.findIndex((exercise) => !completedExerciseIds.has(idOf(exercise)) && !loggedExerciseIds.has(idOf(exercise)))
+      : Math.max(activeExerciseList.length - 1, 0),
+    Math.max(activeExerciseList.length - 1, 0)
+  );
+  const currentExercise = activeExerciseList[currentExerciseIndex];
+  const currentExerciseId = idOf(currentExercise);
+  const currentExerciseLogs = (Array.isArray(setLogs) ? setLogs : []).filter(
+    (item) => String(item.workoutExerciseId || item.workoutExercise?.id || "") === String(currentExerciseId)
+  );
+  const previousBest = currentExercise?.previousBest || currentExercise?.personalBest || currentExerciseLogs
+    .filter((item) => item.weight !== null && item.weight !== undefined)
+    .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))[0];
+  const formatRest = (seconds) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+
   const pages = [];
   for (let i = 1; i <= sessionTotalPages; i++) {
     pages.push(i);
@@ -498,6 +550,58 @@ export default function WorkoutSessions(props) {
               </div>
             </form>
           )}
+          {role === "member" && currentExercise && (
+            <div className="border-t border-gray-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <button type="button" className="text-sm font-semibold text-gray-500 hover:text-gray-900" onClick={() => setSelectedSessionId(null)}>
+                    &larr; {activeSession?.workoutDay?.title || "Workout"}
+                  </button>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Workout Timer</p>
+                  <p className="text-3xl font-bold tabular-nums text-gray-950">{formatElapsed(elapsedSeconds)}</p>
+                </div>
+                <div className="text-right text-sm text-gray-600">
+                  <p>Exercise <strong>{currentExerciseIndex + 1} of {activeExerciseList.length}</strong></p>
+                  <p className="mt-1">{activeSession?.workoutDay?.title || activeSession?.workoutPlan?.name || "Active workout"}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 rounded-lg border border-gray-200 bg-gray-50 p-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                <div>
+                  <h3 className="text-xl font-bold uppercase text-gray-950">{nameOf(currentExercise.exercise || currentExercise)}</h3>
+                  <p className="mt-1 text-sm text-gray-500">{currentExercise.exercise?.muscleGroup || currentExercise.muscleGroup || "-"}</p>
+                  <div className="mt-4 flex flex-wrap gap-6 text-sm">
+                    <div><p className="text-xs font-semibold uppercase text-gray-500">Target</p><p className="mt-1 font-semibold text-gray-900">{currentExercise.sets || "-"} x {currentExercise.reps || "-"}</p></div>
+                    <div><p className="text-xs font-semibold uppercase text-gray-500">Previous Best</p><p className="mt-1 font-semibold text-gray-900">{previousBest ? `${previousBest.weight ?? "-"} kg x ${previousBest.actualReps ?? previousBest.reps ?? "-"}` : "-"}</p></div>
+                    {currentExercise.restTime && <div><p className="text-xs font-semibold uppercase text-gray-500">Rest</p><p className="mt-1 font-semibold text-gray-900">{currentExercise.restTime}s</p></div>}
+                  </div>
+                </div>
+                <div className="min-w-40 rounded-md border border-blue-100 bg-white p-3 text-center">
+                  <p className="text-xs font-semibold uppercase text-gray-500">Rest Timer</p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-blue-700">{formatRest(restSeconds)}</p>
+                  <div className="mt-2 flex justify-center gap-2">
+                    <button type="button" className={buttonClass} onClick={() => { setRestSeconds(90); setRestRunning(true); }}>
+                      {restRunning ? "Reset" : "Start"}
+                    </button>
+                    {restRunning && <button type="button" className={buttonClass} onClick={() => setRestRunning(false)}>Pause</button>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500"><tr><th className="px-3 py-2">Set</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Kg</th><th className="px-3 py-2">Reps</th><th className="px-3 py-2">RPE</th></tr></thead>
+                  <tbody>
+                    {currentExerciseLogs.map((item, index) => <tr key={idOf(item) || index} className="border-t border-gray-100"><td className="px-3 py-2">{item.setNumber || index + 1}</td><td className="px-3 py-2">{titleCase(item.setType || "WORKING")}</td><td className="px-3 py-2">{item.weight ?? "-"}</td><td className="px-3 py-2">{item.actualReps ?? item.reps ?? "-"}</td><td className="px-3 py-2">{item.rpe ?? "-"}</td></tr>)}
+                    {Array.from({ length: Math.max(0, Number(currentExercise.sets || 0) - currentExerciseLogs.length) }).map((_, index) => <tr key={`pending-${index}`} className="border-t border-gray-100 text-gray-400"><td className="px-3 py-2">{currentExerciseLogs.length + index + 1}</td><td className="px-3 py-2">Working</td><td className="px-3 py-2">-</td><td className="px-3 py-2">-</td><td className="px-3 py-2">-</td></tr>)}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" className="mt-3 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" onClick={() => setCompletedExerciseIds((current) => new Set([...current, currentExerciseId]))}>
+                {completedExerciseIds.has(currentExerciseId) ? "Exercise Completed" : "Complete Exercise"}
+              </button>
+            </div>
+          )}
         </Card>
       ) : canManage && (
         <Card className="p-4">
@@ -532,17 +636,44 @@ export default function WorkoutSessions(props) {
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 border-b border-gray-200 p-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-gray-200 px-3">
+          {role !== "member" && <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-gray-200 px-3">
             <Search size={17} className="text-gray-400" />
             <input className="h-10 min-w-0 flex-1 text-sm outline-none" value={sessionMemberSearch} onChange={(e) => handleMemberSearchChange(e.target.value)} placeholder="Search by member name or email..." />
-          </div>
+          </div>}
           <select className={`${inputClass} w-44`} value={sessionStatusFilter} onChange={(e) => handleStatusFilterChange(e.target.value)}>
             <option value="">All Statuses</option>
-            {sessionStatuses.map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}
+            {(role === "member" ? ["COMPLETED", "CANCELLED"] : sessionStatuses).map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}
           </select>
         </div>
 
-        <div className="overflow-x-auto">
+        {role === "member" ? (
+          <div className="grid gap-3 p-4 md:grid-cols-2">
+            {sessions.map((session) => {
+              const sessionId = idOf(session);
+              const startTime = session.startTime || session.start_date || session.startedAt;
+              const endTime = session.endTime || session.end_date || session.endedAt || session.completedAt;
+              const title = session.workoutDay?.title || session.workoutPlan?.name || session.workoutPlan?.title || "Workout session";
+              return (
+                <button key={sessionId} type="button" onClick={() => handleSelectSession(sessionId)} className="rounded-lg border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-300 hover:bg-blue-50/30">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-950">{title}</h3>
+                      <p className="mt-1 text-sm text-gray-500">{startTime ? displayDate(startTime) : "-"}</p>
+                    </div>
+                    <span className={statusBadge(session.status)}>{titleCase(session.status || "SCHEDULED")}</span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                    <div><p className="text-xs text-gray-500">Duration</p><p className="mt-1 font-semibold text-gray-900">{computeDuration(startTime, endTime)}</p></div>
+                    <div><p className="text-xs text-gray-500">Volume</p><p className="mt-1 font-semibold text-gray-900">{session.totalVolume ?? session.volume ?? "-"}</p></div>
+                    <div><p className="text-xs text-gray-500">Calories</p><p className="mt-1 font-semibold text-gray-900">{session.calories ?? "-"}</p></div>
+                  </div>
+                  <p className="mt-4 text-xs font-semibold text-blue-700">View session details</p>
+                </button>
+              );
+            })}
+            {!sessions.length && <div className="p-8 text-center text-sm text-gray-500 md:col-span-2">{sessionsLoading ? "Loading sessions..." : "No sessions yet. Start your first workout to see it here."}</div>}
+          </div>
+        ) : <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase text-gray-500">
@@ -590,7 +721,7 @@ export default function WorkoutSessions(props) {
               {sessionsLoading ? "Loading sessions..." : "No sessions yet. Start your first workout to see it here."}
             </div>
           )}
-        </div>
+        </div>}
 
         {sessionTotalPages > 1 && (
           <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">

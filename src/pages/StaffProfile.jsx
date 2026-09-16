@@ -25,13 +25,18 @@ const formatDateTimeValue = (value) => {
   return dateValue ? `${dateValue}T00:00:00.000Z` : "";
 };
 
+const normaliseGender = (value) => {
+  const gender = String(value || "").trim().toUpperCase();
+  return ["MALE", "FEMALE", "OTHER"].includes(gender) ? gender : "";
+};
+
 function normaliseUser(user = {}) {
   return {
     id: user.id || user._id || user.userId || user.email || "",
     name: user.name || user.fullName || user.ownerName || "",
     email: user.email || user.ownerEmail || "",
     phoneNumber: user.phoneNumber || "",
-    gender: user.gender || "",
+    gender: normaliseGender(user.gender),
     dateOfBirth: formatDateValue(user.dateOfBirth || user.dob || ""),
     addressLine1: user.addressLine1 || "",
     addressLine2: user.addressLine2 || "",
@@ -205,9 +210,9 @@ export default function StaffProfile() {
               className="w-full rounded border border-gray-300 p-3 text-sm outline-none transition focus:border-blue-500"
             >
               <option value="">Select gender</option>
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-              <option value="Other">Other</option>
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other</option>
             </select>
           </div>
 

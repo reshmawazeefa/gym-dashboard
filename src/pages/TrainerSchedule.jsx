@@ -8,6 +8,7 @@ import {
   Clock3,
   Edit3,
   ListChecks,
+  MoreVertical,
   Plus,
   RefreshCw,
   Search,
@@ -165,13 +166,30 @@ function getBookingDateValue(item = {}) {
 }
 
 function toDateInputValue(value) {
+  const dateString = String(value || "");
+  const dateOnlyMatch = dateString.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnlyMatch) return dateOnlyMatch[1];
+
   const parsedDate = value ? new Date(value) : new Date();
   const date = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function sameBookingDate(firstValue, secondValue) {
+  return toDateInputValue(firstValue) === toDateInputValue(secondValue);
+}
+
+function readBookingSlotOverrides() {
+  try {
+    const stored = JSON.parse(localStorage.getItem("classBookingSlotOverrides") || "{}");
+    return stored && typeof stored === "object" ? stored : {};
+  } catch {
+    return {};
+  }
 }
 
 function toBookingDateIso(value, time = "") {
@@ -322,6 +340,7 @@ function normalizeBooking(item = {}) {
   const classItem = item.class || item.gymClass || item.classDetails || {};
   const schedule = item.schedule || item.classSchedule || item.session || {};
   const slot = item.slot || item.classSlot || {};
+  const user = item.user || item.member || {};
   const attendance = item.attendance || item.attendanceRecord || {};
 
   const attendanceStatus = String(
@@ -355,7 +374,8 @@ function normalizeBooking(item = {}) {
     bookingStatus: item.bookingStatus || item.status || "Booked",
     attendanceStatus,
     attendanceMarked,
-    memberName: item.memberName || item.member?.name || item.user?.name || "",
+    memberName: item.memberName || user.name || user.fullName || "",
+    memberEmail: item.memberEmail || user.email || "",
     dayOfWeek: schedule.dayOfWeek || slot.dayOfWeek || "",
     raw: item,
   };
@@ -445,6 +465,9 @@ export default function TrainerSchedule() {
         bookingsResponse.status === "fulfilled"
           ? unwrapMaybeList(bookingsResponse.value, ["bookings", "classBookings"]).map(normalizeBooking)
           : [];
+      let bookingsForDisplay = allBookings;
+      let slotsById = {};
+      const storedSlotOverrides = readBookingSlotOverrides();
       const availabilityBookings = queryDate
         ? allBookings.filter((booking) => {
             const bookingDate = String(
@@ -521,12 +544,29 @@ export default function TrainerSchedule() {
         });
 
         detail.schedules = schedulesWithSlots;
+        const currentSlots = [
+          ...detail.schedules.flatMap((schedule) => schedule.slots || []),
+          ...detail.slots,
+        ];
+        slotsById = currentSlots.reduce((slots, slot) => {
+          if (slot.id) slots[slot.id] = slot;
+          return slots;
+        }, {});
+        bookingsForDisplay = allBookings.map((booking) => {
+          const currentSlot = slotsById[booking.slotId];
+          return currentSlot
+            ? {
+                ...booking,
+                startTime: currentSlot.startTime,
+                endTime: currentSlot.endTime,
+                dayOfWeek: currentSlot.dayOfWeek || booking.dayOfWeek,
+              }
+            : booking;
+        });
         selectedClassIdRef.current = detail.id || classId;
         setSelectedClass(detail);
         const nextSelectedSchedule =
-          selectedSchedule && detail.schedules.some((schedule) => schedule.id === selectedSchedule.id)
-            ? selectedSchedule
-            : detail.schedules[0] || null;
+          detail.schedules.find((schedule) => schedule.id === selectedSchedule?.id) || detail.schedules[0] || null;
         setSelectedSchedule(nextSelectedSchedule);
         const classSlots = detail.type === "RECURRING" ? nextSelectedSchedule?.slots || [] : detail.slots;
         setSelectedSlot((current) =>
@@ -544,12 +584,52 @@ export default function TrainerSchedule() {
         }
       }
 
-      setClassBookings(allBookings);
-      setClassAttendance(
-        attendanceResponse.status === "fulfilled"
-          ? unwrapMaybeList(attendanceResponse.value, ["attendance", "records", "participants"]).map(normalizeAttendance)
-          : []
+      const slotChangeResults = await Promise.allSettled(
+        allBookings.map((booking) => {
+          const bookingId = booking.id || booking._id || booking.bookingId;
+          return bookingId ? getBookingSlotChanges(bookingId, authToken) : Promise.resolve([]);
+        })
       );
+      const effectiveSlotChanges = {};
+      allBookings.forEach((booking, index) => {
+        const response = slotChangeResults[index];
+        if (!booking.id || response?.status !== "fulfilled") return;
+        const changes = unwrapMaybeList(response.value, ["slotChanges", "changes"]);
+        const applicableChanges = changes
+          .filter((change) => change.isPermanent || sameBookingDate(change.date || change.bookingDate, booking.date))
+          .sort((first, second) => new Date(second.createdAt || second.updatedAt || 0) - new Date(first.createdAt || first.updatedAt || 0));
+        const latestChange = applicableChanges[0];
+        const effectiveSlot = latestChange && slotsById[latestChange.newSlotId];
+        if (effectiveSlot) effectiveSlotChanges[booking.id] = effectiveSlot;
+      });
+      bookingsForDisplay = bookingsForDisplay.map((booking) => {
+        const bookingId = booking.id || booking._id || booking.bookingId;
+        const overrideKey = `${classId}:${bookingId}:${toDateInputValue(booking.date)}`;
+        const effectiveSlot = bookingSlotOverridesRef.current[overrideKey] || storedSlotOverrides[overrideKey] || effectiveSlotChanges[bookingId];
+        return effectiveSlot
+          ? { ...booking, slotId: effectiveSlot.id, startTime: effectiveSlot.startTime, endTime: effectiveSlot.endTime, dayOfWeek: effectiveSlot.dayOfWeek || booking.dayOfWeek }
+          : booking;
+      });
+
+      const attendanceRecords = attendanceResponse.status === "fulfilled"
+        ? unwrapMaybeList(attendanceResponse.value, ["attendance", "records", "participants"]).map(normalizeAttendance)
+        : [];
+      const latestAttendanceByBooking = attendanceRecords.reduce((records, attendance) => {
+        if (!attendance.bookingId) return records;
+        const current = records[attendance.bookingId];
+        const currentTime = current ? new Date(current.attendanceDate || current.timestamp || 0).getTime() : -1;
+        const nextTime = new Date(attendance.attendanceDate || attendance.timestamp || 0).getTime();
+        if (!current || nextTime >= currentTime) records[attendance.bookingId] = attendance;
+        return records;
+      }, {});
+      setClassBookings(bookingsForDisplay.map((booking) => {
+        const bookingId = booking.id || booking._id || booking.bookingId;
+        const latestAttendance = latestAttendanceByBooking[bookingId];
+        return latestAttendance
+          ? { ...booking, attendanceStatus: latestAttendance.status, attendanceMarked: !isAttendancePending(latestAttendance.status) }
+          : booking;
+      }));
+      setClassAttendance(attendanceRecords);
     } catch (error) {
       toast.error(getApiError(error, "Could not load class details"));
     }
@@ -797,6 +877,16 @@ export default function TrainerSchedule() {
   const [assignBookingDate, setAssignBookingDate] = useState(toDateInputValue());
   const [slotAttendanceRecords, setSlotAttendanceRecords] = useState([]);
   const [slotAttendanceSlotId, setSlotAttendanceSlotId] = useState(null);
+  const [bookingDateFilter, setBookingDateFilter] = useState("");
+  const [bookingSlotFilter, setBookingSlotFilter] = useState("");
+  const [bookingStatusFilter, setBookingStatusFilter] = useState("");
+  const [bookingSearch, setBookingSearch] = useState("");
+  const [openBookingActions, setOpenBookingActions] = useState(null);
+  const [changeSlotBooking, setChangeSlotBooking] = useState(null);
+  const [changeSlotTarget, setChangeSlotTarget] = useState("");
+  const [changeSlotType, setChangeSlotType] = useState("temporary");
+  const [slotHistoryBooking, setSlotHistoryBooking] = useState(null);
+  const bookingSlotOverridesRef = useRef({});
 
   const loadSlotMembers = async (slotId) => {
     if (!slotId) return;
@@ -881,7 +971,7 @@ export default function TrainerSchedule() {
     }
   };
 
-  const handleSlotChange = async (bookingId, newSlotId, isPermanent = false) => {
+  const handleSlotChange = async (bookingId, newSlotId, isPermanent = false, bookingDate) => {
     if (!bookingId || !newSlotId) {
       toast.error("Please select a slot to change to");
       return;
@@ -889,14 +979,41 @@ export default function TrainerSchedule() {
 
     try {
       setSaving(true);
+      const requestedSlot = [...allRecurringSlots, ...oneTimeSlots].find((slot) => slot.id === newSlotId);
+      const sourceBooking = classBookings.find((booking) => (booking.id || booking._id || booking.bookingId) === bookingId);
+      const normalizedBookingDate = toDateInputValue(bookingDate || sourceBooking?.date || changeSlotBooking?.date || selectedDate);
+      let changeResponse = null;
       if (isPermanent) {
-        await changeSlotPermanent(bookingId, { newSlotId }, authToken);
+        changeResponse = await changeSlotPermanent(bookingId, { newSlotId }, authToken);
         toast.success("Permanent slot change applied");
       } else {
-        await changeSlot(bookingId, { newSlotId, date: toBookingDateIso(selectedDate, "00:00") }, authToken);
+        changeResponse = await changeSlot(bookingId, { newSlotId, date: toBookingDateIso(normalizedBookingDate, "00:00") }, authToken);
         toast.success("Temporary slot change applied");
       }
-      await loadModuleData();
+      const changeData = unwrapObject(changeResponse);
+      const responseSlotId = changeData.newSlotId || changeData.newSlot?.id || newSlotId;
+      const changedSlot = requestedSlot || [...allRecurringSlots, ...oneTimeSlots].find((slot) => slot.id === responseSlotId);
+      if (changedSlot) {
+        const overrideKey = `${selectedClassIdRef.current || selectedClass?.id}:${bookingId}:${normalizedBookingDate}`;
+        bookingSlotOverridesRef.current[overrideKey] = changedSlot;
+        localStorage.setItem("classBookingSlotOverrides", JSON.stringify({
+          ...readBookingSlotOverrides(),
+          [overrideKey]: changedSlot,
+        }));
+        setClassBookings((currentBookings) => currentBookings.map((booking) => {
+          const currentBookingId = booking.id || booking._id || booking.bookingId;
+          return currentBookingId === bookingId
+            ? {
+                ...booking,
+                slotId: changedSlot.id,
+                startTime: changedSlot.startTime,
+                endTime: changedSlot.endTime,
+                dayOfWeek: changedSlot.dayOfWeek || booking.dayOfWeek,
+              }
+            : booking;
+        }));
+      }
+      if (selectedClassIdRef.current) await loadClassDetails(selectedClassIdRef.current);
     } catch (error) {
       toast.error(getApiError(error, "Could not change slot"));
     } finally {
@@ -1006,6 +1123,12 @@ export default function TrainerSchedule() {
       setAttendanceModalEdit(null);
       setAttendanceModalOpen(false);
       if (selectedClassIdRef.current) await loadClassDetails(selectedClassIdRef.current);
+      setClassBookings((currentBookings) => currentBookings.map((booking) => {
+        const bookingId = booking.id || booking._id || booking.bookingId;
+        return bookingId === payload.bookingId
+          ? { ...booking, attendanceStatus: payload.status, attendanceMarked: payload.status !== "PENDING" }
+          : booking;
+      }));
       await loadModuleData();
     } catch (error) {
       toast.error(getApiError(error, "Could not mark attendance"));
@@ -1080,6 +1203,25 @@ export default function TrainerSchedule() {
   const classInitial = (selectedClass?.title || "C").trim().charAt(0).toUpperCase();
   const recentBookings = classBookings.slice(0, 4);
   const hasOwnerWorkspace = true; // Use the owner-style class UI for all portals, with member-specific actions hidden by permissions.
+  const managedBookings = isMember ? myBookings.filter((booking) => booking.classId === selectedClass?.id) : classBookings;
+  const bookingDatesForFilter = [...new Set(managedBookings.map((booking) => toDateInputValue(getBookingDateValue(booking))).filter(Boolean))];
+  const filteredBookingRows = managedBookings.filter((booking) => {
+    const bookingStatus = String(booking.bookingStatus || "BOOKED").toLowerCase();
+    const attendanceStatus = String(booking.attendanceStatus || "PENDING").toLowerCase();
+    const memberName = String(booking.memberName || booking.user?.name || booking.classTitle || "").toLowerCase();
+    const email = String(booking.memberEmail || booking.user?.email || "").toLowerCase();
+    const dateMatches = !bookingDateFilter || toDateInputValue(getBookingDateValue(booking)) === bookingDateFilter;
+    const slotMatches = !bookingSlotFilter || booking.slotId === bookingSlotFilter;
+    const statusMatches = !bookingStatusFilter || bookingStatus === bookingStatusFilter || attendanceStatus === bookingStatusFilter;
+    const searchMatches = !bookingSearch || `${memberName} ${email}`.includes(bookingSearch.toLowerCase());
+    return dateMatches && slotMatches && statusMatches && searchMatches;
+  });
+  const bookingSummary = {
+    total: managedBookings.length,
+    booked: managedBookings.filter((booking) => !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase())).length,
+    pending: managedBookings.filter((booking) => !booking.attendanceStatus || String(booking.attendanceStatus).toLowerCase() === "pending").length,
+    cancelled: managedBookings.filter((booking) => ["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase())).length,
+  };
 
   if (hasOwnerWorkspace) {
     return (
@@ -1563,6 +1705,125 @@ export default function TrainerSchedule() {
                 )}
 
                 {activeTab === "bookings" && (
+                  <div className="space-y-4 p-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-950">Bookings</h3>
+                      <p className="mt-1 text-xs text-gray-500">Manage members enrolled in this class</p>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        ["Total Bookings", bookingSummary.total, Users, "border-blue-100 bg-blue-50/40 text-blue-700"],
+                        ["Booked", bookingSummary.booked, CheckCircle2, "border-emerald-100 bg-emerald-50/40 text-emerald-700"],
+                        ["Pending Attendance", bookingSummary.pending, Clock3, "border-amber-100 bg-amber-50/40 text-amber-700"],
+                        ["Cancelled", bookingSummary.cancelled, XCircle, "border-red-100 bg-red-50/40 text-red-700"],
+                      ].map(([label, value, metricIcon, tone]) => {
+                        const MetricIcon = metricIcon;
+                        return <div key={label} className={`flex items-center gap-3 rounded-lg border p-4 ${tone}`}>
+                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white"><MetricIcon size={18} /></span>
+                          <div><p className="text-xl font-bold text-gray-950">{value}</p><p className="text-[11px] text-gray-500">{label}</p></div>
+                        </div>;
+                      })}
+                    </div>
+
+                    <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-3">
+                      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-[10rem_12rem_10rem_minmax(12rem,1fr)_auto] 2xl:items-end">
+                        <label className="grid min-w-0 gap-1 text-[11px] font-semibold text-gray-500">Date
+                          <select value={bookingDateFilter} onChange={(event) => setBookingDateFilter(event.target.value)} className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-normal text-gray-900">
+                            <option value="">All dates</option>
+                            {bookingDatesForFilter.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}
+                          </select>
+                        </label>
+                        <label className="grid min-w-0 gap-1 text-[11px] font-semibold text-gray-500">Slot
+                          <select value={bookingSlotFilter} onChange={(event) => setBookingSlotFilter(event.target.value)} className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-normal text-gray-900">
+                            <option value="">All slots</option>
+                            {visibleSlots.map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}
+                          </select>
+                        </label>
+                        <label className="grid min-w-0 gap-1 text-[11px] font-semibold text-gray-500">Status
+                          <select value={bookingStatusFilter} onChange={(event) => setBookingStatusFilter(event.target.value)} className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-normal text-gray-900">
+                            <option value="">All status</option><option value="booked">Booked</option><option value="pending">Pending</option><option value="present">Present</option><option value="late">Late</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option>
+                          </select>
+                        </label>
+                        <label className="flex h-10 min-w-0 items-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-500">
+                          <Search size={16} /><input value={bookingSearch} onChange={(event) => setBookingSearch(event.target.value)} placeholder="Search member..." className="min-w-0 flex-1 bg-transparent outline-none" />
+                        </label>
+                        {!isMember && <button type="button" onClick={() => {
+                          const defaultSlot = visibleSlots.find((slot) => slot.id === (bookingSlotFilter || selectedSlot?.id)) || visibleSlots[0];
+                          const nextDate = bookingDateFilter || selectedDate || toDateInputValue();
+                          setAssignSlotId(defaultSlot?.id || ""); setAssignBookingDate(nextDate); setAvailableMembers([]); setShowAssignPanel(true);
+                          if (defaultSlot?.id) void loadAvailableMembers(defaultSlot.id, nextDate);
+                        }} className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 xl:w-auto"><Plus size={16} />Assign Member</button>}
+                      </div>
+                    </div>
+
+                    <div className="overflow-visible rounded-lg border border-gray-200 bg-white">
+                      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3"><h4 className="text-sm font-semibold text-gray-950">Booked Members ({filteredBookingRows.length})</h4><span className="text-xs text-gray-500">{isRecurringClass ? formatDate(bookingDateFilter) : "Class bookings"}</span></div>
+                      <div className="hidden overflow-x-auto md:block">
+                        <table className="w-full min-w-[760px] text-left text-xs">
+                          <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3 font-semibold">Member</th><th className="px-4 py-3 font-semibold">Slot</th><th className="px-4 py-3 font-semibold">Date</th><th className="px-4 py-3 font-semibold">Booking Status</th><th className="px-4 py-3 font-semibold">Attendance</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {filteredBookingRows.map((booking) => {
+                              const bookingKey = booking.id || booking._id || booking.bookingId || `${booking.memberName}-${booking.date}`;
+                              const memberEmail = booking.memberEmail || booking.raw?.member?.email || booking.raw?.user?.email || "";
+                              const isCancelled = ["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase());
+                              return <tr key={bookingKey} className="hover:bg-blue-50/30">
+                                <td className="px-4 py-3"><div className="flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[11px] font-bold text-blue-700">{(booking.memberName || "M").charAt(0).toUpperCase()}</span><div><p className="font-semibold text-gray-900">{booking.memberName || booking.classTitle || "Member"}</p>{memberEmail && <p className="mt-0.5 text-[11px] text-gray-500">{memberEmail}</p>}</div></div></td>
+                                <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</td>
+                                <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatDate(booking.date)}</td>
+                                <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus || "BOOKED")}</span></td>
+                                <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.attendanceStatus || "PENDING")}`}>{titleCase(booking.attendanceStatus || "PENDING")}</span></td>
+                                <td className="relative px-4 py-3 text-right"><button type="button" onClick={() => setOpenBookingActions(openBookingActions === bookingKey ? null : bookingKey)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-900" aria-label={`Actions for ${booking.memberName || "booking"}`}><MoreVertical size={17} /></button>
+                                  {openBookingActions === bookingKey && <div className="absolute right-4 top-11 z-20 w-48 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-xl">
+                                    {!isMember && canManageClasses && <button type="button" onClick={() => { setAttendanceModalEdit({ bookingId: bookingKey, status: booking.attendanceStatus || "PRESENT" }); setAttendanceModalOpen(true); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><ClipboardCheck size={14} />Mark Attendance</button>}
+                                    {!isMember && booking.slotId && <button type="button" onClick={() => { setChangeSlotBooking(booking); setChangeSlotTarget(""); setChangeSlotType("temporary"); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><RefreshCw size={14} />Change Slot</button>}
+                                    {!isMember && booking.slotId && <button type="button" onClick={async () => { setSlotHistoryBooking(booking); setSlotChanges([]); setOpenBookingActions(null); await loadBookingSlotChanges(bookingKey); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><CalendarClock size={14} />View Slot History</button>}
+                                    {!isCancelled && <button type="button" onClick={() => { void handleCancelBooking(booking); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-red-600 hover:bg-red-50"><XCircle size={14} />Cancel Booking</button>}
+                                  </div>}
+                                </td>
+                              </tr>;
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="divide-y divide-gray-100 md:hidden">
+                        {filteredBookingRows.map((booking) => {
+                          const bookingKey = booking.id || booking._id || booking.bookingId || `${booking.memberName}-${booking.date}`;
+                          const memberEmail = booking.memberEmail || booking.raw?.member?.email || booking.raw?.user?.email || "";
+                          const isCancelled = ["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase());
+                          return <div key={bookingKey} className="relative p-4">
+                            <div className="flex items-start gap-3 pr-8">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(booking.memberName || "M").charAt(0).toUpperCase()}</span>
+                              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-gray-900">{booking.memberName || booking.classTitle || "Member"}</p>{memberEmail && <p className="mt-0.5 truncate text-xs text-gray-500">{memberEmail}</p>}</div>
+                              <button type="button" onClick={() => setOpenBookingActions(openBookingActions === bookingKey ? null : bookingKey)} className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100" aria-label={`Actions for ${booking.memberName || "booking"}`}><MoreVertical size={17} /></button>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                              <div><p className="text-gray-500">Slot</p><p className="mt-1 font-medium text-gray-800">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</p></div>
+                              <div><p className="text-gray-500">Date</p><p className="mt-1 font-medium text-gray-800">{formatDate(booking.date)}</p></div>
+                              <div><p className="text-gray-500">Booking</p><span className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus || "BOOKED")}</span></div>
+                              <div><p className="text-gray-500">Attendance</p><span className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.attendanceStatus || "PENDING")}`}>{titleCase(booking.attendanceStatus || "PENDING")}</span></div>
+                            </div>
+                            {openBookingActions === bookingKey && <div className="absolute right-3 top-12 z-20 w-48 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-xl">
+                              {!isMember && canManageClasses && <button type="button" onClick={() => { setAttendanceModalEdit({ bookingId: bookingKey, status: booking.attendanceStatus || "PRESENT" }); setAttendanceModalOpen(true); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><ClipboardCheck size={14} />Mark Attendance</button>}
+                              {!isMember && booking.slotId && <button type="button" onClick={() => { setChangeSlotBooking(booking); setChangeSlotTarget(""); setChangeSlotType("temporary"); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><RefreshCw size={14} />Change Slot</button>}
+                              {!isMember && booking.slotId && <button type="button" onClick={async () => { setSlotHistoryBooking(booking); setSlotChanges([]); setOpenBookingActions(null); await loadBookingSlotChanges(bookingKey); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><CalendarClock size={14} />View Slot History</button>}
+                              {!isCancelled && <button type="button" onClick={() => { void handleCancelBooking(booking); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-red-600 hover:bg-red-50"><XCircle size={14} />Cancel Booking</button>}
+                            </div>}
+                          </div>;
+                        })}
+                      </div>
+                      {!filteredBookingRows.length && <p className="border-t border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No bookings match these filters.</p>}
+                    </div>
+
+                    {showAssignPanel && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4" onMouseDown={(event) => event.target === event.currentTarget && setShowAssignPanel(false)}><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Assign Member</h3><p className="mt-1 text-xs text-gray-500">Only members available for this slot and date are shown.</p></div><button type="button" onClick={() => setShowAssignPanel(false)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 grid gap-3"><label className="grid gap-1 text-xs font-semibold text-gray-600">Date<input type="date" value={assignBookingDate} onChange={(event) => setAssignBookingDate(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal" /></label><label className="grid gap-1 text-xs font-semibold text-gray-600">Time Slot<select value={assignSlotId} onChange={(event) => { setAssignSlotId(event.target.value); setAvailableMembers([]); }} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select slot</option>{visibleSlots.map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><button type="button" onClick={() => void loadAvailableMembers(assignSlotId, assignBookingDate)} disabled={!assignSlotId || saving} className="h-10 rounded-md border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">Find Available Members</button></div><div className="mt-4 max-h-64 space-y-2 overflow-y-auto">{availableMembers.map((member) => <div key={member.id || member.userId} className="flex items-center justify-between rounded-md border border-gray-200 p-3"><div><p className="text-sm font-semibold text-gray-900">{member.name || member.fullName}</p><p className="text-xs text-gray-500">{member.email}</p></div><button type="button" onClick={() => void handleAssignMember(member.id || member.userId)} disabled={saving} className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Assign</button></div>)}{assignSlotId && !availableMembers.length && <p className="py-5 text-center text-xs text-gray-500">Find available members for this slot.</p>}</div></div></div>}
+
+                    {changeSlotBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Change Slot</h3><p className="mt-1 text-xs text-gray-500">{changeSlotBooking.memberName || "Member"}</p></div><button type="button" onClick={() => setChangeSlotBooking(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 space-y-4"><div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">Current slot: <span className="font-semibold text-gray-900">{formatTime(changeSlotBooking.startTime)} - {formatTime(changeSlotBooking.endTime)}</span></div><label className="grid gap-1 text-xs font-semibold text-gray-600">Change to<select value={changeSlotTarget} onChange={(event) => setChangeSlotTarget(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select new slot</option>{visibleSlots.filter((slot) => slot.id && slot.id !== changeSlotBooking.slotId).map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><div className="space-y-2"><p className="text-xs font-semibold text-gray-600">Change type</p><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "temporary"} onChange={() => setChangeSlotType("temporary")} /> <span><strong>This date only</strong><span className="block text-gray-500">Temporary change</span></span></label><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "permanent"} onChange={() => setChangeSlotType("permanent")} /> <span><strong>Permanently change slot</strong><span className="block text-gray-500">Future booking slot</span></span></label></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-md border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Cancel</button><button type="button" disabled={!changeSlotTarget || saving} onClick={async () => { await handleSlotChange(changeSlotBooking.id || changeSlotBooking.bookingId, changeSlotTarget, changeSlotType === "permanent"); setChangeSlotBooking(null); }} className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Confirm Change</button></div></div></div>}
+                    {changeSlotBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Change Slot</h3><p className="mt-1 text-xs text-gray-500">{changeSlotBooking.memberName || "Member"}</p></div><button type="button" onClick={() => setChangeSlotBooking(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 space-y-4"><div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">Current slot: <span className="font-semibold text-gray-900">{formatTime(changeSlotBooking.startTime)} - {formatTime(changeSlotBooking.endTime)}</span></div><label className="grid gap-1 text-xs font-semibold text-gray-600">Change to<select value={changeSlotTarget} onChange={(event) => setChangeSlotTarget(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select new slot</option>{visibleSlots.filter((slot) => slot.id && slot.id !== changeSlotBooking.slotId).map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><div className="space-y-2"><p className="text-xs font-semibold text-gray-600">Change type</p><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "temporary"} onChange={() => setChangeSlotType("temporary")} /> <span><strong>This date only</strong><span className="block text-gray-500">Temporary change</span></span></label><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "permanent"} onChange={() => setChangeSlotType("permanent")} /> <span><strong>Permanently change slot</strong><span className="block text-gray-500">Future booking slot</span></span></label></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-md border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Cancel</button><button type="button" disabled={!changeSlotTarget || saving} onClick={async () => { await handleSlotChange(changeSlotBooking.id || changeSlotBooking.bookingId, changeSlotTarget, changeSlotType === "permanent"); setChangeSlotBooking(null); }} className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Confirm Change</button></div></div></div>}
+                    {slotHistoryBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Slot Change History</h3><p className="mt-1 text-xs text-gray-500">{slotHistoryBooking.memberName || "Member"} · {formatDate(slotHistoryBooking.date)}</p></div><button type="button" onClick={() => { setSlotHistoryBooking(null); setSlotChanges([]); }} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 max-h-80 space-y-2 overflow-y-auto">{slotChanges.length ? slotChanges.map((change) => <div key={change.id || `${change.bookingId}-${change.createdAt}`} className="rounded-md border border-gray-200 p-3 text-sm"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-900">{change.isPermanent ? "Permanent" : "Temporary"} slot change</p>{change.createdAt && <span className="text-xs text-gray-500">{formatDate(change.createdAt)}</span>}</div><p className="mt-2 text-xs text-gray-600">{formatSlotRange(change.oldSlot || change.previousSlot)} <span className="mx-1">→</span> {formatSlotRange(change.newSlot || change.nextSlot)}</p>{change.date && <p className="mt-1 text-xs text-gray-500">Booking date: {formatDate(change.date)}</p>}</div>) : <p className="py-8 text-center text-sm text-gray-500">No slot changes found for this booking.</p>}</div><div className="mt-5 flex justify-end"><button type="button" onClick={() => { setSlotHistoryBooking(null); setSlotChanges([]); }} className="rounded-md border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Close</button></div></div></div>}
+                  </div>
+                )}
+
+                {activeTab === "__legacy_bookings__" && (
                   <div className="space-y-4 p-4">
                     {!isMember && (
                       <div className="rounded-lg border border-gray-200 bg-white p-4">

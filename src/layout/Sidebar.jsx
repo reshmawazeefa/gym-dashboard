@@ -64,7 +64,9 @@ const moduleSections = [
   },
 ];
 
-const HIDDEN_MODULE_KEYS = new Set(["communication", "reminders", "finance"]);
+const HIDDEN_MODULE_KEYS = new Set(["communication", "reminders", "finance", "reports"]);
+const HIDDEN_PRIMARY_KEYS = new Set(["payments"]);
+const PLATFORM_ADMIN_HIDDEN_PRIMARY_KEYS = new Set(["members", "staff", "payments", "permissions"]);
 
 export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }) {
   const { user } = useAuth();
@@ -75,6 +77,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
 
   const primaryNavLinks = [];
   primaryLinks.forEach((link) => {
+    if (HIDDEN_PRIMARY_KEYS.has(link.moduleKey)) return;
+    if (isPlatformAdmin && PLATFORM_ADMIN_HIDDEN_PRIMARY_KEYS.has(link.moduleKey)) return;
     if (link.moduleKey === "gyms" && isGymOwner) return;
     if (link.moduleKey === "saas-plans" && !isPlatformAdmin) return;
     if (link.moduleKey === "plans" && isPlatformAdmin) return;
@@ -150,7 +154,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
           {primaryNavLinks.filter((link) => canAccess(user, link.moduleKey)).map(renderLink)}
         </div>
 
-        {moduleSections
+        {!isPlatformAdmin && moduleSections
           .map((section) => ({
             ...section,
             links: section.links.filter((link) => !HIDDEN_MODULE_KEYS.has(link.moduleKey) && canAccess(user, link.moduleKey)),

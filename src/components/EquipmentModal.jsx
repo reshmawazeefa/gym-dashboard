@@ -8,6 +8,7 @@ const textareaClass =
   "min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
 const emptyForm = {
+  equipmentId: "",
   title: "",
   description: "",
   maintenanceDate: "",
@@ -17,13 +18,15 @@ const emptyForm = {
   status: "PENDING",
 };
 
-export default function EquipmentModal({ isOpen, onClose, onSave, editData }) {
+export default function EquipmentModal({ isOpen, onClose, onSave, editData, equipmentOptions = [], selectedEquipmentId = "" }) {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    const initialEquipmentId = editData?.equipmentId || selectedEquipmentId || equipmentOptions[0]?.id || "";
     if (editData) {
       setForm({
+        equipmentId: editData.equipmentId || initialEquipmentId,
         title: editData.title || "",
         description: editData.description || "",
         maintenanceDate: editData.maintenanceDate || "",
@@ -33,14 +36,18 @@ export default function EquipmentModal({ isOpen, onClose, onSave, editData }) {
         status: editData.status || "PENDING",
       });
     } else {
-      setForm(emptyForm);
+      setForm({ ...emptyForm, equipmentId: initialEquipmentId });
     }
-  }, [editData, isOpen]);
+  }, [editData, isOpen, equipmentOptions, selectedEquipmentId]);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (!form.equipmentId) {
+      alert("Please select an equipment before creating maintenance.");
+      return;
+    }
     if (!form.title.trim() || form.title.trim().length < 2) {
       alert("Title is required (min 2 characters)");
       return;
@@ -61,7 +68,7 @@ export default function EquipmentModal({ isOpen, onClose, onSave, editData }) {
         nextDueDate: form.nextDueDate ? new Date(form.nextDueDate).toISOString() : undefined,
         status: form.status,
       };
-      await onSave(payload);
+      await onSave(payload, form.equipmentId);
     } finally {
       setSaving(false);
     }
@@ -75,6 +82,15 @@ export default function EquipmentModal({ isOpen, onClose, onSave, editData }) {
         </h2>
 
         <form onSubmit={handleSubmit} className="grid gap-3">
+          <label className="grid gap-1 text-sm font-medium text-gray-700">
+            Equipment
+            <select className={inputClass} value={form.equipmentId} onChange={(e) => setForm({ ...form, equipmentId: e.target.value })}>
+              <option value="">Select equipment</option>
+              {equipmentOptions.map((option) => (
+                <option key={option.id} value={option.id}>{option.name || "Equipment"}{option.serialNumber ? ` — ${option.serialNumber}` : ""}</option>
+              ))}
+            </select>
+          </label>
           <label className="grid gap-1 text-sm font-medium text-gray-700">
             Title
             <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Lubrication & Belt Check" />

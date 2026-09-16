@@ -5,6 +5,7 @@ const getEmptyForm = () => ({
   name: "",
   email: "",
   password: "",
+  roleId: "member",
   gymId: getGymId(),
   phoneNumber: "",
   addressLine1: "",
@@ -82,7 +83,7 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
   };
 
   const handleSubmit = () => {
-    if (!form.name || (!editData && (!form.email || !form.password || !form.gymId))) {
+    if (!form.name || (!editData && (!form.email || !form.password))) {
       alert("Fill all required fields");
       return;
     }
@@ -139,6 +140,8 @@ export default function AddMemberModal({ isOpen, onClose, onSave, editData }) {
                 placeholder="Password"
                 className={fieldClass}
               />
+
+
             </>
           )}
 

@@ -48,7 +48,7 @@ function unwrapPlan(payload) {
   return normalizePlan(objectPayload.plan || objectPayload.membershipPlan || objectPayload);
 }
 
-const tabs = [
+const managementTabs = [
   { key: "plans", label: "Plans" },
   { key: "features", label: "Features" },
   { key: "stats", label: "Stats" },
@@ -68,6 +68,7 @@ export default function Plans() {
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [subscribingPlanId, setSubscribingPlanId] = useState(null);
+  const [subscribedPlanIds, setSubscribedPlanIds] = useState(() => new Set());
   const itemsPerPage = 5;
 
   // Features state
@@ -94,6 +95,11 @@ export default function Plans() {
         const response = await getMembershipPlans({}, loggedUserAccessToken);
         const apiPlans = unwrapList(response).map(normalizePlan);
         setPlans(apiPlans);
+        setSubscribedPlanIds(new Set(
+          apiPlans
+            .filter((plan) => plan.raw?.isSubscribed || plan.raw?.subscribed || plan.raw?.hasSubscription)
+            .map((plan) => String(plan.id))
+        ));
       } catch (error) {
         console.warn("Unable to load membership plans:", error);
         setPlans([]);
@@ -223,7 +229,14 @@ export default function Plans() {
 
     try {
       setSubscribingPlanId(planId);
-      await subscribeToPlan(loggedUserId, planId, loggedUserAccessToken);
+      const response = await subscribeToPlan(loggedUserId, planId, loggedUserAccessToken);
+      const subscribedPlanId =
+        response?.data?.planId ||
+        response?.data?.plan?.id ||
+        response?.planId ||
+        response?.plan?.id ||
+        planId;
+      setSubscribedPlanIds((current) => new Set([...current, String(subscribedPlanId)]));
       toast.success("Subscribed to plan successfully");
     } catch (error) {
       toast.error(getApiError(error, "Subscription failed"));
@@ -242,6 +255,7 @@ export default function Plans() {
   const totalPages = Math.ceil(filtered.length / itemsPerPage);
   const start = (currentPage - 1) * itemsPerPage;
   const paginated = filtered.slice(start, start + itemsPerPage);
+  const visibleTabs = isMemberPortal ? managementTabs.filter((tab) => tab.key === "plans") : managementTabs;
 
   // Feature CRUD
   const handleSaveFeature = async () => {
@@ -332,31 +346,33 @@ export default function Plans() {
   return (
     <div className="p-4 md:p-6 space-y-5">
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-200">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setActiveTab(tab.key)}
-            className={`h-10 rounded-t-md px-4 text-sm font-semibold transition ${
-              activeTab === tab.key
-                ? "border-b-2 border-blue-600 text-blue-600"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {!isMemberPortal && (
+        <div className="flex gap-2 border-b border-gray-200">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={`h-10 rounded-t-md px-4 text-sm font-semibold transition ${
+                activeTab === tab.key
+                  ? "border-b-2 border-blue-600 text-blue-600"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ===== PLANS TAB ===== */}
       {activeTab === "plans" && (
         <>
           {/* Header */}
-          <div className="flex flex-col gap-3 md:flex-row md:items-center justify-between">
+          <div className={`flex flex-col gap-3 md:flex-row md:items-center justify-between ${isMemberPortal ? "md:justify-end" : ""}`}>
 
             <div className="flex w-full flex-col gap-3 md:flex-row md:items-center md:justify-between md:flex-1">
-              <div className="min-w-0 flex-1">
+              <div className={`min-w-0 flex-1 ${isMemberPortal ? "md:max-w-md md:ml-auto" : ""}`}>
                 <div className="flex w-full items-center gap-2 rounded bg-white p-3 shadow sm:max-w-xxl">
                   <Search size={18} />
                   <input
@@ -372,16 +388,18 @@ export default function Plans() {
                 </div>
               </div>
 
-              <button
-                onClick={() => {
-                  setEditData(null);
-                  setModalKey((key) => key + 1);
-                  setIsOpen(true);
-                }}
-                className="flex items-center justify-center gap-2 bg-blue-500 text-white px-4 py-2 text-sm rounded w-full md:w-auto"
-              >
-                <Plus size={18} /> Add Plan
-              </button>
+              {!isMemberPortal && (
+                <button
+                  onClick={() => {
+                    setEditData(null);
+                    setModalKey((key) => key + 1);
+                    setIsOpen(true);
+                  }}
+                  className="flex items-center justify-center gap-2 bg-blue-500 text-white px-4 py-2 text-sm rounded w-full md:w-auto"
+                >
+                  <Plus size={18} /> Add Plan
+                </button>
+              )}
             </div>
           </div>
 
@@ -419,10 +437,16 @@ export default function Plans() {
 
                   <button
                     onClick={() => void handleSubscribe(p.id)}
-                    disabled={subscribingPlanId === p.id}
-                    className="mt-6 w-full rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={subscribingPlanId === p.id || subscribedPlanIds.has(String(p.id))}
+                    className={`mt-6 w-full rounded-full px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      subscribedPlanIds.has(String(p.id)) ? "bg-emerald-600" : "bg-blue-600 hover:bg-blue-700"
+                    }`}
                   >
-                    {subscribingPlanId === p.id ? "Subscribing..." : "Subscribe"}
+                    {subscribingPlanId === p.id
+                      ? "Subscribing..."
+                      : subscribedPlanIds.has(String(p.id))
+                        ? "Subscribed"
+                        : "Subscribe"}
                   </button>
                 </div>
               ))}

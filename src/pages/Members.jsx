@@ -3,11 +3,12 @@ import { Edit, Plus, Search, Trash } from "lucide-react";
 import AddMemberModal from "../components/AddMemberModal";
 import toast from "react-hot-toast";
 import {
+  createTenantUser,
   getApiError,
-  getTenantUser,
-  getTenantUsers,
-  registerGymMember,
-  updateTenantUser,
+  getTenantMember,
+  getTenantMembers,
+  updateTenantMember,
+  updateTenantUserStatus,
   deleteUser,
   unwrapList,
   unwrapObject,
@@ -37,12 +38,13 @@ const formatDateTimeValue = (value) => {
 
 function normaliseMember(user) {
   const planInfo = user.plan || {};
+  const roleName = user.role || user.roles?.[0]?.role?.name || "member";
 
   return {
     id: user.id || user._id || user.userId || user.email,
     name: user.name || user.fullName || "",
     email: user.email || "",
-    role: user.role || "member",
+    role: roleName,
     plan: user.planName || user.plan || (typeof planInfo === "string" ? planInfo : ""),
     planId:
       user.planId || user.plan?.id || user.planId ||
@@ -85,7 +87,7 @@ export default function Members() {
   const loadMembers = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await getTenantUsers("member");
+      const response = await getTenantMembers();
       const nextMembers = unwrapList(response).map(normaliseMember);
       setMembers(nextMembers);
       localStorage.setItem("members", JSON.stringify(nextMembers));
@@ -122,18 +124,22 @@ export default function Members() {
           gender: data.gender,
           dateOfBirth: formatDateTimeValue(data.dateOfBirth),
         };
-        const response = await updateTenantUser(editData.id, payload);
+        const response = await updateTenantMember(editData.id, payload);
         const updatedUser = normaliseMember(unwrapObject(response));
         const nextMembers = members.map((u) => (u.id === updatedUser.id ? updatedUser : u));
         setMembers(nextMembers);
         localStorage.setItem("members", JSON.stringify(nextMembers));
         toast.success("Member updated successfully");
       } else {
-        await registerGymMember({
+        const createResponse = await createTenantUser({
           name: data.name,
           email: data.email,
-          gymId: data.gymId,
           password: data.password,
+          roleId: "member",
+        });
+        const createdUser = unwrapObject(createResponse);
+        const createdUserId = createdUser.id || createdUser._id || createdUser.userId;
+        const detailPayload = {
           phoneNumber: data.phoneNumber,
           addressLine1: data.addressLine1,
           addressLine2: data.addressLine2,
@@ -144,7 +150,12 @@ export default function Members() {
           gender: data.gender,
           dateOfBirth: formatDateTimeValue(data.dateOfBirth),
           profileImage: data.profileImage,
-        });
+        };
+
+        if (createdUserId && Object.values(detailPayload).some(Boolean)) {
+          await updateTenantMember(createdUserId, detailPayload);
+        }
+
         toast.success("Member registered successfully");
         await loadMembers();
       }
@@ -155,7 +166,7 @@ export default function Members() {
 
   const handleView = async (user) => {
     try {
-      const response = await getTenantUser(user.id);
+      const response = await getTenantMember(user.id);
       setEditData(normaliseMember(unwrapObject(response)));
       setIsModalOpen(true);
     } catch (error) {
@@ -181,7 +192,7 @@ export default function Members() {
     try {
       setUpdatingStatus((s) => ({ ...s, [id]: true }));
       const payload = { isActive: newStatus === "Active" };
-      const response = await updateTenantUser(id, payload);
+      const response = await updateTenantUserStatus(id, payload);
       const updated = normaliseMember(unwrapObject(response));
       const nextMembers = members.map((u) => (u.id === updated.id ? updated : u));
       setMembers(nextMembers);

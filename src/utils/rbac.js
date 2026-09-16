@@ -145,7 +145,7 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create"],
       classes: ["view", "create", "edit", "delete"],
-      workouts: ["view", "create", "edit", "assign", "progress", "session", "schedule", "measurements", "goals", "feedback"],
+      workouts: ["view", "create", "edit", "delete", "assign", "progress", "session", "schedule", "measurements", "goals", "feedback"],
       nutrition: ["view", "create", "edit"],
       communication: ["view"],
     }
@@ -159,7 +159,7 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create", "edit"],
       classes: ["view", "create", "edit", "delete"],
-      workouts: ["view", "read", "session", "schedule"],
+      workouts: ["view", "read", "progress", "session", "schedule"],
       communication: ["view", "create"],
       reminders: ["view", "create", "edit"],
     }
@@ -176,6 +176,92 @@ const STAFF_ROLES = new Set([
   "receptionalist",
 ]);
 
+function getUserRoles(user = {}) {
+  const candidates = [
+    user?.roles,
+    user?.role,
+    user?.userRole,
+    user?.staffRole,
+    user?.type,
+    user?.userType,
+    user?.roleName,
+    user?.user?.roles,
+    user?.user?.role,
+    user?.user?.userType,
+    user?.loginType,
+  ];
+
+  const roles = candidates.flatMap((value) => {
+    if (Array.isArray(value)) return value;
+    if (value == null) return [];
+    return [value];
+  });
+
+  return roles.map((value) => String(value).trim()).filter(Boolean);
+}
+
+export function getPortalKey(user = {}) {
+  const roles = getUserRoles(user);
+  const roleValue = roles[0] || user?.role || user?.loginType || "";
+  const normalized = normalizeRole(roleValue, user?.loginType);
+
+  if (normalized === "platform_admin") return "platform_admin";
+  if (normalized === "gym_owner") return "gym_owner";
+  if (normalized === "staff") return "staff";
+  return "member";
+}
+
+export function getPortalHomePath(user = {}) {
+  const portalKey = getPortalKey(user);
+
+  if (portalKey === "platform_admin") return "/platform/gyms";
+  return "/";
+}
+
+export function isValidPortalLogin(loginType = "", user = {}) {
+  const userRoles = getUserRoles(user);
+  const roleValues = userRoles.length ? userRoles : [user?.role || user?.userRole || user?.staffRole || user?.type || user?.userType || user?.roleName || user?.user?.role || user?.user?.userType || user?.loginType || ""];
+
+  if (!roleValues.length || !roleValues.some((role) => String(role).trim())) return false;
+
+  const normalizedRoles = roleValues.map((role) => normalizeRole(role, loginType));
+
+  if (loginType === "platform") return normalizedRoles.includes("platform_admin");
+  if (loginType === "owner") return normalizedRoles.includes("gym_owner");
+  if (loginType === "staff") return normalizedRoles.includes("staff");
+  if (loginType === "member") return normalizedRoles.includes("member");
+
+  return true;
+}
+
+function normalizePortalRoute(pathname = "/") {
+  const route = String(pathname || "/").trim();
+  if (!route) return "/";
+  return route.startsWith("/") ? route : `/${route}`;
+}
+
+export function isUserAllowedInPortal(user = {}, pathname = "/") {
+  if (!user || !pathname) return false;
+
+  const portalKey = getPortalKey(user);
+  const safeRoute = normalizePortalRoute(pathname);
+
+  if (["/login", "/register", "/forgot-password", "/verify-otp", "/reset-password"].includes(safeRoute)) {
+    return true;
+  }
+
+  const portalAccess = {
+    platform_admin: ["/platform", "/profile", "/modules"],
+    gym_owner: ["/", "/members", "/plans", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
+    staff: ["/", "/members", "/plans", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
+    member: ["/", "/plans", "/payments", "/profile", "/modules"],
+  };
+
+  const allowedPrefixes = portalAccess[portalKey] || ["/"];
+
+  return allowedPrefixes.some((prefix) => safeRoute === prefix || safeRoute.startsWith(`${prefix}/`));
+}
+
 export function normalizeRole(role, loginType = "") {
   const value = String(role || loginType || "")
     .trim()
@@ -183,7 +269,7 @@ export function normalizeRole(role, loginType = "") {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-  if (value === "platform" || value === "platform_admin") return "platform_admin";
+  if (value === "platform" || value === "platform_admin" || value === "super_admin") return "platform_admin";
   if (value === "gym_owner" || value === "owner") return "gym_owner";
   if (value === "gym_member" || value === "member") return "member";
   if (STAFF_ROLES.has(value) || loginType === "staff") return "staff";
@@ -268,6 +354,8 @@ export function isPrivilegedRole(role, loginType = "") {
 }
 
 export function permissionKey(moduleKey, action = "view") {
+  if (moduleKey === "workouts" && (action === "read" || action === "view")) return "workouts.view";
+
   if (
     moduleKey === "members" ||
     moduleKey === "plans" ||
@@ -320,6 +408,7 @@ function normalizePermissionKey(permission) {
 
   if (/^[a-z0-9_]+\.[a-z0-9_]+$/.test(value)) {
     const [moduleKey, action] = value.split(".");
+    if (moduleKey === "workout" && (action === "read" || action === "view")) return "workouts.view";
     if (
       moduleKey === "members" ||
       moduleKey === "plans" ||

@@ -2,7 +2,7 @@ import axios from "axios";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.DEV ? "" : "https://79pgwtvr-3000.inc1.devtunnels.ms");
+  (import.meta.env.DEV ? "" : "https://gym-api.wazeefa.in");
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -10,6 +10,34 @@ const api = axios.create({
     "Content-Type": "application/json",
   },
 });
+
+let accessToken = null;
+let refreshToken = null;
+
+export function getAccessToken() {
+  return accessToken || getStoredSession()?.accessToken || getStoredSession()?.token || null;
+}
+
+export function getRefreshToken() {
+  return refreshToken || localStorage.getItem("refreshToken") || null;
+}
+
+export function setTokens(nextAccessToken, nextRefreshToken) {
+  accessToken = nextAccessToken || null;
+  refreshToken = nextRefreshToken || null;
+  if (nextRefreshToken) localStorage.setItem("refreshToken", nextRefreshToken);
+}
+
+export function clearTokens() {
+  accessToken = null;
+  refreshToken = null;
+  localStorage.removeItem("refreshToken");
+}
+
+export function loadRefreshToken() {
+  refreshToken = localStorage.getItem("refreshToken") || null;
+  return refreshToken;
+}
 
 function getStoredSession() {
   try {
@@ -20,8 +48,7 @@ function getStoredSession() {
 }
 
 export function getAuthToken() {
-  const session = getStoredSession();
-  return session?.accessToken || session?.token || session?.access_token || null;
+  return getAccessToken();
 }
 
 export function getGymId() {
@@ -44,6 +71,52 @@ api.interceptors.request.use((config) => {
 
   return config;
 });
+
+let isRefreshing = false;
+let failedQueue = [];
+
+function processRefreshQueue(error, token = null) {
+  failedQueue.forEach(({ resolve, reject }) => (error ? reject(error) : resolve(token)));
+  failedQueue = [];
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    const isAuthEndpoint = originalRequest?.url?.includes("/auth/refresh-token") || originalRequest?.url?.includes("/auth/login");
+    if (error.response?.status !== 401 || originalRequest?._retry || isAuthEndpoint) return Promise.reject(error);
+
+    const storedRefreshToken = getRefreshToken();
+    if (!storedRefreshToken) return Promise.reject(error);
+
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => failedQueue.push({ resolve, reject }))
+        .then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return api(originalRequest);
+        });
+    }
+
+    originalRequest._retry = true;
+    isRefreshing = true;
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/refresh-token`, { refreshToken: storedRefreshToken }, { headers: { "Content-Type": "application/json" } });
+      const refreshed = response.data?.data || response.data;
+      setTokens(refreshed.accessToken, refreshed.refreshToken);
+      processRefreshQueue(null, refreshed.accessToken);
+      originalRequest.headers.Authorization = `Bearer ${refreshed.accessToken}`;
+      return api(originalRequest);
+    } catch (refreshError) {
+      processRefreshQueue(refreshError);
+      clearTokens();
+      localStorage.removeItem("authSession");
+      return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
+    }
+  }
+);
 
 export function extractToken(payload) {
   if (!payload || typeof payload !== "object") return "";
@@ -109,6 +182,46 @@ export function getApiError(error, fallback = "Something went wrong") {
 
 export async function platformLogin(credentials) {
   const response = await api.post("/api/auth/platform/login", credentials);
+  return response.data;
+}
+
+export async function platformRegister(payload) {
+  const response = await api.post("/api/auth/platform/register", payload);
+  return response.data;
+}
+
+export async function tenantLogin(credentials) {
+  const response = await api.post("/api/auth/login", credentials);
+  return response.data;
+}
+
+export async function refreshAuthToken(token) {
+  const response = await axios.post(`${API_BASE_URL}/api/auth/refresh-token`, { refreshToken: token }, { headers: { "Content-Type": "application/json" } });
+  return response.data;
+}
+
+export async function logoutAuth(token, access = null) {
+  const response = await api.post("/api/auth/logout", { refreshToken: token }, getAuthConfig(access));
+  return response.data;
+}
+
+export async function logoutAllAuth(token = null) {
+  const response = await api.post("/api/auth/logout-all", {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function forgotPassword(payload) {
+  const response = await api.post("/api/auth/forgot-password", payload);
+  return response.data;
+}
+
+export async function verifyOtp(payload) {
+  const response = await api.post("/api/auth/verify-otp", payload);
+  return response.data;
+}
+
+export async function resetPassword(payload) {
+  const response = await api.post("/api/auth/reset-password", payload);
   return response.data;
 }
 
@@ -236,35 +349,56 @@ export async function uploadNotificationImage(formData, token = null) {
   return response.data;
 }
 
+export async function getSentNotifications(params = {}, token = null) {
+  const response = await api.get("/api/notification/sent", {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getSentNotificationById(notificationId, token = null) {
+  const response = await api.get(`/api/notification/sent/${notificationId}`, getAuthConfig(token));
+  return response.data;
+}
+
 export async function updateGym(id, payload) {
   const response = await api.patch(`/api/gym/${id}`, payload);
   return response.data;
 }
 
 export async function gymOwnerLogin(credentials) {
-  const response = await api.post("/api/auth/login", credentials);
-  return response.data;
+  return tenantLogin(credentials);
 }
 
 export async function gymUserLogin(credentials) {
-  const response = await api.post("/api/auth/login", credentials);
+  return tenantLogin(credentials);
+}
+
+export async function registerGymMember(payload, token = null) {
+  const response = await api.post("/api/auth/register", payload, getAuthConfig(token));
   return response.data;
 }
 
-export async function registerGymMember(payload) {
-  const response = await api.post("/api/auth/register", payload);
+export async function createTenantUser(payload, token = null) {
+  const response = await api.post("/api/tenant/create-user", payload, getAuthConfig(token));
   return response.data;
 }
 
-export async function createGymStaff(payload) {
-  const token = getAuthToken();
-  if (!token) throw new Error("Login token is required to register staff");
+export async function createGymStaff(payload, token = null) {
+  const authToken = token || getAuthToken();
+  if (!authToken) throw new Error("Login token is required to register staff");
 
   const response = await api.post("/api/auth/staff/create", payload, {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${authToken}`,
     },
   });
+  return response.data;
+}
+
+export async function getOwnerProfile(token = null) {
+  const response = await api.get("/api/profile", getAuthConfig(token));
   return response.data;
 }
 
@@ -310,6 +444,34 @@ export async function subscribeToBillingPlan(payload, token = null) {
   return response.data;
 }
 
+export async function createPaymentCheckout(payload, token = null) {
+  const response = await api.post("/api/payment/checkout", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function verifyPayment(payload, token = null) {
+  const response = await api.post("/api/payment/verify", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPaymentOrders(params = {}, token = null) {
+  const response = await api.get("/api/payment/orders", {
+    ...getAuthConfig(token),
+    params,
+  });
+  return response.data;
+}
+
+export async function getPaymentOrder(orderId, token = null) {
+  const response = await api.get(`/api/payment/orders/${orderId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createPaymentRefund(payload, token = null) {
+  const response = await api.post("/api/payment/refunds", payload, getAuthConfig(token));
+  return response.data;
+}
+
 export async function getCurrentSubscription(token = null) {
   const response = await api.get("/api/billing/subscription", getAuthConfig(token));
   return response.data;
@@ -325,8 +487,18 @@ export async function renewSubscription(token = null) {
   return response.data;
 }
 
+export async function upgradeSubscription(payload, token = null) {
+  const response = await api.post("/api/billing/subscription/upgrade", payload, getAuthConfig(token));
+  return response.data;
+}
+
 export async function getPaymentHistory(token = null) {
   const response = await api.get("/api/billing/payments", getAuthConfig(token));
+  return response.data;
+}
+
+export async function recordBillingPayment(payload, token = null) {
+  const response = await api.post("/api/billing/payments", payload, getAuthConfig(token));
   return response.data;
 }
 
@@ -694,7 +866,7 @@ export async function deleteNutritionAssignment(id, token = null) {
 
 // ===== Diet Logs =====
 export async function getMyDietLogs(params = {}, token = null) {
-  const response = await api.get("/api/nutrition/diet-logs", {
+  const response = await api.get("/api/nutrition/my/logs", {
     ...getAuthConfig(token),
     params,
   });
@@ -710,23 +882,23 @@ export async function getUserDietLogs(userId, params = {}, token = null) {
 }
 
 export async function createDietLog(payload, token = null) {
-  const response = await api.post("/api/nutrition/diet-logs", payload, getAuthConfig(token));
+  const response = await api.post("/api/nutrition/diet-log", payload, getAuthConfig(token));
   return response.data;
 }
 
 export async function updateDietLog(id, payload, token = null) {
-  const response = await api.patch(`/api/nutrition/diet-logs/${id}`, payload, getAuthConfig(token));
+  const response = await api.patch(`/api/nutrition/diet-log/${id}`, payload, getAuthConfig(token));
   return response.data;
 }
 
 export async function deleteDietLog(id, token = null) {
-  const response = await api.delete(`/api/nutrition/diet-logs/${id}`, getAuthConfig(token));
+  const response = await api.delete(`/api/nutrition/diet-log/${id}`, getAuthConfig(token));
   return response.data;
 }
 
 // ===== Nutrition Goals =====
 export async function getMyGoals(token = null) {
-  const response = await api.get("/api/nutrition/goals", getAuthConfig(token));
+  const response = await api.get("/api/nutrition/my/goals", getAuthConfig(token));
   return response.data;
 }
 
@@ -747,7 +919,13 @@ export async function getNutritionDashboard(token = null) {
 }
 
 export async function getNutritionMemberDashboard(userId) {
-  const response = await api.get(`/api/nutrition/dashboard/user/${userId}`, getAuthConfig());
+  const endpoint = userId ? `/api/nutrition/dashboard/member/${userId}` : "/api/nutrition/dashboard/member/me";
+  const response = await api.get(endpoint, getAuthConfig());
+  return response.data;
+}
+
+export async function getMyNutritionPlan(token = null) {
+  const response = await api.get("/api/nutrition/my/plan", getAuthConfig(token));
   return response.data;
 }
 
@@ -1078,11 +1256,6 @@ export async function getMyWorkoutAssignments(token = null) {
 
 export async function getUserWorkouts(userId, token = null) {
   const response = await api.get(`${WORKOUT_API_PREFIX}/users/${userId}/workouts`, getAuthConfig(token));
-  return response.data;
-}
-
-export async function getWorkoutDayExercises(dayId, token = null) {
-  const response = await api.get(`${WORKOUT_API_PREFIX}/days/${dayId}/exercises`, getAuthConfig(token));
   return response.data;
 }
 
@@ -1533,25 +1706,45 @@ export async function deleteExerciseMedia(mediaId, token = null) {
 
 export async function getTenantUsers(role = "member", token = null) {
   const config = token ? getAuthConfig(token) : {};
-  const response = await api.get("/api/tenant/user/", {
+  const response = await api.get("/api/tenant/user", {
     params: { role },
     ...config,
   });
   return response.data;
 }
 
-export async function getTenantUser(id) {
-  const response = await api.get(`/api/tenant/user/${id}`);
+export async function getTenantMembers(token = null) {
+  const response = await api.get("/api/tenant/members", getAuthConfig(token));
   return response.data;
 }
 
-export async function updateTenantUser(id, payload) {
-  const response = await api.put(`/api/tenant/user/${id}`, payload);
+export async function getTenantMember(id, token = null) {
+  const response = await api.get(`/api/tenant/members/${id}`, getAuthConfig(token));
   return response.data;
 }
 
-export async function deleteUser(id) {
-  const response = await api.delete(`/api/tenant/user/${id}`);
+export async function updateTenantMember(id, payload, token = null) {
+  const response = await api.patch(`/api/tenant/members/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getTenantUser(id, token = null) {
+  const response = await api.get(`/api/tenant/user/${id}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateTenantUser(id, payload, token = null) {
+  const response = await api.patch(`/api/tenant/user/${id}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateTenantUserStatus(id, payload, token = null) {
+  const response = await api.patch(`/api/tenant/user/${id}/status`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteUser(id, token = null) {
+  const response = await api.delete(`/api/tenant/user/${id}`, getAuthConfig(token));
   return response.data;
 }
 

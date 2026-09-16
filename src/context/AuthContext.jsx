@@ -1,5 +1,6 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
+  clearTokens,
   extractToken,
   gymOwnerLogin,
   gymUserLogin,
@@ -8,8 +9,14 @@ import {
   unwrapObject,
   memberCheckIn,
   trainerCheckIn,
+  getRefreshToken,
+  loadRefreshToken,
+  refreshAuthToken,
+  setTokens,
+  logoutAuth,
+  logoutAllAuth,
 } from "../services/api";
-import { getRoleLabel, normalizePermissions } from "../utils/rbac";
+import { getRoleLabel, isValidPortalLogin, normalizePermissions } from "../utils/rbac";
 
 /* eslint-disable react-refresh/only-export-components */
 const AuthContext = createContext();
@@ -24,24 +31,45 @@ function readJson(key, fallback = null) {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(readJson("authSession", null));
+  const [loading, setLoading] = useState(true);
 
   const persistSession = (session) => {
     setUser(session);
     localStorage.setItem("authSession", JSON.stringify(session));
   };
 
+  useEffect(() => {
+    const storedRefreshToken = loadRefreshToken();
+    if (!storedRefreshToken) {
+      setLoading(false);
+      return;
+    }
+    refreshAuthToken(storedRefreshToken)
+      .then((response) => {
+        const data = response?.data || response;
+        setTokens(data.accessToken, data.refreshToken);
+        const stored = readJson("authSession", {}) || {};
+        persistSession({ ...stored, token: data.accessToken, accessToken: data.accessToken });
+      })
+      .catch(() => {
+        clearTokens();
+        localStorage.removeItem("authSession");
+        setUser(null);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
   const updateUser = (nextUser) => {
     persistSession(nextUser);
   };
 
-  const register = async ({ name, email, password, gymId }) => {
-    const payload = { name, email, password, gymId };
+  const register = async (payload) => {
     const response = await registerGymMember(payload);
     return unwrapObject(response);
   };
 
-  const login = async ({ email, password, gymId, loginType }) => {
-    const credentials = gymId ? { email, password, gymId } : { email, password };
+  const login = async ({ email, password, gymSlug, loginType }) => {
+    const credentials = loginType === "platform" ? { email, password } : { email, gymSlug, password };
     const response =
       loginType === "platform"
         ? await platformLogin({ email, password })
@@ -49,14 +77,33 @@ export const AuthProvider = ({ children }) => {
           ? await gymOwnerLogin(credentials)
           : await gymUserLogin(credentials);
 
-    const token = extractToken(response);
+    const responseData = response?.data || response;
+    const token = extractToken(responseData);
     if (!token) return null;
 
-    const responseUser = unwrapObject(response);
+    setTokens(token, responseData.refreshToken || responseData.hashedRefreshToken || responseData.data?.refreshToken);
+
+    const responseUser = unwrapObject(responseData);
     const userId = responseUser.id || responseUser._id || responseUser.userId || responseUser.user?.id || "";
+
+    if (!isValidPortalLogin(loginType, responseUser)) {
+      clearTokens();
+      localStorage.removeItem("authSession");
+      setUser(null);
+      const portalName =
+        loginType === "platform"
+          ? "Platform Admin"
+          : loginType === "owner"
+            ? "Gym Owner"
+            : loginType === "staff"
+              ? "Gym Staff"
+              : "Gym Member";
+      throw new Error(`Invalid user: this account is not a ${portalName}.`);
+    }
+
     const storedPermissions = userId ? readJson(`userPermissions:${userId}`, []) : [];
     const responsePermissions = normalizePermissions(
-      responseUser.permissions || responseUser.userPermissions || responseUser.user?.permissions || response.permissions
+      responseUser.permissions || responseUser.userPermissions || responseUser.user?.permissions || responseData.permissions
     );
     const role =
       loginType === "platform"
@@ -70,12 +117,14 @@ export const AuthProvider = ({ children }) => {
       accessToken: token,
       id: userId,
       email,
-      gymId: responseUser.gymId || responseUser.gym?.id || gymId || "",
+      gymId: responseUser.gymId || responseUser.gym?.id || "",
+      gymSlug: responseUser.gymSlug || responseUser.slug || responseUser.gym?.slug || gymSlug || "",
       name: responseUser.name || responseUser.ownerName || email,
       role,
       staffRole: responseUser.staffRole || responseUser.roleName || responseUser.designation || responseUser.position || responseUser.type || "",
       userRole: responseUser.role || responseUser.userRole || "",
       loginType,
+      refreshToken: responseData.refreshToken || responseData.data?.refreshToken || "",
       permissions: responsePermissions.length ? responsePermissions : storedPermissions,
     };
 
@@ -98,15 +147,34 @@ export const AuthProvider = ({ children }) => {
     return session;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    const storedRefreshToken = getRefreshToken();
+    try {
+      if (storedRefreshToken) await logoutAuth(storedRefreshToken, user?.accessToken || user?.token);
+    } catch {
+      // Clear local state even when the server session is already invalid.
+    }
+    clearTokens();
     setUser(null);
     localStorage.removeItem("authSession");
     localStorage.removeItem("user");
     localStorage.removeItem("checkInTime");
   };
 
+  const logoutAll = async () => {
+    try {
+      await logoutAllAuth(user?.accessToken || user?.token);
+    } finally {
+      clearTokens();
+      setUser(null);
+      localStorage.removeItem("authSession");
+      localStorage.removeItem("user");
+      localStorage.removeItem("checkInTime");
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, register, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, logoutAll, register, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

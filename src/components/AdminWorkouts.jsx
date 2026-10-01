@@ -1,17 +1,20 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
   CalendarDays,
   ClipboardList,
+  Download,
   Dumbbell,
   MessageSquare,
+  Plus,
   Users,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   getActiveSession,
   getApiError,
+  createWorkoutPlan,
   getExercises,
   getMySessions,
   getMyWorkoutAssignments,
@@ -23,6 +26,7 @@ import {
   getWorkoutSessions,
   getWorkoutSets,
   startWorkoutSession,
+  updateWorkoutPlan,
   getWorkoutTrainers,
   getMyCalendar,
   unwrapList,
@@ -36,20 +40,21 @@ import WorkoutSessions from "./WorkoutSessions";
 import WorkoutAssignments from "./WorkoutAssignments";
 import WorkoutSchedules from "./WorkoutSchedules";
 import WorkoutMeasurements from "./WorkoutMeasurements";
-import WorkoutFeedback from "./WorkoutFeedback";
 import WorkoutAnalytics from "./WorkoutAnalytics";
 import WorkoutGoals from "./WorkoutGoals";
+import CreateWorkoutModal from "./CreateWorkoutModal";
 
 const goals = ["WEIGHT_LOSS", "MUSCLE_GAIN", "STRENGTH", "ENDURANCE", "FAT_BURN"];
 const difficulties = ["BEGINNER", "INTERMEDIATE", "ADVANCED"];
+const EXERCISE_PAGE_SIZE = 10;
 const muscleGroupOptions = ["CHEST", "BACK", "LEGS", "SHOULDERS", "ARMS", "CORE", "FULL_BODY"];
 const sessionStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
 const inputClass =
-  "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
+  "h-8 w-full rounded-lg border border-[#E2E8F0]/20 bg-[#FBFCFD] px-3 text-xs text-[#0F172A] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252]/30 focus:bg-white disabled:bg-[#F1F5F9] disabled:text-[#94A3B8]";
 const buttonClass =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButtonClass =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0D8252] px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]";
 const adminPlanGridClass = "lg:grid-cols-[2rem_minmax(12rem,1fr)_9rem_9rem_6rem_5rem]";
 const lifecycleSteps = [
   {
@@ -69,7 +74,7 @@ const lifecycleSteps = [
   },
   {
     title: "Phase 4 — Manage",
-    detail: "Track progress with analytics, measurements, and trainer feedback.",
+    detail: "Track progress with analytics and measurements.",
     accent: "Monitor progress",
   },
 ];
@@ -91,6 +96,8 @@ function workoutRole(user) {
 }
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
+
+function emptyPlan() { return { name: "", description: "", goal: goals[0], difficulty: difficulties[0], duration: "", image: "" }; }
 
 function nameOf(item) { return item?.name || item?.fullName || item?.title || item?.email || idOf(item) || "-"; }
 
@@ -257,6 +264,45 @@ function normalizeDayExerciseLinks(day) {
   return candidates.find(Array.isArray) || [];
 }
 
+function normalizeWorkoutDayExercise(link, workoutDayId) {
+  const source = link?.workoutExercise || link || {};
+  return {
+    ...source,
+    ...link,
+    workoutDayId: workoutDayId || link?.workoutDayId || source?.workoutDayId || link?.dayId || source?.dayId,
+    exercise: link?.exercise || source?.exercise || link?.exerciseDetails || source?.exerciseDetails || null,
+    sets: link?.sets ?? source?.sets,
+    reps: link?.reps ?? source?.reps,
+    weight: link?.weight ?? source?.weight,
+    duration: link?.duration ?? source?.duration,
+    restTime: link?.restTime ?? source?.restTime,
+    supersetGroupId: link?.supersetGroupId ?? source?.supersetGroupId,
+    orderIndex: link?.orderIndex ?? source?.orderIndex,
+  };
+}
+
+function normalizeWorkoutDay(day) {
+  const workoutDayId = idOf(day);
+  const exercises = normalizeDayExerciseLinks(day)
+    .map((link) => normalizeWorkoutDayExercise(link, workoutDayId))
+    .sort((a, b) => Number(a.orderIndex ?? Number.MAX_SAFE_INTEGER) - Number(b.orderIndex ?? Number.MAX_SAFE_INTEGER));
+
+  return { ...day, exercises };
+}
+
+function workoutDaysFromResponse(payload) {
+  const candidates = [
+    payload,
+    payload?.data,
+    payload?.days,
+    payload?.workoutDays,
+    payload?.data?.days,
+    payload?.data?.workoutDays,
+  ];
+  const days = candidates.find(Array.isArray) || [];
+  return days.map(normalizeWorkoutDay).sort((first, second) => Number(first.dayNumber) - Number(second.dayNumber));
+}
+
 function planDays(plan) {
   return plan?.days || plan?.workoutDays || [];
 }
@@ -327,7 +373,7 @@ function calendarEvents(payload) {
 }
 
 function Card({ children, className = "" }) {
-  return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
+  return <section className={`rounded-xl border border-[#E5EAF0] bg-white shadow-[0_1px_4px_rgba(15,23,42,0.06)] ${className}`}>{children}</section>;
 }
 
 function SectionTitle({ icon, title, detail }) {
@@ -363,6 +409,7 @@ export default function AdminWorkouts() {
   const [activeTab, setActiveTab] = useState("plans");
   const [plans, setPlans] = useState([]);
   const [days, setDays] = useState([]);
+  const [daysLoading, setDaysLoading] = useState(false);
   const [exercises, setExercises] = useState([]);
   const [members, setMembers] = useState([]);
   const [trainers, setTrainers] = useState([]);
@@ -373,6 +420,11 @@ export default function AdminWorkouts() {
   const [userWorkoutsLoading, setUserWorkoutsLoading] = useState(false);
   const [planSearch, setPlanSearch] = useState("");
   const [exerciseSearch, setExerciseSearch] = useState("");
+  const [exerciseTypeFilter, setExerciseTypeFilter] = useState("");
+  const [exercisePage, setExercisePage] = useState(1);
+  const [exercisePagination, setExercisePagination] = useState({ total: 0, page: 1, limit: EXERCISE_PAGE_SIZE, totalPages: 1 });
+  const [exercisesLoading, setExercisesLoading] = useState(false);
+  const [exerciseLoadError, setExerciseLoadError] = useState("");
   const [goalFilter, setGoalFilter] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState("");
   const [muscleFilter, setMuscleFilter] = useState("");
@@ -382,7 +434,7 @@ export default function AdminWorkouts() {
   const [expandedExerciseId, setExpandedExerciseId] = useState("");
   const [editingPlanId, setEditingPlanId] = useState("");
   const [showCreatePlanModal, setShowCreatePlanModal] = useState(false);
-  const [planForm, setPlanForm] = useState({ name: "", description: "", goal: goals[0], difficulty: difficulties[0], duration: "" });
+  const [planForm, setPlanForm] = useState(emptyPlan);
   const [sessions, setSessions] = useState([]);
   const [setLogs, setSetLogs] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -503,14 +555,32 @@ export default function AdminWorkouts() {
     });
   }, [plans, planSearch, goalFilter, difficultyFilter]);
 
-  const filteredExercises = useMemo(() => {
-    const query = exerciseSearch.trim().toLowerCase();
-    return exercises.filter((exercise) => {
-      const matchesSearch = !query || [exercise.name, exercise.muscleGroup, exercise.instructions].join(" ").toLowerCase().includes(query);
-      const matchesMuscle = !muscleFilter || exercise.muscleGroup === muscleFilter;
-      return matchesSearch && matchesMuscle;
+  const handleExportWorkoutPlansCSV = () => {
+    const headers = ["Workout", "Goal", "Difficulty", "Duration", "Days", "Description", "Trainers"];
+    const rows = filteredPlans.map((plan) => {
+      const totalDays = countOf(plan.days || plan.workoutDays || plan.totalDays);
+      const trainersList = (plan.trainers || plan.trainerAssignments || []).map(trainerAssignmentName).join("; ");
+      return [
+        plan.name || plan.title || assignmentPlanName(plan, "Workout plan"),
+        titleCase(metricValue(plan.goal)),
+        titleCase(metricValue(plan.difficulty)),
+        metricValue(plan.duration),
+        totalDays,
+        (plan.description || "").slice(0, 100),
+        trainersList,
+      ];
     });
-  }, [exercises, exerciseSearch, muscleFilter]);
+    const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${cell ?? ""}"`).join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `workout-plans-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const filteredExercises = exercises;
 
   const loadPlans = async () => {
     const params = {
@@ -536,20 +606,99 @@ export default function AdminWorkouts() {
     return nextPlans;
   };
 
-  const loadExercises = async () => {
+  const closeCreateWorkoutModal = () => {
+    setShowCreatePlanModal(false);
+    setEditingPlanId("");
+    setPlanForm(emptyPlan());
+  };
+
+  const openCreateWorkoutModal = () => {
+    setEditingPlanId("");
+    setPlanForm(emptyPlan());
+    setShowCreatePlanModal(true);
+  };
+
+  const handleSaveWorkoutPlan = async (event) => {
+    event.preventDefault();
+    if (!canManage || !planForm.name.trim()) {
+      toast.error("Workout plan name is required");
+      return;
+    }
+
+    const payload = { ...planForm, duration: planForm.duration ? Number(planForm.duration) : undefined };
     try {
-      const response = await getExercises({ search: exerciseSearch || undefined, muscleGroup: muscleFilter || undefined }, user?.token);
+      if (editingPlanId) {
+        await updateWorkoutPlan(editingPlanId, payload, user?.token);
+        toast.success("Workout plan updated");
+      } else {
+        await createWorkoutPlan(payload, user?.token);
+        toast.success("Workout plan created");
+      }
+      closeCreateWorkoutModal();
+      await loadPlans();
+    } catch (error) {
+      toast.error(getApiError(error, "Unable to save workout plan"));
+    }
+  };
+
+  const loadWorkoutDays = async (planId = selectedPlanId) => {
+    if (!planId) {
+      setDays([]);
+      return [];
+    }
+
+    setDaysLoading(true);
+    try {
+      const response = await getWorkoutDays(planId, user?.token);
+      const nextDays = workoutDaysFromResponse(response);
+      setDays(nextDays);
+      setPlans((current) => current.map((plan) => (
+        String(idOf(plan)) === String(planId)
+          ? { ...plan, days: nextDays, workoutDays: nextDays }
+          : plan
+      )));
+      return nextDays;
+    } finally {
+      setDaysLoading(false);
+    }
+  };
+
+  const loadExercises = useCallback(async (overrides = {}) => {
+    const page = overrides.page ?? exercisePage;
+    const search = overrides.search ?? exerciseSearch.trim();
+    const muscleGroup = overrides.muscleGroup ?? muscleFilter;
+    const exerciseType = overrides.exerciseType ?? exerciseTypeFilter;
+    setExercisesLoading(true);
+    setExerciseLoadError("");
+    try {
+      const response = await getExercises({
+        page,
+        limit: EXERCISE_PAGE_SIZE,
+        search: search || undefined,
+        muscleGroup: muscleGroup || undefined,
+        exerciseType: exerciseType || undefined,
+      }, user?.token);
       const nextExercises = listOf(response, ["exercises"]);
+      const pageData = response?.pagination || response?.data?.pagination || {};
       setExercises(nextExercises);
+      setExercisePagination({
+        total: Number(pageData.total ?? nextExercises.length),
+        page: Number(pageData.page ?? page),
+        limit: Number(pageData.limit ?? EXERCISE_PAGE_SIZE),
+        totalPages: Math.max(1, Number(pageData.totalPages ?? Math.ceil(nextExercises.length / EXERCISE_PAGE_SIZE))),
+      });
       return nextExercises;
     } catch (error) {
       setExercises([]);
-      if (!isMember) {
-        toast.error(getApiError(error, "Unable to load exercises"));
-      }
-      throw error;
+      setExercisePagination({ total: 0, page, limit: EXERCISE_PAGE_SIZE, totalPages: 1 });
+      const message = getApiError(error, "Unable to load exercises");
+      setExerciseLoadError(message);
+      toast.error(message);
+      return [];
+    } finally {
+      setExercisesLoading(false);
     }
-  };
+  }, [exercisePage, exerciseSearch, exerciseTypeFilter, muscleFilter, user]);
 
   const loadUsers = async () => {
     if (isMember) return;
@@ -649,9 +798,8 @@ export default function AdminWorkouts() {
   };
 
   const refreshSelectedPlan = async () => {
-    const refreshedPlans = await loadPlans();
-    const nextDays = (refreshedPlans || plans).flatMap((plan) => planDays(plan));
-    setDays(nextDays);
+    if (!selectedPlanId) return [];
+    return loadWorkoutDays(selectedPlanId);
   };
 
   const handleMemberStartWorkout = async (workoutDayId) => {
@@ -686,7 +834,7 @@ export default function AdminWorkouts() {
     const loadInitial = async () => {
       try {
         setLoading(true);
-        const initialLoads = [loadPlans(), loadExercises(), loadUsers()];
+        const initialLoads = [loadPlans(), loadUsers()];
         const results = await Promise.allSettled(initialLoads);
         const plansResult = results[0];
         if (plansResult.status === "rejected") throw plansResult.reason;
@@ -707,6 +855,42 @@ export default function AdminWorkouts() {
     return () => { isCurrent = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.token, isMember]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => { void loadExercises(); }, 0);
+    return () => clearTimeout(timer);
+  }, [loadExercises]);
+
+  useEffect(() => {
+    if (!selectedPlanId) {
+      setDays([]);
+      setDaysLoading(false);
+      return undefined;
+    }
+
+    let isCurrent = true;
+    setDays([]);
+    setDaysLoading(true);
+    (async () => {
+      try {
+        const response = await getWorkoutDays(selectedPlanId, user?.token);
+        const nextDays = workoutDaysFromResponse(response);
+        if (!isCurrent) return;
+        setDays(nextDays);
+        setPlans((current) => current.map((plan) => (
+          String(idOf(plan)) === String(selectedPlanId)
+            ? { ...plan, days: nextDays, workoutDays: nextDays }
+            : plan
+        )));
+      } catch (error) {
+        if (isCurrent) toast.error(getApiError(error, "Unable to load workout days"));
+      } finally {
+        if (isCurrent) setDaysLoading(false);
+      }
+    })();
+
+    return () => { isCurrent = false; };
+  }, [selectedPlanId, user?.token]);
 
   useEffect(() => {
     if (activeTab !== "calendar") return;
@@ -768,7 +952,6 @@ export default function AdminWorkouts() {
     { key: "analytics", label: "Progress", hidden: !canViewProgress },
     { key: "measurements", label: "Measurements", hidden: !isMember },
     { key: "goals", label: "Goals", hidden: !isMember },
-    { key: "feedback", label: "Trainer Feedback", hidden: !isWorkoutManager },
   ];
 
   const summaryCards = isMember
@@ -786,7 +969,7 @@ export default function AdminWorkouts() {
       ];
 
   return (
-    <div className="space-y-5">
+    <div className="p-3 sm:p-4 space-y-5">
       {/* <Card className="overflow-hidden border border-blue-100 bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -814,9 +997,21 @@ export default function AdminWorkouts() {
         ))}
       </section>} */}
 
-      <Card className="p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="grid grid-cols-2 gap-2 sm:flex">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-extrabold leading-6 tracking-tight text-[#020617]">Workout &amp; Activity</h1>
+          <p className="mt-1 text-xs text-[#64748B]">Manage workout plans, exercise library, member assignments, and execution schedules.</p>
+        </div>
+        {canManage && (
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={handleExportWorkoutPlansCSV} className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] shadow-sm transition hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"><Download size={13} />Export CSV</button>
+            <button type="button" onClick={openCreateWorkoutModal} className={primaryButtonClass}><Plus size={13} />Create Workout Plan</button>
+          </div>
+        )}
+      </div>
+
+      <Card className="p-1">
+        <div className="flex flex-wrap gap-1">
             {tabs
               .filter((tab) => !tab.hidden)
               .map((tab) => (
@@ -824,42 +1019,28 @@ export default function AdminWorkouts() {
                   key={tab.key}
                   type="button"
                   onClick={() => setActiveTab(tab.key)}
-                  className={`h-10 rounded-md px-4 text-sm font-semibold transition ${
-                    activeTab === tab.key ? "bg-gray-950 text-white shadow-sm" : "text-gray-600 hover:bg-gray-100 hover:text-gray-950"
+                  className={`h-8 rounded-lg px-3 text-xs font-bold transition ${
+                    activeTab === tab.key ? "bg-[#0D8252] text-white shadow-sm" : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
                   }`}
                 >
                   {tab.label}
                 </button>
               ))}
           </div>
-          {canManage && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingPlanId("");
-                  setPlanForm({ name: "", description: "", goal: goals[0], difficulty: difficulties[0], duration: "" });
-                  setShowCreatePlanModal(true);
-                }}
-                className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-              >
-                Add workout
-              </button>
-            </div>
-          )}
-        </div>
       </Card>
 
-      <section className="grid gap-3 md:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((card) => (
-          <Card key={card.label} className="p-4">
-            <card.icon size={20} className="text-blue-600" />
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-gray-500">{card.label}</p>
-                <p className="mt-1 text-xs text-gray-400">{card.hint}</p>
-              </div>
-              <p className="max-w-[10rem] text-right text-2xl font-bold text-gray-950">{card.value}</p>
+          <Card key={card.label} className="min-h-[116px] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-[#0D8252] ring-1 ring-emerald-100">
+                <card.icon size={16} />
+              </span>
+              <p className="text-right text-2xl font-extrabold leading-none tracking-tight text-[#0F172A]">{card.value}</p>
+            </div>
+            <div className="mt-3">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">{card.label}</p>
+              <p className="mt-0.5 text-[10px] leading-4 text-[#94A3B8]">{card.hint}</p>
             </div>
           </Card>
         ))}
@@ -933,7 +1114,6 @@ export default function AdminWorkouts() {
           members={members}
           exercises={exercises}
           setActiveTab={setActiveTab}
-          showCreatePlanModal={showCreatePlanModal}
           setShowCreatePlanModal={setShowCreatePlanModal}
         />
       )}
@@ -948,6 +1128,7 @@ export default function AdminWorkouts() {
           selectedPlan={selectedPlan}
           selectedPlanId={selectedPlanId}
           days={days}
+          daysLoading={daysLoading}
           setDays={setDays}
           selectedDayId={selectedDayId}
           setSelectedDayId={setSelectedDayId}
@@ -973,6 +1154,13 @@ export default function AdminWorkouts() {
           setExerciseSearch={setExerciseSearch}
           muscleFilter={muscleFilter}
           setMuscleFilter={setMuscleFilter}
+          exerciseTypeFilter={exerciseTypeFilter}
+          setExerciseTypeFilter={setExerciseTypeFilter}
+          exercisePage={exercisePage}
+          setExercisePage={setExercisePage}
+          exercisePagination={exercisePagination}
+          exercisesLoading={exercisesLoading}
+          exerciseLoadError={exerciseLoadError}
           filteredExercises={filteredExercises}
           loadExercises={loadExercises}
         />
@@ -1047,10 +1235,6 @@ export default function AdminWorkouts() {
 
       {activeTab === "analytics" && canViewProgress && (
         <WorkoutAnalytics user={user} />
-      )}
-
-      {activeTab === "feedback" && isWorkoutManager && (
-        <WorkoutFeedback user={user} role={role} canManage={canManage} members={members} />
       )}
 
       {activeTab === "measurements" && isMember && (
@@ -1152,6 +1336,16 @@ export default function AdminWorkouts() {
           )}
         </Card>
       )}
+
+      <CreateWorkoutModal
+        isOpen={showCreatePlanModal}
+        editingPlanId={editingPlanId}
+        planForm={planForm}
+        setPlanForm={setPlanForm}
+        canManage={canManage}
+        onSubmit={handleSaveWorkoutPlan}
+        onClose={closeCreateWorkoutModal}
+      />
 
     </div>
   );

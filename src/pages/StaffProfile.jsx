@@ -151,7 +151,7 @@ export default function StaffProfile() {
             <button
               type="button"
               onClick={() => setEditMode((current) => !current)}
-              className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
             >
               {editMode ? "Cancel" : "Edit Profile"}
             </button>
@@ -160,7 +160,7 @@ export default function StaffProfile() {
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                className="rounded bg-green-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
+                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
               >
                 {saving ? "Saving..." : "Save Changes"}
               </button>

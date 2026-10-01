@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Target, Plus, Trophy, Trash, Pencil, X, CheckCircle } from "lucide-react";
+import { Target, Plus, Trophy, Trash, Edit, X, CheckCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   createWorkoutGoal, getMyWorkoutGoals, getMyGoalById, updateGoal, deleteGoal,
@@ -18,9 +18,9 @@ const goalStatuses = ["ACTIVE", "ACHIEVED", "CANCELLED"];
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
 const textareaClass = "min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
-const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
+const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
 
 function ProgressBar({ current, target }) {
   const pct = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
@@ -296,7 +296,7 @@ export default function WorkoutGoals({ user }) {
                     <CheckCircle className="h-4 w-4" />
                   </button>
                   <button onClick={() => startEdit(goal)} className={iconButtonClass} title="Edit">
-                    <Pencil className="h-4 w-4" />
+                    <Edit size={15} />
                   </button>
                   <button onClick={() => handleDelete(goal)} className={iconButtonClass} title="Delete">
                     <Trash className="h-4 w-4" />
@@ -356,7 +356,7 @@ export default function WorkoutGoals({ user }) {
         <div className="rounded-lg border border-gray-200 bg-white">
           <button
             onClick={() => setAchievedOpen((o) => !o)}
-            className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-gray-900 hover:bg-gray-50"
+            className="rounded-lg flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-gray-900 hover:bg-gray-50"
           >
             <span className="flex items-center gap-2">
               <Trophy className="h-4 w-4 text-yellow-500" />

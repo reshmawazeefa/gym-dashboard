@@ -1,43 +1,17 @@
 import axios from "axios";
+import {
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  setTokens,
+} from "./authStore";
+import { notifyError } from "./toastNotifications";
+
+export { clearTokens, getAccessToken, getRefreshToken, loadRefreshToken, setTokens } from "./authStore";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "" : "https://gym-api.wazeefa.in");
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-let accessToken = null;
-let refreshToken = null;
-
-export function getAccessToken() {
-  return accessToken || getStoredSession()?.accessToken || getStoredSession()?.token || null;
-}
-
-export function getRefreshToken() {
-  return refreshToken || localStorage.getItem("refreshToken") || null;
-}
-
-export function setTokens(nextAccessToken, nextRefreshToken) {
-  accessToken = nextAccessToken || null;
-  refreshToken = nextRefreshToken || null;
-  if (nextRefreshToken) localStorage.setItem("refreshToken", nextRefreshToken);
-}
-
-export function clearTokens() {
-  accessToken = null;
-  refreshToken = null;
-  localStorage.removeItem("refreshToken");
-}
-
-export function loadRefreshToken() {
-  refreshToken = localStorage.getItem("refreshToken") || null;
-  return refreshToken;
-}
 
 function getStoredSession() {
   try {
@@ -46,6 +20,13 @@ function getStoredSession() {
     return null;
   }
 }
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
 
 export function getAuthToken() {
   return getAccessToken();
@@ -85,10 +66,17 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     const isAuthEndpoint = originalRequest?.url?.includes("/auth/refresh-token") || originalRequest?.url?.includes("/auth/login");
-    if (error.response?.status !== 401 || originalRequest?._retry || isAuthEndpoint) return Promise.reject(error);
+    if (error.response?.status !== 401 || originalRequest?._retry || isAuthEndpoint) {
+      if (!axios.isCancel(error)) notifyError(getApiError(error));
+      return Promise.reject(error);
+    }
 
     const storedRefreshToken = getRefreshToken();
-    if (!storedRefreshToken) return Promise.reject(error);
+    if (!storedRefreshToken) {
+      localStorage.removeItem("authSession");
+      window.dispatchEvent(new Event("auth:expired"));
+      return Promise.reject(error);
+    }
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => failedQueue.push({ resolve, reject }))
@@ -103,6 +91,7 @@ api.interceptors.response.use(
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/refresh-token`, { refreshToken: storedRefreshToken }, { headers: { "Content-Type": "application/json" } });
       const refreshed = response.data?.data || response.data;
+      if (!refreshed.accessToken || !refreshed.refreshToken) throw new Error("Invalid refresh response");
       setTokens(refreshed.accessToken, refreshed.refreshToken);
       processRefreshQueue(null, refreshed.accessToken);
       originalRequest.headers.Authorization = `Bearer ${refreshed.accessToken}`;
@@ -111,6 +100,8 @@ api.interceptors.response.use(
       processRefreshQueue(refreshError);
       clearTokens();
       localStorage.removeItem("authSession");
+      window.dispatchEvent(new Event("auth:expired"));
+      notifyError(getApiError(refreshError));
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
@@ -172,9 +163,30 @@ export function unwrapObject(payload) {
 }
 
 export function getApiError(error, fallback = "Something went wrong") {
+  const data = error?.response?.data;
+  const details = data?.errors || data?.details;
+
+  if (Array.isArray(details)) {
+    const firstMessage = details.find((item) => typeof item === "string" && item.trim());
+    if (firstMessage) return firstMessage;
+
+    const firstObjectMessage = details
+      .map((item) => item?.message || item?.msg || item?.error)
+      .find(Boolean);
+    if (firstObjectMessage) return firstObjectMessage;
+  }
+
+  if (details && typeof details === "object") {
+    const firstDetail = Object.values(details)
+      .flat()
+      .map((item) => (typeof item === "string" ? item : item?.message || item?.msg || item?.error))
+      .find(Boolean);
+    if (firstDetail) return firstDetail;
+  }
+
   return (
-    error?.response?.data?.message ||
-    error?.response?.data?.error ||
+    data?.message ||
+    data?.error ||
     error?.message ||
     fallback
   );
@@ -192,6 +204,11 @@ export async function platformRegister(payload) {
 
 export async function tenantLogin(credentials) {
   const response = await api.post("/api/auth/login", credentials);
+  return response.data;
+}
+
+export async function getGymBySlug(slug) {
+  const response = await api.get(`/api/auth/gym/${encodeURIComponent(slug)}`);
   return response.data;
 }
 
@@ -215,6 +232,31 @@ export async function forgotPassword(payload) {
   return response.data;
 }
 
+export async function sendRegistrationOtp(payload) {
+  const response = await api.post("/api/auth/send-registration-otp", payload);
+  return response.data;
+}
+
+export async function verifyRegistrationOtp(payload) {
+  const response = await api.post("/api/auth/verify-registration-otp", payload);
+  return response.data;
+}
+
+export async function startGymRegistration(payload) {
+  const response = await api.post("/api/gym/register", payload);
+  return response.data;
+}
+
+export async function verifyGymRegistration(payload) {
+  const response = await api.post("/api/gym/register/verify", payload);
+  return response.data;
+}
+
+export async function resendGymRegistrationOtp(payload) {
+  const response = await api.post("/api/gym/register/resend-otp", payload);
+  return response.data;
+}
+
 export async function verifyOtp(payload) {
   const response = await api.post("/api/auth/verify-otp", payload);
   return response.data;
@@ -225,8 +267,23 @@ export async function resetPassword(payload) {
   return response.data;
 }
 
-export async function createGym(payload) {
-  const response = await api.post("/api/platform/create-gym", payload);
+export async function platformForgotPassword(payload) {
+  const response = await api.post("/api/auth/platform/forgot-password", payload);
+  return response.data;
+}
+
+export async function platformVerifyOtp(payload) {
+  const response = await api.post("/api/auth/platform/verify-otp", payload);
+  return response.data;
+}
+
+export async function platformResetPassword(payload) {
+  const response = await api.post("/api/auth/platform/reset-password", payload);
+  return response.data;
+}
+
+export async function createGym(payload, token = null) {
+  const response = await api.post("/api/gym", payload, getAuthConfig(token));
   return response.data;
 }
 
@@ -301,6 +358,11 @@ export async function getProfile(token = null) {
   const response = await api.get(`/api/profile`, getAuthConfig(token));
   // Return the inner `data` object expected from the profile endpoint
   return response.data?.data || response.data;
+}
+
+export async function getMyGym(token = null) {
+  const response = await api.get("/api/gym/my-gym", getAuthConfig(token));
+  return response.data;
 }
 
 export async function registerNotificationDeviceToken(payload, token = null) {
@@ -427,6 +489,90 @@ export async function deleteMembershipPlan(planId, token = null) {
 
 export async function getPlanStats(planId, token = null) {
   const response = await api.get(`/api/membership/plans/${planId}/stats`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMembershipDashboard(params = {}, token = null) {
+  const response = await api.get("/api/membership/dashboard", { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function getMembershipSubscriptions(params = {}, token = null) {
+  const response = await api.get("/api/membership/subscriptions", { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function getExpiringMemberships(params = {}, token = null) {
+  const response = await api.get("/api/membership/subscriptions/expiring", { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function assignMembership(payload, token = null) {
+  const response = await api.post("/api/membership/subscriptions/assign", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function renewMembership(subscriptionId, payload = {}, token = null) {
+  const response = await api.post(`/api/membership/subscriptions/${subscriptionId}/renew`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function cancelMembership(subscriptionId, payload = {}, token = null) {
+  const response = await api.patch(`/api/membership/subscriptions/${subscriptionId}/cancel`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMembershipPayments(params = {}, token = null) {
+  const response = await api.get("/api/membership/payments", { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function createMembershipPayment(payload, token = null) {
+  const response = await api.post("/api/membership/payments", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyMembershipPayments(params = {}, token = null) {
+  const response = await api.get("/api/membership/payments/me", { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function updateMembershipSubscriptionPayment(subscriptionId, payload, token = null) {
+  const response = await api.patch(`/api/membership/subscriptions/${encodeURIComponent(subscriptionId)}/payment`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function exportMembershipPayments(params = {}, token = null) {
+  const response = await api.get("/api/membership/payments/export", {
+    ...getAuthConfig(token),
+    params,
+    responseType: "blob",
+  });
+  return response.data;
+}
+
+export async function getMembershipEarnings(params = {}, token = null) {
+  const response = await api.get("/api/membership/analytics/earnings", { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function getMemberSubscription(userId, token = null) {
+  const response = await api.get(`/api/membership/subscriptions/user/${userId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function checkMembershipAccess(userId, token = null) {
+  const response = await api.get(`/api/membership/subscriptions/check-access/${userId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createMembershipCheckout(payload, token = null) {
+  const response = await api.post("/api/membership/subscriptions/checkout", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function verifyMembershipCheckout(payload, token = null) {
+  const response = await api.post("/api/membership/subscriptions/verify-payment", payload, getAuthConfig(token));
   return response.data;
 }
 
@@ -727,10 +873,23 @@ export async function getPeakHours(params = {}, token = null) {
   return response.data;
 }
 
+function toReportIsoDateTime(value, boundary = "start") {
+  if (!value || typeof value !== "string") return value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  return `${value}${boundary === "end" ? "T23:59:59.999Z" : "T00:00:00.000Z"}`;
+}
+
 export async function getAttendanceComparison(params = {}, token = null) {
+  const normalizedParams = {
+    ...params,
+    period1Start: toReportIsoDateTime(params.period1Start, "start"),
+    period1End: toReportIsoDateTime(params.period1End, "end"),
+    period2Start: toReportIsoDateTime(params.period2Start, "start"),
+    period2End: toReportIsoDateTime(params.period2End, "end"),
+  };
   const response = await api.get("/api/attendance/report/comparison", {
     ...getAuthConfig(token),
-    params,
+    params: normalizedParams,
   });
   return response.data;
 }
@@ -818,8 +977,11 @@ export async function deleteMeal(mealId, token = null) {
 }
 
 // Meal Plans
-export async function getPlans(token = null) {
-  const response = await api.get("/api/nutrition/plans", getAuthConfig(token));
+export async function getPlans(page = 1, limit = 20, token = null) {
+  const response = await api.get("/api/nutrition/plans", {
+    ...getAuthConfig(token),
+    params: { page, limit },
+  });
   return response.data;
 }
 
@@ -1002,21 +1164,28 @@ export async function getClassSchedules(classId, token = null) {
   return response.data;
 }
 
+export async function updateClassSchedule(scheduleId, scheduleData, token = null) {
+  const response = await api.patch(
+    `${CLASS_API_ROOT}/schedules/${scheduleId}`,
+    { ...scheduleData, dayOfWeek: normalizeDayOfWeek(scheduleData?.dayOfWeek) },
+    getAuthConfig(token)
+  );
+  return response.data;
+}
+
 export async function deleteClassSchedule(scheduleId, token = null) {
   const response = await api.delete(`${CLASS_API_ROOT}/schedules/${scheduleId}`, getAuthConfig(token));
   return response.data;
 }
 
 export async function createClassSlot(classId, slotData, token = null) {
-  const payload = { ...slotData };
+  const payload = {
+    startTime: slotData.startTime,
+    endTime: slotData.endTime,
+    capacity: Number(slotData.capacity),
+  };
 
-  if (payload.scheduleId === "" || payload.scheduleId === null || payload.scheduleId === undefined) {
-    delete payload.scheduleId;
-  }
-
-  if (payload.capacity !== undefined && payload.capacity !== null) {
-    payload.capacity = Number(payload.capacity);
-  }
+  if (slotData.scheduleId) payload.scheduleId = String(slotData.scheduleId);
 
   const response = await api.post(`${CLASS_CLASSES_API}/${classId}/slots`, payload, getAuthConfig(token));
   return response.data;
@@ -1246,6 +1415,11 @@ export async function removeWorkoutTrainerAssignment(planId, trainerId, token = 
 
 export async function assignWorkoutToMember(planId, payload, token = null) {
   const response = await api.post(`${WORKOUT_API_PREFIX}/workouts/${planId}/assign`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function previewWorkoutAssignment(planId, payload, token = null) {
+  const response = await api.post(`${WORKOUT_API_PREFIX}/workouts/${planId}/assign/preview`, payload, getAuthConfig(token));
   return response.data;
 }
 
@@ -1748,13 +1922,48 @@ export async function deleteUser(id, token = null) {
   return response.data;
 }
 
-export async function getUserPermissions(userId) {
-  const response = await api.get(`/api/tenant/users/${userId}/permissions`);
+export async function getRoles(token = null) {
+  const response = await api.get("/api/roles", getAuthConfig(token));
   return response.data;
 }
 
-export async function updateUserPermissions(userId, payload) {
-  const response = await api.post(`/api/tenant/users/${userId}/permissions`, payload);
+export async function getRole(roleId, token = null) {
+  const response = await api.get(`/api/roles/${roleId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function createRole(payload, token = null) {
+  const response = await api.post("/api/roles", payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateRole(roleId, payload, token = null) {
+  const response = await api.patch(`/api/roles/${roleId}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function deleteRole(roleId, token = null) {
+  const response = await api.delete(`/api/roles/${roleId}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function assignTenantUserRole(userId, payload, token = null) {
+  const response = await api.post(`/api/tenant/user/${userId}/assign-role`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getTenantPermissions(token = null) {
+  const response = await api.get("/api/tenant/permissions", getAuthConfig(token));
+  return response.data;
+}
+
+export async function getUserPermissions(userId, token = null) {
+  const response = await api.get(`/api/tenant/users/${userId}/permissions`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updateUserPermissions(userId, payload, token = null) {
+  const response = await api.post(`/api/tenant/users/${userId}/permissions`, payload, getAuthConfig(token));
   return response.data;
 }
 
@@ -1795,6 +2004,88 @@ export async function updateProduct(productId, payload, token = null) {
 
 export async function deleteProduct(productId, token = null) {
   const response = await api.delete(`/api/products/${productId}`, getAuthConfig(token));
+  return response.data;
+}
+
+const PAYROLL_API_PREFIX = "/api/payroll";
+
+export async function getPayrollStaff(params = {}, token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/staff`, { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function getPayrollWages(params = {}, token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/wages`, { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function createPayrollWage(payload, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/wages`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function updatePayrollWage(wageId, payload, token = null) {
+  const response = await api.patch(`${PAYROLL_API_PREFIX}/wages/${encodeURIComponent(wageId)}`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function endPayrollWage(wageId, token = null) {
+  const response = await api.delete(`${PAYROLL_API_PREFIX}/wages/${encodeURIComponent(wageId)}`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPayrollWageSummary(userId, token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/wages/${encodeURIComponent(userId)}/summary`, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPayrollAbsences(params = {}, token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/absences`, { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function createPayrollAbsence(payload, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/absences`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function voidPayrollAbsence(absenceId, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/absences/${encodeURIComponent(absenceId)}/void`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPayrollHolidays(params = {}, token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/holidays`, { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function createPayrollHoliday(payload, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/holidays`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function voidPayrollHoliday(holidayId, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/holidays/${encodeURIComponent(holidayId)}/void`, {}, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getPayrollPayments(params = {}, token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/payments`, { ...getAuthConfig(token), params });
+  return response.data;
+}
+
+export async function createPayrollPayment(payload, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/payments`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function voidPayrollPayment(paymentId, payload, token = null) {
+  const response = await api.post(`${PAYROLL_API_PREFIX}/payments/${encodeURIComponent(paymentId)}/void`, payload, getAuthConfig(token));
+  return response.data;
+}
+
+export async function getMyPayroll(token = null) {
+  const response = await api.get(`${PAYROLL_API_PREFIX}/me`, getAuthConfig(token));
   return response.data;
 }
 

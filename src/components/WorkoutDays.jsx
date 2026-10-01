@@ -1,34 +1,24 @@
-import { Fragment, useState, useEffect } from "react";
-import { ChevronDown, Dumbbell, Pencil, Play, Plus, Search, Trash, X } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
+import { Dumbbell, Edit, Play, Plus, Trash, X } from "lucide-react";
 import toast from "react-hot-toast";
 import {
-  getWorkoutDays,
   createWorkoutDay, updateWorkoutDay, deleteWorkoutDay,
-  assignExerciseToWorkoutDay, updateWorkoutDayExercise, removeWorkoutDayExercise,
-  createSupersetGroup, getSupersetGroups, updateSupersetGroup, deleteSupersetGroup,
+  updateWorkoutDayExercise, removeWorkoutDayExercise,
   getApiError, startWorkoutSession
 } from "../services/api";
+import TablePagination from "./TablePagination";
+import AddExerciseModal from "./AddExerciseModal";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
 function nameOf(item) { return item?.name || item?.fullName || item?.title || item?.email || idOf(item) || "-"; }
 function emptyDay() { return { title: "", dayNumber: "", notes: "" }; }
 function emptyConfig() { return { exerciseId: "", sets: "", reps: "", duration: "", restTime: "", supersetGroupId: "" }; }
 
-const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
-const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
-
-const muscleGroupOptions = ["CHEST", "BACK", "LEGS", "SHOULDERS", "ARMS", "CORE", "FULL_BODY"];
-const trainerRoles = ["PRIMARY", "ASSISTANT", "SUBSTITUTE"];
-
-function displayDate(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-}
-function titleCase(value) { return String(value || "").toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "); }
+const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+const modalInputClass = "h-8 w-full rounded-lg border border-[#E2E8F0] bg-[#FBFCFD]/20 px-3 text-xs text-[#0F172A] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252]/30 focus:bg-white";
+const modalButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]";
+const modalPrimaryButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-[#0D8252] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]";
+const DAY_PAGE_SIZE = 10;
 
 function Card({ children, className = "" }) {
   return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
@@ -54,60 +44,56 @@ function normalizeDayExerciseLinks(day) {
     day?.data?.links,
     day?.data?.exerciseLinks,
   ];
-  return candidates.find(Array.isArray) || [];
+  return [...(candidates.find(Array.isArray) || [])]
+    .sort((a, b) => Number(a?.orderIndex ?? Number.MAX_SAFE_INTEGER) - Number(b?.orderIndex ?? Number.MAX_SAFE_INTEGER));
 }
 
 export default function WorkoutDays(props) {
-  const { user, role, canManage, canEdit, canDelete, selectedPlan, selectedPlanId, days, setDays, selectedDayId, setSelectedDayId, activeSession, assignmentId, onStartWorkout, onResumeWorkout, exercises, refreshSelectedPlan } = props;
+  const { user, role, canManage, canEdit, canDelete, selectedPlan, selectedPlanId, days, setDays, daysLoading, selectedDayId, setSelectedDayId, activeSession, assignmentId, onStartWorkout, onResumeWorkout, exercises, refreshSelectedPlan } = props;
 
   const [dayForm, setDayForm] = useState(emptyDay());
   const [editingDayId, setEditingDayId] = useState("");
   const [showDayForm, setShowDayForm] = useState(false);
-  const [exerciseSearch, setExerciseSearch] = useState("");
-  const [muscleFilter, setMuscleFilter] = useState("");
-  const [selectedExerciseId, setSelectedExerciseId] = useState("");
-  const [exerciseConfig, setExerciseConfig] = useState(emptyConfig());
-  const [editingExerciseId, setEditingExerciseId] = useState("");
+  const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
+  const [editingExercise, setEditingExercise] = useState(null);
+  const [editingExerciseDay, setEditingExerciseDay] = useState(null);
   const [editingConfig, setEditingConfig] = useState(emptyConfig());
-  const [supersetGroups, setSupersetGroups] = useState([]);
-  const [supersetForm, setSupersetForm] = useState({ name: "", restAfterRound: "", orderIndex: "" });
-  const [showSupersetForm, setShowSupersetForm] = useState(false);
+  const [dayPage, setDayPage] = useState(1);
+  const [savingDay, setSavingDay] = useState(false);
 
-  useEffect(() => {
-    setSelectedDayId("");
-    setEditingDayId("");
+  const closeDayModal = () => {
     setShowDayForm(false);
-    setSelectedExerciseId("");
-    setExerciseConfig(emptyConfig());
-    setExerciseSearch("");
-    setMuscleFilter("");
-  }, []);
+    setDayForm(emptyDay());
+  };
+
+  const openDayModal = () => {
+    setEditingDayId("");
+    const highestDayNumber = days.reduce((highest, day) => Math.max(highest, Number(day.dayNumber) || 0), 0);
+    setDayForm({ ...emptyDay(), dayNumber: String(highestDayNumber + 1) });
+    setShowDayForm(true);
+  };
 
   useEffect(() => {
-    if (!selectedDayId) {
-      setSupersetGroups([]);
-      return;
-    }
-
-    let active = true;
-
-    (async () => {
-      try {
-        const data = await getSupersetGroups(selectedDayId, user?.token);
-        const list = Array.isArray(data) ? data : data?.data || data?.supersets || [];
-        if (active) setSupersetGroups(list);
-      } catch (error) {
-        if (active) toast.error(getApiError(error, "Unable to load superset groups"));
-      }
-    })();
-
-    return () => { active = false; };
-  }, [selectedDayId, user?.token]);
+    if (!editingExercise) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [editingExercise]);
 
   const handleCreateDay = async (event) => {
     event.preventDefault();
+    if (savingDay) return;
+    const dayNumber = Number(dayForm.dayNumber);
     if (!dayForm.title.trim() || !dayForm.dayNumber) {
       toast.error("Day title and number are required");
+      return;
+    }
+    if (!Number.isInteger(dayNumber) || dayNumber < 1) {
+      toast.error("Day number must be a positive whole number");
+      return;
+    }
+    if (days.some((day) => Number(day.dayNumber) === dayNumber)) {
+      toast.error("Day number must be unique within this workout plan");
       return;
     }
     if (!selectedPlanId) {
@@ -115,42 +101,102 @@ export default function WorkoutDays(props) {
       return;
     }
     try {
-      await createWorkoutDay(selectedPlanId, { ...dayForm, dayNumber: Number(dayForm.dayNumber) }, user?.token);
+      setSavingDay(true);
+      const response = await createWorkoutDay(selectedPlanId, {
+        dayNumber,
+        title: dayForm.title.trim(),
+        ...(dayForm.notes.trim() && { notes: dayForm.notes.trim() }),
+      }, user?.token);
+      const createdDay = response?.data?.data || response?.data || response;
+      const newDay = {
+        ...(createdDay && typeof createdDay === "object" ? createdDay : {}),
+        dayNumber,
+        title: dayForm.title.trim(),
+        ...(dayForm.notes.trim() && { notes: dayForm.notes.trim() }),
+        exercises: Array.isArray(createdDay?.exercises) ? createdDay.exercises : [],
+      };
+      setDays((current) => [...current.filter((day) => Number(day.dayNumber) !== dayNumber), newDay]
+        .sort((first, second) => Number(first.dayNumber) - Number(second.dayNumber)));
       toast.success("Workout day created");
-      setShowDayForm(false);
-      setDayForm(emptyDay());
-      await refreshSelectedPlan();
+      closeDayModal();
+      setDayPage(1);
+      try {
+        await refreshSelectedPlan();
+      } catch (error) {
+        toast.error(getApiError(error, "Workout day created, but the list could not be refreshed"));
+      }
     } catch (error) {
       toast.error(getApiError(error, "Unable to create workout day"));
+    } finally {
+      setSavingDay(false);
     }
   };
 
   const handleUpdateDay = async (event) => {
     event.preventDefault();
+    const dayNumber = Number(dayForm.dayNumber);
+    const originalDay = days.find((day) => idOf(day) === editingDayId);
     if (!dayForm.title.trim() || !dayForm.dayNumber) {
       toast.error("Day title and number are required");
       return;
     }
+    if (!Number.isInteger(dayNumber) || dayNumber < 1) {
+      toast.error("Day number must be a positive whole number");
+      return;
+    }
+    if (days.some((day) => idOf(day) !== editingDayId && Number(day.dayNumber) === dayNumber)) {
+      toast.error("Day number must be unique within this workout plan");
+      return;
+    }
+    const payload = {};
+    if (dayForm.title.trim() !== (originalDay?.title || "")) payload.title = dayForm.title.trim();
+    if (dayNumber !== Number(originalDay?.dayNumber)) payload.dayNumber = dayNumber;
+    if (dayForm.notes !== (originalDay?.notes || "")) payload.notes = dayForm.notes;
+    if (!Object.keys(payload).length) {
+      cancelEditDay();
+      toast.success("No changes to save");
+      return;
+    }
     try {
-      await updateWorkoutDay(editingDayId, { ...dayForm, dayNumber: Number(dayForm.dayNumber) }, user?.token);
+      setSavingDay(true);
+      const response = await updateWorkoutDay(editingDayId, payload, user?.token);
+      const updatedDay = response?.data?.data || response?.data || response;
+      setDays((current) => current.map((day) => idOf(day) === editingDayId
+        ? { ...day, ...payload, ...(updatedDay && typeof updatedDay === "object" ? updatedDay : {}) }
+        : day).sort((first, second) => Number(first.dayNumber) - Number(second.dayNumber)));
       toast.success("Workout day updated");
       setEditingDayId("");
       setDayForm(emptyDay());
-      await refreshSelectedPlan();
+      setDayPage(1);
+      try {
+        await refreshSelectedPlan();
+      } catch (error) {
+        toast.error(getApiError(error, "Workout day updated, but the list could not be refreshed"));
+      }
     } catch (error) {
       toast.error(getApiError(error, "Unable to update workout day"));
+    } finally {
+      setSavingDay(false);
     }
   };
 
   const handleDeleteDay = async (dayId) => {
     if (!window.confirm("Are you sure you want to delete this workout day?")) return;
     try {
+      setSavingDay(true);
       await deleteWorkoutDay(dayId, user?.token);
+      setDays((current) => current.filter((day) => idOf(day) !== dayId));
       toast.success("Workout day deleted");
       if (selectedDayId === dayId) setSelectedDayId("");
-      await refreshSelectedPlan();
+      try {
+        await refreshSelectedPlan();
+      } catch (error) {
+        toast.error(getApiError(error, "Workout day deleted, but the list could not be refreshed"));
+      }
     } catch (error) {
       toast.error(getApiError(error, "Unable to delete workout day"));
+    } finally {
+      setSavingDay(false);
     }
   };
 
@@ -186,41 +232,16 @@ export default function WorkoutDays(props) {
     setDayForm(emptyDay());
   };
 
-  const handleSelectExercise = (exerciseId) => {
-    if (selectedExerciseId === exerciseId) {
-      setSelectedExerciseId("");
-      return;
-    }
-    setSelectedExerciseId(exerciseId);
-    setExerciseConfig(emptyConfig());
-  };
+  useEffect(() => {
+    if (!editingDayId) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [editingDayId]);
 
-  const handleLinkExercise = async (event) => {
-    event.preventDefault();
-    if (!selectedExerciseId) {
-      toast.error("Please select an exercise");
-      return;
-    }
-    try {
-      const payload = { exerciseId: selectedExerciseId };
-      if (exerciseConfig.sets !== "") payload.sets = Number(exerciseConfig.sets);
-      if (exerciseConfig.reps !== "") payload.reps = Number(exerciseConfig.reps);
-      if (exerciseConfig.duration !== "") payload.duration = Number(exerciseConfig.duration);
-      if (exerciseConfig.restTime !== "") payload.restTime = Number(exerciseConfig.restTime);
-      if (exerciseConfig.supersetGroupId) payload.supersetGroupId = exerciseConfig.supersetGroupId;
-      if (exerciseConfig.orderIndex !== "") payload.orderIndex = Number(exerciseConfig.orderIndex);
-      await assignExerciseToWorkoutDay(selectedDayId, payload, user?.token);
-      toast.success("Exercise linked to day");
-      setSelectedExerciseId("");
-      setExerciseConfig(emptyConfig());
-      await refreshSelectedPlan();
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to link exercise"));
-    }
-  };
-
-  const startEditExercise = (we) => {
-    setEditingExerciseId(idOf(we));
+  const startEditExercise = (we, day) => {
+    setEditingExercise(we);
+    setEditingExerciseDay(day);
     setEditingConfig({
       exerciseId: we.exerciseId || idOf(we.exercise) || "",
       sets: we.sets ?? "",
@@ -239,9 +260,10 @@ export default function WorkoutDays(props) {
       if (editingConfig.reps !== "") payload.reps = Number(editingConfig.reps);
       if (editingConfig.duration !== "") payload.duration = Number(editingConfig.duration);
       if (editingConfig.restTime !== "") payload.restTime = Number(editingConfig.restTime);
-      await updateWorkoutDayExercise(editingExerciseId, payload, user?.token);
+      await updateWorkoutDayExercise(idOf(editingExercise), payload, user?.token);
       toast.success("Exercise updated");
-      setEditingExerciseId("");
+      setEditingExercise(null);
+      setEditingExerciseDay(null);
       setEditingConfig(emptyConfig());
       await refreshSelectedPlan();
     } catch (error) {
@@ -250,7 +272,8 @@ export default function WorkoutDays(props) {
   };
 
   const cancelEditExercise = () => {
-    setEditingExerciseId("");
+    setEditingExercise(null);
+    setEditingExerciseDay(null);
     setEditingConfig(emptyConfig());
   };
 
@@ -265,46 +288,29 @@ export default function WorkoutDays(props) {
     }
   };
 
-  const handleCreateSuperset = async (event) => {
-    event.preventDefault();
-    if (!supersetForm.name.trim()) {
-      toast.error("Superset name is required");
-      return;
-    }
-    try {
-      const payload = { name: supersetForm.name };
-      if (supersetForm.restAfterRound !== "") payload.restAfterRound = Number(supersetForm.restAfterRound);
-      if (supersetForm.orderIndex !== "") payload.orderIndex = Number(supersetForm.orderIndex);
-      await createSupersetGroup(selectedDayId, payload, user?.token);
-      toast.success("Superset group created");
-      setShowSupersetForm(false);
-      setSupersetForm({ name: "", restAfterRound: "", orderIndex: "" });
-      const data = await getSupersetGroups(selectedDayId, user?.token);
-      setSupersetGroups(Array.isArray(data) ? data : data?.data || data?.supersets || []);
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to create superset group"));
-    }
+  const openAddExercise = (dayId) => {
+    setSelectedDayId(dayId);
+    setShowAddExerciseModal(true);
   };
 
-  const selectedDay = days.find((d) => idOf(d) === selectedDayId);
-  const selectedDayExercises = normalizeDayExerciseLinks(selectedDay);
-
-  const filteredExercises = (exercises || []).filter((ex) => {
-    const nameMatch = !exerciseSearch || nameOf(ex).toLowerCase().includes(exerciseSearch.toLowerCase());
-    const muscleMatch = !muscleFilter || (ex.muscleGroup || "").toUpperCase() === muscleFilter;
-    return nameMatch && muscleMatch;
-  });
+  const sortedDays = [...days].sort((first, second) => Number(first.dayNumber) - Number(second.dayNumber));
+  const dayTotalPages = Math.max(1, Math.ceil(sortedDays.length / DAY_PAGE_SIZE));
+  const currentDayPage = Math.min(dayPage, dayTotalPages);
+  const paginatedDays = sortedDays.slice((currentDayPage - 1) * DAY_PAGE_SIZE, currentDayPage * DAY_PAGE_SIZE);
+  const editDayNumber = Number(dayForm.dayNumber);
+  const editDayInvalid = !dayForm.title.trim() || !dayForm.dayNumber || !Number.isInteger(editDayNumber) || editDayNumber < 1 ||
+    days.some((day) => idOf(day) !== editingDayId && Number(day.dayNumber) === editDayNumber);
 
   return (
     <section className="space-y-4">
-      <Card className="p-3">
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <Dumbbell size={18} className="text-gray-400" />
-              <h3 className="font-semibold text-gray-950">{selectedPlan ? nameOf(selectedPlan) : "Workout"} — Days</h3>
+      <Card className="overflow-hidden rounded-xl border border-[#E5EAF0] shadow-[0_1px_4px_rgba(15,23,42,0.06)] ring-0">
+        <div className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] text-[#64748B]"><Dumbbell size={12} /></div>
+            <div className="min-w-0">
+              <h3 className="truncate text-[16px] font-bold text-[#0F172A]">{selectedPlan ? nameOf(selectedPlan) : "Workout Plan"}</h3>
+              <p className="mt-0.5 text-[11px] text-[#94A3B8]">{days.length} day(s) in this plan</p>
             </div>
-            <p className="mt-1 text-sm text-gray-500">{days.length} day{days.length !== 1 ? "s" : ""} in this plan</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
           {role === "member" && selectedDayId && (
@@ -316,279 +322,178 @@ export default function WorkoutDays(props) {
           {canManage && (
             <button
               type="button"
-              onClick={() => { setShowDayForm(!showDayForm); setEditingDayId(""); setDayForm(emptyDay()); }}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              onClick={openDayModal}
+              disabled={savingDay || daysLoading}
+              className={modalPrimaryButtonClass}
             >
-              <Plus size={16} />
-              {showDayForm ? "Close" : "Add Day"}
+              <Plus size={13} />
+              Add Day
             </button>
           )}
           </div>
         </div>
 
-        {showDayForm && canManage && (
-          <form onSubmit={handleCreateDay} className="mb-3 grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-3">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label="Day Number">
-                <input className={inputClass} type="number" min="1" value={dayForm.dayNumber} onChange={(e) => setDayForm({ ...dayForm, dayNumber: e.target.value })} placeholder="1" />
-              </Field>
-              <Field label="Title">
-                <input className={inputClass} value={dayForm.title} onChange={(e) => setDayForm({ ...dayForm, title: e.target.value })} placeholder="Push Day" />
-              </Field>
-            </div>
-            <Field label="Notes">
-              <textarea className="min-h-16 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100" value={dayForm.notes} onChange={(e) => setDayForm({ ...dayForm, notes: e.target.value })} placeholder="Optional notes" />
-            </Field>
-            <div className="flex gap-2">
-              <button type="submit" className={primaryButtonClass}>Create Day</button>
-              <button type="button" onClick={() => setShowDayForm(false)} className={buttonClass}>Cancel</button>
-            </div>
-          </form>
-        )}
-
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {days.length ? days.map((day) => {
+        <div className="border-t border-[#EEF2F4] p-3">
+        <div className="space-y-3">
+          {daysLoading ? (
+            <div className="rounded-lg border border-dashed border-[#CBD5E1] bg-[#FBFCFD] px-4 py-8 text-center text-xs text-[#94A3B8]">Loading workout days...</div>
+          ) : paginatedDays.length ? paginatedDays.map((day) => {
             const dayId = idOf(day);
             const isSelected = selectedDayId === dayId;
+            const dayExercises = normalizeDayExerciseLinks(day);
             return (
-              <div key={dayId} className={`group flex flex-col gap-2 rounded-xl border p-4 text-left transition ${isSelected ? "border-blue-500 bg-blue-50 shadow-sm" : "border-gray-200 bg-white hover:border-blue-300 hover:bg-gray-50"}`}>
-                <button type="button" onClick={() => setSelectedDayId(isSelected ? "" : dayId)} className="text-left">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-gray-950">Day {day.dayNumber}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}>
-                      {day.title || "Untitled"}
-                    </span>
-                  </div>
-                  {day.notes && <p className="mt-2 text-sm text-gray-500">{day.notes}</p>}
-                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                    <span>{normalizeDayExerciseLinks(day).length} exercise{normalizeDayExerciseLinks(day).length !== 1 ? "s" : ""}</span>
-                    <span>{displayDate(day.date)}</span>
-                  </div>
-                </button>
-                {role === "member" && (
-                  <button type="button" onClick={() => handleStartWorkout(dayId)} className={`${primaryButtonClass} mt-2 w-full`}>
-                    <Play size={15} />
-                    {activeSession ? "Resume Workout" : "Start Workout"}
+              <section key={dayId} className={`overflow-hidden rounded-lg border transition ${isSelected ? "border-[#A7E4C5]" : "border-[#E5EAF0] bg-white"}`}>
+                <div className="flex flex-col gap-2 border-b border-[#EEF2F4] bg-[#FBFCFD] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                  <button type="button" onClick={() => setSelectedDayId(isSelected ? "" : dayId)} className="min-w-0 rounded-lg text-left">
+                    <p className="truncate text-sm font-bold text-[#0F172A]">Day {day.dayNumber}: {day.title || "Exercises"}</p>
+                    <p className="mt-0.5 text-[11px] text-[#94A3B8]">{dayExercises.length} exercise{dayExercises.length === 1 ? "" : "s"}{day.notes ? ` - ${day.notes}` : ""}</p>
                   </button>
-                )}
-              </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {canManage && role !== "member" && <button type="button" onClick={() => openAddExercise(dayId)} className={modalPrimaryButtonClass}><Plus size={13} /> Add Exercises</button>}
+                    {canEdit && role !== "member" && <button type="button" onClick={() => startEditDay(day)} disabled={savingDay} className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#94A3B8] transition hover:bg-[#F1F5F9] hover:text-[#0D8252] disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Edit day ${day.dayNumber}`}><Edit size={14} /></button>}
+                    {canDelete && role !== "member" && <button type="button" onClick={() => handleDeleteDay(dayId)} disabled={savingDay} className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#94A3B8] transition bg-rose-50 hover:bg-rose-60 text-rose-600 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Delete day ${day.dayNumber}`}><Trash size={13} /></button>}
+                  </div>
+                </div>
+                <div className="space-y-1.5 p-2">
+                  {dayExercises.map((workoutExercise) => {
+                    const workoutExerciseId = idOf(workoutExercise);
+                    const exercise = workoutExercise.exercise || workoutExercise.workoutExercise?.exercise || workoutExercise;
+                    return (
+                      <div key={workoutExerciseId} className="rounded-lg border border-[#EEF2F4] px-3 py-2">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <button type="button" onClick={() => setSelectedDayId(dayId)} className="min-w-0 flex-1 rounded-lg text-left">
+                            <p className="truncate text-xs font-semibold text-[#0F172A]">{nameOf(exercise)}</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#64748B]">
+                              {workoutExercise.sets != null && workoutExercise.sets !== "" && <span>{workoutExercise.sets} sets</span>}
+                              {workoutExercise.reps != null && workoutExercise.reps !== "" && <span>{workoutExercise.reps} reps</span>}
+                              {workoutExercise.weight != null && workoutExercise.weight !== "" && <span>{workoutExercise.weight} kg</span>}
+                              {workoutExercise.duration != null && workoutExercise.duration !== "" && <span>{workoutExercise.duration}s</span>}
+                              {workoutExercise.restTime != null && workoutExercise.restTime !== "" && <span>{workoutExercise.restTime}s rest</span>}
+                              {workoutExercise.supersetGroupId && <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-[#0D8252]">Superset</span>}
+                            </div>
+                          </button>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {canEdit && role !== "member" && <button type="button" onClick={() => startEditExercise(workoutExercise, day)} className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#94A3B8] transition hover:bg-[#F1F5F9] hover:text-[#0D8252]" aria-label={`Edit ${nameOf(exercise)}`}><Edit size={15} /></button>}
+                            {canDelete && role !== "member" && <button type="button" onClick={() => handleDeleteExercise(workoutExerciseId)} className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#94A3B8] transition hover:bg-rose-50 hover:text-rose-600" aria-label={`Remove ${nameOf(exercise)}`}><Trash size={12} /></button>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!dayExercises.length && <p className="px-1 py-2 text-[10px] text-[#94A3B8]">No exercises added yet.</p>}
+                </div>
+                {role === "member" && <div className="border-t border-[#EEF2F4] px-2 py-2"><button type="button" onClick={() => handleStartWorkout(dayId)} className={`${modalPrimaryButtonClass} w-full`}><Play size={13} /> {activeSession ? "Resume Workout" : "Start Workout"}</button></div>}
+              </section>
             );
           }) : (
-            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm text-gray-500">
-              No workout days yet.
-              {canManage ? " Add one to start building this plan." : ""}
-            </div>
+            <div className="rounded-lg border border-dashed border-[#CBD5E1] bg-[#FBFCFD] px-4 py-8 text-center text-xs text-[#94A3B8]">No workout days yet{canManage ? ". Add one to start building this plan." : "."}</div>
           )}
         </div>
+        </div>
 
-        {editingDayId && (
-          <form onSubmit={handleUpdateDay} className="mt-3 grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-3">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label="Day Number">
-                <input className={inputClass} type="number" min="1" value={dayForm.dayNumber} onChange={(e) => setDayForm({ ...dayForm, dayNumber: e.target.value })} />
-              </Field>
-              <Field label="Title">
-                <input className={inputClass} value={dayForm.title} onChange={(e) => setDayForm({ ...dayForm, title: e.target.value })} />
-              </Field>
-            </div>
-            <Field label="Notes">
-              <textarea className="min-h-16 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100" value={dayForm.notes} onChange={(e) => setDayForm({ ...dayForm, notes: e.target.value })} />
-            </Field>
-            <div className="flex gap-2">
-              <button type="submit" className={primaryButtonClass}>Update Day</button>
-              <button type="button" onClick={cancelEditDay} className={buttonClass}>Cancel</button>
-            </div>
-          </form>
-        )}
+        <div className="flex flex-col gap-3 border-t border-[#EEF2F4] px-4 py-3 text-xs text-[#64748B] sm:flex-row sm:items-center sm:justify-between">
+          <p>Page {currentDayPage} of {dayTotalPages} <span className="mx-2 text-[#CBD5E1]">|</span> Showing {paginatedDays.length} records</p>
+          <TablePagination page={currentDayPage} totalPages={dayTotalPages} onPageChange={setDayPage} previousLabel="Prev" />
+        </div>
+
       </Card>
 
-      {selectedDayId && (
-        <div className={role === "member" ? "space-y-4" : "grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"}>
-          {role !== "member" && <Card className="p-3">
-            <div className="mb-3 flex items-center gap-2">
-              <Search size={16} className="text-gray-400" />
-              <h3 className="font-semibold text-gray-950">Exercise Library</h3>
-            </div>
-            <div className="mb-3 grid gap-2 sm:grid-cols-2">
-              <div className="flex items-center gap-2 rounded-md border border-gray-200 px-3">
-                <Search size={16} className="text-gray-400" />
-                <input className="h-9 min-w-0 flex-1 text-sm outline-none" value={exerciseSearch} onChange={(e) => setExerciseSearch(e.target.value)} placeholder="Search exercises..." />
-              </div>
-              <select className={inputClass} value={muscleFilter} onChange={(e) => setMuscleFilter(e.target.value)}>
-                <option value="">All Muscle Groups</option>
-                {muscleGroupOptions.map((mg) => <option key={mg} value={mg}>{titleCase(mg)}</option>)}
-              </select>
-            </div>
-            <div className="max-h-80 divide-y divide-gray-100 overflow-y-auto">
-              {filteredExercises.map((ex) => {
-                const exId = idOf(ex);
-                const isExSelected = selectedExerciseId === exId;
-                return (
-                  <button
-                    key={exId}
-                    type="button"
-                    onClick={() => handleSelectExercise(exId)}
-                    className={`flex w-full items-center gap-3 px-2 py-2 text-left text-sm transition ${isExSelected ? "bg-blue-50" : "hover:bg-gray-50"}`}
-                  >
-                    <Dumbbell size={15} className={isExSelected ? "text-blue-600" : "text-gray-400"} />
-                    <div className="min-w-0 flex-1">
-                      <p className={`truncate font-medium ${isExSelected ? "text-blue-700" : "text-gray-900"}`}>{nameOf(ex)}</p>
-                      {ex.muscleGroup && <p className="text-xs text-gray-500">{titleCase(ex.muscleGroup)}</p>}
-                    </div>
-                  </button>
-                );
-              })}
-              {filteredExercises.length === 0 && (
-                <p className="py-4 text-center text-sm text-gray-400">No exercises found.</p>
-              )}
-            </div>
-          </Card>}
-
-          <div className="space-y-4">
-            {selectedExerciseId && role !== "member" && (
-              <Card className="p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-950">Link Exercise</h3>
-                  <button type="button" onClick={() => setSelectedExerciseId("")} className={iconButtonClass} aria-label="Close">
-                    <X size={16} />
-                  </button>
+      {showDayForm && canManage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onMouseDown={(event) => event.target === event.currentTarget && closeDayModal()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="add-day-title" className="w-full max-w-md overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Dumbbell size={15} /></div>
+                <div>
+                  <h3 id="add-day-title" className="text-base font-bold text-[#0F172A]">Add Days</h3>
+                  <p className="mt-0.5 text-xs leading-4 text-[#64748B]">{days.length} day(s) in this plan</p>
                 </div>
-                <p className="mb-3 text-xs text-gray-500">
-                  Configuring {nameOf((exercises || []).find((ex) => idOf(ex) === selectedExerciseId))}
-                </p>
-                <form onSubmit={handleLinkExercise} className="grid gap-2">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Field label="Sets">
-                      <input className={inputClass} type="number" min="0" value={exerciseConfig.sets} onChange={(e) => setExerciseConfig({ ...exerciseConfig, sets: e.target.value })} placeholder="4" />
-                    </Field>
-                    <Field label="Reps">
-                      <input className={inputClass} type="number" min="0" value={exerciseConfig.reps} onChange={(e) => setExerciseConfig({ ...exerciseConfig, reps: e.target.value })} placeholder="10" />
-                    </Field>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Field label="Duration (seconds)">
-                      <input className={inputClass} type="number" min="0" value={exerciseConfig.duration} onChange={(e) => setExerciseConfig({ ...exerciseConfig, duration: e.target.value })} placeholder="60" />
-                    </Field>
-                    <Field label="Rest (seconds)">
-                      <input className={inputClass} type="number" min="0" value={exerciseConfig.restTime} onChange={(e) => setExerciseConfig({ ...exerciseConfig, restTime: e.target.value })} placeholder="90" />
-                    </Field>
-                  </div>
-                  <Field label="Order Index">
-                    <input className={inputClass} type="number" min="0" value={exerciseConfig.orderIndex} onChange={(e) => setExerciseConfig({ ...exerciseConfig, orderIndex: e.target.value })} placeholder="1" />
-                  </Field>
-                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <Field label="Superset Group">
-                      <select className={inputClass} value={exerciseConfig.supersetGroupId} onChange={(e) => setExerciseConfig({ ...exerciseConfig, supersetGroupId: e.target.value })}>
-                        <option value="">No superset</option>
-                        {supersetGroups.map((sg) => <option key={idOf(sg)} value={idOf(sg)}>{sg.name || `Superset ${idOf(sg).slice(-4)}`}</option>)}
-                      </select>
-                    </Field>
-                    <div className="flex items-end">
-                      <button type="button" onClick={() => setShowSupersetForm(!showSupersetForm)} className={buttonClass}>
-                        <Plus size={15} /> New
-                      </button>
-                    </div>
-                  </div>
-                  {showSupersetForm && (
-                    <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-xs font-semibold uppercase text-gray-500">New Superset</span>
-                        <button type="button" onClick={() => setShowSupersetForm(false)} className={iconButtonClass} aria-label="Close">
-                          <X size={14} />
-                        </button>
-                      </div>
-                      <div className="grid gap-2">
-                        <Field label="Superset Name">
-                          <input className={inputClass} value={supersetForm.name} onChange={(e) => setSupersetForm({ ...supersetForm, name: e.target.value })} placeholder="Superset A" />
-                        </Field>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <Field label="Rest After Round">
-                            <input className={inputClass} type="number" min="0" value={supersetForm.restAfterRound} onChange={(e) => setSupersetForm({ ...supersetForm, restAfterRound: e.target.value })} placeholder="120" />
-                          </Field>
-                          <Field label="Order Index">
-                            <input className={inputClass} type="number" min="0" value={supersetForm.orderIndex} onChange={(e) => setSupersetForm({ ...supersetForm, orderIndex: e.target.value })} placeholder="1" />
-                          </Field>
-                        </div>
-                        <button type="button" onClick={handleCreateSuperset} className={primaryButtonClass}>Create Superset</button>
-                      </div>
-                    </div>
-                  )}
-                  <button type="submit" className={primaryButtonClass}>Link to Day</button>
-                </form>
-              </Card>
-            )}
-
-            <Card className="p-3">
-              <h3 className="mb-2 font-semibold text-gray-950">
-                {selectedDay ? `Day ${selectedDay.dayNumber}: ${selectedDay.title || "Untitled"}` : "Day"} — Exercises
-              </h3>
-              <div className="divide-y divide-gray-100">
-                {selectedDayExercises.map((we) => {
-                  const weId = idOf(we);
-                  const exercise = we.exercise || {};
-                  const exName = nameOf(exercise);
-                  const isEditingEx = editingExerciseId === weId;
-                  return (
-                    <div key={weId} className="py-2">
-                      {isEditingEx ? (
-                        <form onSubmit={handleSaveExercise} className="grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-2">
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <Field label="Sets">
-                              <input className={inputClass} type="number" min="0" value={editingConfig.sets} onChange={(e) => setEditingConfig({ ...editingConfig, sets: e.target.value })} />
-                            </Field>
-                            <Field label="Reps">
-                              <input className={inputClass} type="number" min="0" value={editingConfig.reps} onChange={(e) => setEditingConfig({ ...editingConfig, reps: e.target.value })} />
-                            </Field>
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <Field label="Duration">
-                              <input className={inputClass} type="number" min="0" value={editingConfig.duration} onChange={(e) => setEditingConfig({ ...editingConfig, duration: e.target.value })} />
-                            </Field>
-                            <Field label="Rest">
-                              <input className={inputClass} type="number" min="0" value={editingConfig.restTime} onChange={(e) => setEditingConfig({ ...editingConfig, restTime: e.target.value })} />
-                            </Field>
-                          </div>
-                          <div className="flex gap-2">
-                            <button type="submit" className={primaryButtonClass}>Save</button>
-                            <button type="button" onClick={cancelEditExercise} className={buttonClass}>Cancel</button>
-                          </div>
-                        </form>
-                      ) : (
-                        <div className="flex items-center justify-between gap-3 px-1">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-gray-900">{exName}</p>
-                            <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
-                              {we.sets != null && we.sets !== "" && <span>{we.sets} sets</span>}
-                              {we.reps != null && we.reps !== "" && <span>{we.reps} reps</span>}
-                              {we.duration != null && we.duration !== "" && <span>{we.duration}s</span>}
-                              {we.restTime != null && we.restTime !== "" && <span>rest {we.restTime}s</span>}
-                              {we.supersetGroupId && <span className="font-medium text-blue-600">Superset</span>}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {canEdit && role !== "member" && (
-                              <button type="button" onClick={() => startEditExercise(we)} className={iconButtonClass} aria-label="Edit exercise">
-                                <Pencil size={13} />
-                              </button>
-                            )}
-                            {canDelete && role !== "member" && (
-                              <button type="button" onClick={() => handleDeleteExercise(weId)} className={iconButtonClass} aria-label="Remove exercise">
-                                <Trash size={13} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {selectedDayExercises.length === 0 && (
-                  <p className="py-4 text-center text-sm text-gray-400">No exercises linked to this day. Select an exercise from the library and link it.</p>
-                )}
               </div>
-            </Card>
+              <button type="button" onClick={closeDayModal} disabled={savingDay} className="rounded-lg p-1 text-[#94A3B8] transition hover:bg-[#F8FAFC] hover:text-[#0F172A] disabled:cursor-not-allowed disabled:opacity-50" aria-label="Close add days modal"><X size={14} /></button>
+            </div>
+            <form onSubmit={handleCreateDay}>
+              <div className="grid gap-3 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Day Number"><input className={modalInputClass} type="number" min="1" value={dayForm.dayNumber} onChange={(event) => setDayForm({ ...dayForm, dayNumber: event.target.value })} placeholder="1" /></Field>
+                <Field label="Title"><input className={modalInputClass} value={dayForm.title} onChange={(event) => setDayForm({ ...dayForm, title: event.target.value })} placeholder="Push Day" /></Field>
+              </div>
+              <Field label="Notes"><textarea className="min-h-20 w-full resize-y rounded-lg border border-[#E2E8F0] bg-[#FBFCFD] px-3 py-2 text-xs text-[#334155] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252] focus:bg-white" value={dayForm.notes} onChange={(event) => setDayForm({ ...dayForm, notes: event.target.value })} placeholder="Optional notes" /></Field>
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-[#E2E8F0] bg-[#FBFCFD] px-5 py-4">
+                <button type="button" onClick={closeDayModal} disabled={savingDay} className={modalButtonClass}>Cancel</button>
+                <button type="submit" disabled={savingDay} className={modalPrimaryButtonClass}>{savingDay ? "Creating..." : "Create Day"}</button>
+              </div>
+            </form>
           </div>
         </div>
+      )}
+
+      {editingDayId && canEdit && role !== "member" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onMouseDown={(event) => event.target === event.currentTarget && !savingDay && cancelEditDay()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-day-title" className="w-full max-w-md overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Dumbbell size={15} /></div>
+                <div>
+                  <h3 id="edit-day-title" className="text-base font-bold text-[#0F172A]">Edit Workout Day</h3>
+                  <p className="mt-0.5 text-xs leading-4 text-[#64748B]">Update the selected day details</p>
+                </div>
+              </div>
+              <button type="button" onClick={cancelEditDay} disabled={savingDay} className="rounded-lg p-1 text-[#94A3B8] transition hover:bg-[#F8FAFC] hover:text-[#0F172A] disabled:cursor-not-allowed disabled:opacity-50" aria-label="Close edit workout day modal"><X size={14} /></button>
+            </div>
+            <form onSubmit={handleUpdateDay} className="grid gap-3 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Day Number"><input required className={modalInputClass} type="number" min="1" step="1" value={dayForm.dayNumber} onChange={(event) => setDayForm({ ...dayForm, dayNumber: event.target.value })} /></Field>
+                <Field label="Title"><input required className={modalInputClass} value={dayForm.title} onChange={(event) => setDayForm({ ...dayForm, title: event.target.value })} /></Field>
+              </div>
+              <Field label="Notes"><textarea className="min-h-20 w-full resize-y rounded-lg border border-[#E2E8F0] bg-[#FBFCFD] px-3 py-2 text-xs text-[#334155] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252] focus:bg-white" value={dayForm.notes} onChange={(event) => setDayForm({ ...dayForm, notes: event.target.value })} placeholder="Optional notes" /></Field>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button type="submit" disabled={savingDay || editDayInvalid} className={modalPrimaryButtonClass}>{savingDay ? "Updating..." : "Update Day"}</button>
+                <button type="button" onClick={cancelEditDay} disabled={savingDay} className={modalButtonClass}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingExercise && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-3" onMouseDown={(event) => event.target === event.currentTarget && cancelEditExercise()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-exercise-title" className="w-full max-w-sm rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-[0_20px_50px_rgba(15,23,42,0.18)] sm:p-5" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Dumbbell size={15} /></div>
+                <div className="min-w-0">
+                  <h2 id="edit-exercise-title" className="truncate text-base font-bold text-[#0F172A]">{nameOf(editingExercise.exercise || editingExercise.workoutExercise?.exercise || editingExercise)}</h2>
+                  <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-[#64748B]">Name of the Day: <span className="rounded bg-[#EAFBF3] px-1.5 py-0.5 font-semibold text-[#0D8252]">{editingExerciseDay?.title || "Exercises"}</span></p>
+                </div>
+              </div>
+              <button type="button" onClick={cancelEditExercise} className="shrink-0 rounded p-1 text-[#94A3B8] transition hover:bg-[#F1F5F9] hover:text-[#334155]" aria-label="Close edit exercise modal"><X size={14} /></button>
+            </div>
+            <form onSubmit={handleSaveExercise} className="rounded-lg border border-[#E2E8F0] p-3">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                <Field label="Sets"><input autoFocus className={modalInputClass} type="number" min="0" value={editingConfig.sets} onChange={(event) => setEditingConfig({ ...editingConfig, sets: event.target.value })} /></Field>
+                <Field label="Reps"><input className={modalInputClass} type="number" min="0" value={editingConfig.reps} onChange={(event) => setEditingConfig({ ...editingConfig, reps: event.target.value })} /></Field>
+                <Field label="Duration"><input className={modalInputClass} type="number" min="0" value={editingConfig.duration} onChange={(event) => setEditingConfig({ ...editingConfig, duration: event.target.value })} /></Field>
+                <Field label="Rest"><input className={modalInputClass} type="number" min="0" value={editingConfig.restTime} onChange={(event) => setEditingConfig({ ...editingConfig, restTime: event.target.value })} /></Field>
+              </div>
+            </form>
+            <div className="mt-3 flex justify-end flex-wrap items-center gap-2">
+                <button type="button" onClick={cancelEditExercise} className={modalButtonClass}>Cancel</button>
+                <button type="submit" className={modalPrimaryButtonClass}>Save</button>
+              </div>
+          </div>
+        </div>
+      )}
+
+      {showAddExerciseModal && role !== "member" && (
+        <AddExerciseModal
+          isOpen
+          day={days.find((day) => idOf(day) === selectedDayId)}
+          exercises={exercises || []}
+          user={user}
+          onClose={() => setShowAddExerciseModal(false)}
+          onLinked={refreshSelectedPlan}
+        />
       )}
     </section>
   );

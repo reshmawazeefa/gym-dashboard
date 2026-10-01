@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { Edit, Plus, Search, Trash } from "lucide-react";
+import { createElement, useCallback, useEffect, useState } from "react";
+import { Activity, CalendarDays, Download, Edit, Plus, Search, Trash, Users } from "lucide-react";
 import AddMemberModal from "../components/AddMemberModal";
+import TablePagination from "../components/TablePagination";
+import StatusBadge from "../components/StatusBadge";
 import toast from "react-hot-toast";
 import {
   createTenantUser,
@@ -73,6 +75,9 @@ function normaliseMember(user) {
     raw: user,
   };
 }
+function isMemberActive(member) {
+  return String(member?.status || "").trim().toUpperCase() !== "INACTIVE";
+}
 
 export default function Members() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -80,6 +85,10 @@ export default function Members() {
   const [editData, setEditData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [appliedSearchTerm, setAppliedSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [planFilter, setPlanFilter] = useState("All");
+  const [exporting, setExporting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   const [updatingStatus, setUpdatingStatus] = useState({});
@@ -107,6 +116,15 @@ export default function Members() {
 
     return () => clearTimeout(timer);
   }, [loadMembers]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAppliedSearchTerm(searchTerm.trim().toLowerCase());
+      setCurrentPage(1);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   const handleSave = async (data) => {
     try {
@@ -187,16 +205,13 @@ export default function Members() {
     }
   };
 
-  const handleStatusChange = async (member, newStatus) => {
+  const handleStatusChange = async (member, nextIsActive) => {
     const id = member.id;
+    if (updatingStatus[id]) return;
     try {
       setUpdatingStatus((s) => ({ ...s, [id]: true }));
-      const payload = { isActive: newStatus === "Active" };
-      const response = await updateTenantUserStatus(id, payload);
-      const updated = normaliseMember(unwrapObject(response));
-      const nextMembers = members.map((u) => (u.id === updated.id ? updated : u));
-      setMembers(nextMembers);
-      localStorage.setItem("members", JSON.stringify(nextMembers));
+      await updateTenantUserStatus(id, { isActive: nextIsActive });
+      await loadMembers();
       toast.success("Member status updated");
     } catch (error) {
       toast.error(getApiError(error, "Could not update status"));
@@ -205,12 +220,66 @@ export default function Members() {
     }
   };
 
-  const filteredMembers = members.filter((m) =>
-    [m.name, m.email, m.phoneNumber, m.plan, m.status, m.role]
-      .join(" ")
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase())
-  );
+  const filteredMembers = members.filter((m) => {
+    const searchableFields = [
+      m.name,
+      m.email,
+      m.phoneNumber,
+      m.plan,
+      m.planName,
+      m.status,
+      m.role,
+      m.addressLine1,
+      m.addressLine2,
+      m.city,
+      m.state,
+      m.country,
+      m.postalCode,
+    ];
+    const matchesSearch = !appliedSearchTerm || searchableFields.filter(Boolean).join(" ").toLowerCase().includes(appliedSearchTerm);
+    const matchesStatus = statusFilter === "All" || m.status === statusFilter;
+    const matchesPlan = planFilter === "All" || String(m.planId || m.planName || m.plan) === planFilter;
+    return matchesSearch && matchesStatus && matchesPlan;
+  });
+
+  const planOptions = [...new Map(
+    members
+      .filter((member) => member.planId || member.planName || member.plan)
+      .map((member) => [String(member.planId || member.planName || member.plan), member.planName || member.plan || ""])
+  ).entries()];
+
+  const handleExportCSV = () => {
+    if (exporting) return;
+    setExporting(true);
+
+    try {
+      const headers = ["Name", "Email", "Phone", "Join Date", "Trainer", "Plan", "Status"];
+      const escapeCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+      const rows = filteredMembers.map((member) => [
+        member.name,
+        member.email,
+        member.phoneNumber,
+        member.joinDate,
+        member.raw?.trainer?.name || "",
+        member.planName || member.plan || "",
+        member.status,
+      ]);
+      const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+      const url = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "members.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`${rows.length} member${rows.length === 1 ? "" : "s"} exported`);
+    } catch (error) {
+      toast.error(getApiError(error, "Could not export members"));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const totalPages = Math.ceil(filteredMembers.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -219,117 +288,86 @@ export default function Members() {
     startIndex + itemsPerPage
   );
 
-  return (
-    <div className="p-4 md:p-6">
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  const activeMembers = members.filter((member) => member.status === "Active");
+  const attendanceRecords = JSON.parse(localStorage.getItem("attendanceRecords") || "[]");
+  const today = new Date().toISOString().split("T")[0];
+  const todayCheckIns = attendanceRecords.filter((record) => record.date === today && ["Present", "Late"].includes(record.status)).length;
+  const totalPagesLabel = totalPages || 1;
 
-        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:flex-1">
-          <div className="min-w-0 flex-1">
-            <div className="flex w-full items-center gap-2 rounded bg-white p-3 shadow sm:max-w-xxl">
-              <Search size={18} />
-              <input
-                type="text"
-                placeholder="Search members..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="w-full min-w-0 text-sm outline-none"
-              />
+  return (
+    <div className="min-h-full bg-[#F8F9FB] p-4 text-[#1E293B] sm:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5">
+        <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            {/* <div className="mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#0D8252]">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1"><span className="h-1.5 w-1.5 rounded-full bg-[#0D8252]" /> Live Facility Directory</span>
+              <span className="text-[#CBD5E1]">•</span>
+              <span className="text-[#94A3B8]">Branch #01</span>
+            </div> */}
+            <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">Members Management</h1>
+            <p className="mt-0.5 text-xs text-[#64748B]">Manage member roster, subscription validity, check-in profiles, and NFC turnstile credentials.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={handleExportCSV} disabled={exporting} className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] shadow-sm transition hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"><Download size={13} /> {exporting ? "Exporting..." : "Export CSV"}</button>
+            <button type="button" onClick={() => { setEditData(null); setIsModalOpen(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D8252] px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]"><Plus size={14} /> Add Member</button>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <MemberStatCard label="Total Members" value={members.length} detail="+100%" caption="All verified active profiles" icon={Users} />
+          <MemberStatCard label="Active Floor Sessions" value={activeMembers.length} detail="Currently Working Out" caption="Turnstile verified present" icon={Activity} />
+          <MemberStatCard label="Today's Check-ins" value={todayCheckIns} detail="members today" caption="RFID & QR Gates operational" icon={CalendarDays} />
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-[#EAECF0] bg-white shadow-[0_1px_3px_0_rgba(16,24,40,0.05)]">
+          <div className="flex flex-col gap-3 border-b border-[#EEF2F4] p-4 lg:flex-row lg:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
+              <Search size={14} className="shrink-0 text-[#94A3B8]" />
+              <input type="text" placeholder="Search members by name, email, or phone..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} className="w-full min-w-0 bg-transparent text-xs text-[#0F172A] outline-none placeholder:text-[#94A3B8]" />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[#64748B]">
+              <span>Status:</span>
+              <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setCurrentPage(1); }} className="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-2 text-xs text-[#475569] outline-none"><option value="All">All</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select>
+              {/* <span>Plan:</span>
+              <select value={planFilter} onChange={(event) => { setPlanFilter(event.target.value); setCurrentPage(1); }} className="max-w-40 rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-2 text-xs text-[#475569] outline-none"><option value="All">All Packages</option>{planOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select> */}
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              setEditData(null);
-              setIsModalOpen(true);
-            }}
-            className="flex items-center justify-center gap-2 rounded bg-blue-500 px-4 py-2 text-sm text-white sm:w-auto"
-          >
-            <Plus size={18} /> Add Member
-          </button>
-        </div>
-      </div>
-      <div className="overflow-x-auto rounded bg-white shadow">
-        <table className="w-full text-left">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="p-3">Name</th>
-              <th className="p-3">Email</th>
-              <th className="p-3">Phone</th>
-              <th className="hidden p-3 sm:table-cell">Join Date</th>
-              <th className="p-3">Status</th>
-              <th className="p-3 text-center text-sm font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paginatedMembers.map((m) => (
-              <tr key={m.id} className="border-t">
-                <td className="p-3 text-sm">{m.name}</td>
-                <td className="p-3 text-sm">{m.email}</td>
-                <td className="p-3 text-sm">{m.phoneNumber || "-"}</td>
-                <td className="hidden p-3 sm:table-cell text-sm">{m.joinDate}</td>
-                <td className="p-3">
-                  <select
-                    value={m.status}
-                    onChange={(e) => handleStatusChange(m, e.target.value)}
-                    disabled={!!updatingStatus[m.id]}
-                    className={`rounded px-2 py-1 text-sm border focus:outline-none ${
-                      m.status === "Active"
-                        ? "bg-green-50 text-green-700"
-                        : "bg-red-50 text-red-700"
-                    }`}
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
-                </td>
-                <td className="p-3">
-                  <div className="flex justify-center gap-3">
-                    <button onClick={() => handleView(m)} className="text-blue-500">
-                      <Edit size={18} />
-                    </button>
-                    <button onClick={() => handleDelete(m.id)} className="text-red-500">
-                      <Trash size={18} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-
-            {filteredMembers.length === 0 && (
-              <tr>
-                <td colSpan="5" className="p-4 text-center text-gray-500">
-                  {loading ? "Loading members..." : "No members found"}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        <div className="flex items-center justify-between border-t p-4">
-          <p className="text-sm">
-            Page {currentPage} of {totalPages || 1}
-          </p>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-              disabled={currentPage === 1}
-              className="rounded bg-gray-200 px-3 py-1 disabled:opacity-50"
-            >
-              Prev
-            </button>
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages || 1))}
-              disabled={currentPage === totalPages || totalPages === 0}
-              className="rounded bg-gray-200 px-3 py-1 disabled:opacity-50"
-            >
-              Next
-            </button>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left">
+              <thead className="bg-[#FBFCFD] text-[10px] font-bold uppercase tracking-wide text-[#64748B]">
+                <tr>
+                  <th className="px-4 py-3">Member</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Phone</th>
+                  <th className="px-4 py-3">Join Date</th>
+                  <th className="px-4 py-3">Trainer</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedMembers.map((m) => (
+                  <tr key={m.id} className="border-t border-[#EEF2F4] text-xs text-[#475569] transition hover:bg-[#FBFCFD]">
+                    <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-[11px] font-bold text-[#0D8252]">{(m.name || "M").charAt(0).toUpperCase()}</span><div className="min-w-0"><p className="truncate font-bold text-[#0F172A]">{m.name || "Unnamed member"}</p><p className="text-[10px] text-[#94A3B8]">ID: #{String(m.id).slice(-6)}</p></div></div></td>
+                    <td className="px-4 py-3">{m.email || "-"}</td>
+                    <td className="px-4 py-3">{m.phoneNumber || "-"}</td>
+                    <td className="px-4 py-3">{m.joinDate || "-"}</td>
+                    <td className="px-4 py-3">{m.raw?.trainer?.name || "-"}</td>
+                    <td className="px-4 py-3"><StatusBadge status={isMemberActive(m) ? "ACTIVE" : "INACTIVE"} label={isMemberActive(m) ? "Active" : "Inactive"} onClick={() => void handleStatusChange(m, !isMemberActive(m))} disabled={!!updatingStatus[m.id]} ariaLabel={`${isMemberActive(m) ? "Deactivate" : "Activate"} ${m.name || "member"}`} /></td>
+                    <td className="px-4 py-3"><div className="flex justify-center gap-3"><button type="button" onClick={() => handleView(m)} className="rounded-lg text-[#0D8252] transition hover:text-[#065F46]" aria-label={`Edit ${m.name}`}><Edit size={15} /></button><button type="button" onClick={() => handleDelete(m.id)} className="rounded-lg text-rose-500 transition hover:text-rose-700" aria-label={`Delete ${m.name}`}><Trash size={14} /></button></div></td>
+                  </tr>
+                ))}
+                {filteredMembers.length === 0 && <tr><td colSpan="7" className="px-4 py-10 text-center text-xs text-[#64748B]">{loading ? "Loading members..." : "No members found"}</td></tr>}
+              </tbody>
+            </table>
           </div>
-        </div>
+
+          <div className="flex flex-col gap-3 border-t border-[#EEF2F4] px-4 py-3 text-xs text-[#64748B] sm:flex-row sm:items-center sm:justify-between">
+            <p>Page {currentPage} of {totalPagesLabel} <span className="mx-2 text-[#CBD5E1]">|</span> Showing {paginatedMembers.length} records</p>
+            <TablePagination page={currentPage} totalPages={totalPagesLabel} onPageChange={setCurrentPage} previousLabel="Prev" />
+          </div>
+        </section>
       </div>
 
       {isModalOpen && (
@@ -343,6 +381,15 @@ export default function Members() {
           editData={editData}
         />
       )}
+    </div>
+  );
+}
+
+function MemberStatCard({ label, value, detail, caption, icon }) {
+  return (
+    <div className="flex min-h-[108px] items-center justify-between rounded-2xl border border-[#EAECF0] bg-white p-4 shadow-[0_1px_3px_0_rgba(16,24,40,0.05)]">
+      <div><p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">{label}</p><div className="mt-1 flex items-center gap-2"><span className="text-2xl font-extrabold tracking-tight text-[#0F172A]">{value}</span><span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-[#0D8252]">{detail}</span></div><p className="mt-1 text-[10px] text-[#94A3B8]">{caption}</p></div>
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-[#0D8252]">{createElement(icon, { size: 17 })}</span>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState, useRef } from "react";
 import { ChevronDown, Pause, Play, Plus, Search, StopCircle, Trash, Clock, Target, Activity, ArrowRightLeft } from "lucide-react";
 import toast from "react-hot-toast";
+import StatusBadge from "./StatusBadge";
 import {
   startWorkoutSession, getWorkoutSessionById, completeWorkoutSession, updateWorkoutSession, deleteWorkoutSession,
   getMySessions, getUserSessions, getWorkoutSets, logWorkoutSet, bulkLogSets, updateWorkoutSet, deleteWorkoutSet,
@@ -17,9 +18,9 @@ const setTypeOptions = ["WARMUP", "WORKING", "DROP_SET", "FAILURE", "REST_PAUSE"
 const rpeOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
-const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
+const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
 
 function Card({ children, className = "" }) {
   return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
@@ -34,16 +35,6 @@ function formatElapsed(seconds) {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
-}
-
-function statusBadge(status) {
-  const colors = {
-    SCHEDULED: "bg-blue-50 text-blue-700",
-    IN_PROGRESS: "bg-green-50 text-green-700",
-    COMPLETED: "bg-gray-100 text-gray-700",
-    CANCELLED: "bg-red-50 text-red-700",
-  };
-  return `inline-flex h-7 items-center rounded-full px-3 text-xs font-semibold ${colors[status] || "bg-gray-100 text-gray-700"}`;
 }
 
 function computeDuration(startTime, endTime) {
@@ -506,17 +497,17 @@ export default function WorkoutSessions(props) {
             </div>
             <div className="flex flex-wrap gap-2">
               {activeSession.status === "PAUSED" ? (
-                <button type="button" onClick={handleResumeSession} disabled={resuming} className="inline-flex h-9 items-center gap-2 rounded-md bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">
+                <button type="button" onClick={handleResumeSession} disabled={resuming} className="inline-flex h-9 items-center gap-2 rounded-lg bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">
                   <Play size={16} />
                   {resuming ? "Resuming..." : "Resume"}
                 </button>
               ) : (
-                <button type="button" onClick={handlePauseSession} disabled={pausing} className="inline-flex h-9 items-center gap-2 rounded-md bg-yellow-500 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-yellow-600">
+                <button type="button" onClick={handlePauseSession} disabled={pausing} className="inline-flex h-9 items-center gap-2 rounded-lg bg-yellow-500 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-yellow-600">
                   <Pause size={16} />
                   {pausing ? "Pausing..." : "Pause"}
                 </button>
               )}
-              <button type="button" onClick={() => setEndForm({ ...endForm, show: true })} className="inline-flex h-9 items-center gap-2 rounded-md bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">
+              <button type="button" onClick={() => setEndForm({ ...endForm, show: true })} className="inline-flex h-9 items-center gap-2 rounded-lg bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700">
                 <StopCircle size={16} />
                 End Session
               </button>
@@ -554,7 +545,7 @@ export default function WorkoutSessions(props) {
             <div className="border-t border-gray-200 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <button type="button" className="text-sm font-semibold text-gray-500 hover:text-gray-900" onClick={() => setSelectedSessionId(null)}>
+                  <button type="button" className="rounded-lg text-sm font-semibold text-gray-500 hover:text-gray-900" onClick={() => setSelectedSessionId(null)}>
                     &larr; {activeSession?.workoutDay?.title || "Workout"}
                   </button>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Workout Timer</p>
@@ -597,7 +588,7 @@ export default function WorkoutSessions(props) {
                   </tbody>
                 </table>
               </div>
-              <button type="button" className="mt-3 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" onClick={() => setCompletedExerciseIds((current) => new Set([...current, currentExerciseId]))}>
+              <button type="button" className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" onClick={() => setCompletedExerciseIds((current) => new Set([...current, currentExerciseId]))}>
                 {completedExerciseIds.has(currentExerciseId) ? "Exercise Completed" : "Complete Exercise"}
               </button>
             </div>
@@ -660,7 +651,7 @@ export default function WorkoutSessions(props) {
                       <h3 className="font-semibold text-gray-950">{title}</h3>
                       <p className="mt-1 text-sm text-gray-500">{startTime ? displayDate(startTime) : "-"}</p>
                     </div>
-                    <span className={statusBadge(session.status)}>{titleCase(session.status || "SCHEDULED")}</span>
+                    <StatusBadge status={session.status || "SCHEDULED"} label={titleCase(session.status || "SCHEDULED")} />
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                     <div><p className="text-xs text-gray-500">Duration</p><p className="mt-1 font-semibold text-gray-900">{computeDuration(startTime, endTime)}</p></div>
@@ -671,7 +662,7 @@ export default function WorkoutSessions(props) {
                 </button>
               );
             })}
-            {!sessions.length && <div className="p-8 text-center text-sm text-gray-500 md:col-span-2">{sessionsLoading ? "Loading sessions..." : "No sessions yet. Start your first workout to see it here."}</div>}
+            {!sessions.length && <div className="p-8 text-center text-xs text-gray-500 md:col-span-2">{sessionsLoading ? "Loading sessions..." : "No sessions yet. Start your first workout to see it here."}</div>}
           </div>
         ) : <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -700,7 +691,7 @@ export default function WorkoutSessions(props) {
                     {(role === "admin" || role === "trainer") && (
                       <td className="px-4 py-3 font-medium text-gray-800">{nameOf(session.user || session.member || session)}</td>
                     )}
-                    <td className="px-4 py-3"><span className={statusBadge(session.status)}>{titleCase(session.status || "SCHEDULED")}</span></td>
+                    <td className="px-4 py-3"><StatusBadge status={session.status || "SCHEDULED"} label={titleCase(session.status || "SCHEDULED")} /></td>
                     <td className="px-4 py-3 text-gray-600">{startTime ? displayDate(startTime) : "-"}</td>
                     <td className="px-4 py-3 text-gray-600">{endTime ? displayDate(endTime) : "-"}</td>
                     <td className="px-4 py-3 font-medium tabular-nums text-gray-800">{computeDuration(startTime, endTime)}</td>
@@ -717,14 +708,13 @@ export default function WorkoutSessions(props) {
             </tbody>
           </table>
           {!sessions.length && (
-            <div className="p-8 text-center text-sm text-gray-500">
+            <div className="p-8 text-center text-xs text-gray-500">
               {sessionsLoading ? "Loading sessions..." : "No sessions yet. Start your first workout to see it here."}
             </div>
           )}
         </div>}
 
-        {sessionTotalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+        <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
             <button type="button" className={buttonClass} disabled={sessionPage <= 1} onClick={() => handlePageChange(sessionPage - 1)}>
               Previous
             </button>
@@ -734,7 +724,7 @@ export default function WorkoutSessions(props) {
                   key={p}
                   type="button"
                   onClick={() => handlePageChange(p)}
-                  className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-medium transition ${p === sessionPage ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-sm font-medium transition ${p === sessionPage ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
                 >
                   {p}
                 </button>
@@ -743,8 +733,7 @@ export default function WorkoutSessions(props) {
             <button type="button" className={buttonClass} disabled={sessionPage >= sessionTotalPages} onClick={() => handlePageChange(sessionPage + 1)}>
               Next
             </button>
-          </div>
-        )}
+        </div>
       </Card>
 
       {selectedSessionId && (
@@ -927,8 +916,8 @@ export default function WorkoutSessions(props) {
                         </td>
                         <td className="px-4 py-2">
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => handleEditSet(setId)} className="inline-flex h-7 items-center rounded bg-blue-600 px-2 text-xs font-medium text-white hover:bg-blue-700">Save</button>
-                            <button type="button" onClick={cancelEditSet} className="inline-flex h-7 items-center rounded bg-gray-200 px-2 text-xs font-medium text-gray-700 hover:bg-gray-300">Cancel</button>
+                            <button type="button" onClick={() => handleEditSet(setId)} className="inline-flex h-7 items-center rounded-lg bg-blue-600 px-2 text-xs font-medium text-white hover:bg-blue-700">Save</button>
+                            <button type="button" onClick={cancelEditSet} className="inline-flex h-7 items-center rounded-lg bg-gray-200 px-2 text-xs font-medium text-gray-700 hover:bg-gray-300">Cancel</button>
                           </div>
                         </td>
                       </tr>

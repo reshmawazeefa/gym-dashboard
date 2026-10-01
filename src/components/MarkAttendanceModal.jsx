@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { ClipboardCheck } from "lucide-react";
+import BookingModalShell from "./BookingModalShell";
 
 const empty = { bookingId: "", status: "PRESENT" };
 
@@ -18,7 +20,8 @@ export default function MarkAttendanceModal({ isOpen, onClose, onSave, editData,
 
   if (!isOpen) return null;
 
-  const fieldClass = "h-9 w-full rounded border px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  const fieldClass = "h-9 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-[#334155] outline-none transition focus:border-[#0D8252] focus:bg-white";
+  const labelClass = "mb-1 block text-xs font-semibold text-[#334155]";
 
   const handleSubmit = () => {
     if (!form.bookingId) {
@@ -31,31 +34,31 @@ export default function MarkAttendanceModal({ isOpen, onClose, onSave, editData,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded bg-white p-4 shadow-xl">
-        <h2 className="mb-3 text-base font-bold">Mark Attendance</h2>
-
-        <div className="grid gap-2">
-          <select value={form.bookingId} onChange={(e) => setForm({ ...form, bookingId: e.target.value })} className={fieldClass}>
-            <option value="">Select booking</option>
-            {bookings.map((b) => (
-              <option key={b.id || `${b.classTitle}-${b.date}`} value={b.id}>{b.classTitle} | {b.date ? new Date(b.date).toLocaleDateString() : b.date}</option>
-            ))}
-          </select>
-
+    <BookingModalShell
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Mark Attendance"
+      description="Update the attendance status for this booking."
+      icon={ClipboardCheck}
+      sizeClass="max-w-md"
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Cancel</button>
+          <button type="button" onClick={handleSubmit} className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D8252] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]">Save</button>
+        </>
+      )}
+    >
+      <div className="grid gap-3">
+        <label>
+          <span className={labelClass}>Attendance Status</span>
           <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className={fieldClass}>
             <option value="PRESENT">PRESENT</option>
             <option value="ABSENT">ABSENT</option>
             <option value="LATE">LATE</option>
             <option value="PENDING">PENDING</option>
           </select>
-        </div>
-
-        <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded px-3 py-1.5 text-sm hover:bg-gray-100">Cancel</button>
-          <button onClick={handleSubmit} className="rounded bg-gray-900 px-3 py-1.5 text-sm text-white">Save</button>
-        </div>
+        </label>
       </div>
-    </div>
+    </BookingModalShell>
   );
 }

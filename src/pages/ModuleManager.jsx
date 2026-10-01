@@ -1,16 +1,19 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { Box, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download, Edit, Minus, Plus, Search, Tag, Trash, Users, Eye, X } from "lucide-react";
+import { Box, CalendarDays, CreditCard, Download, Edit, Plus, Search, Tag, Trash, TriangleAlert, Users, Eye, X } from "lucide-react";
 import toast from "react-hot-toast";
-import { moduleDefinitions, statusTone } from "../data/moduleDefinitions";
+import { moduleDefinitions } from "../data/moduleDefinitions";
 import { useAuth } from "../context/AuthContext";
 import { canAccess } from "../utils/rbac";
+import { isSubscriptionActive } from "../utils/subscriptionStatus";
 import AttendanceStatus from "../components/AttendanceStatus";
+import StatusBadge from "../components/StatusBadge";
 import AdminAttendance from "../components/AdminAttendance";
 import AdminEquipments from "../components/AdminEquipments";
 import AdminFacilities from "../components/AdminFacilities";
 import AdminNotifications from "../components/AdminNotifications";
 import AdminWorkouts from "../components/AdminWorkouts";
+import Payroll from "../components/Payroll";
 import FacilityMaintenance from "../components/FacilityMaintenance";
 import TrainerSchedule from "./TrainerSchedule";
 import NutritionModule from "./NutritionModule";
@@ -28,7 +31,6 @@ import {
   subscribeToBillingPlan,
   createPaymentCheckout,
   verifyPayment,
-  recordBillingPayment,
   getMembershipPlans,
   subscribeToPlan,
   unwrapList,
@@ -208,16 +210,6 @@ function renderField(field, value, setForm, moduleKey, members, plans) {
   );
 }
 
-function StatusBadge({ value }) {
-  if (!value) return null;
-
-  return (
-    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusTone[value] || "bg-gray-100 text-gray-700"}`}>
-      {value}
-    </span>
-  );
-}
-
 export default function ModuleManager() {
   const { moduleKey } = useParams();
   const { user } = useAuth();
@@ -237,6 +229,10 @@ export default function ModuleManager() {
 
   if (moduleKey === "workouts") {
     return <AdminWorkouts />;
+  }
+
+  if (moduleKey === "payroll") {
+    return <Payroll key={moduleKey} user={user} />;
   }
 
   if (moduleKey === "nutrition") {
@@ -276,6 +272,56 @@ export default function ModuleManager() {
   );
 }
 
+function ProductFormFields({ productForm, setProductForm, categoryOptions, formatDisplayValue }) {
+  const fieldClass = "h-9 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-[#334155] outline-none transition focus:border-[#0D8252] focus:bg-white";
+  const labelClass = "grid gap-1 text-xs font-semibold text-[#334155]";
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className={labelClass}>
+        Product Name <input className={fieldClass} type="text" value={productForm.name} onChange={(event) => setProductForm((form) => ({ ...form, name: event.target.value }))} placeholder="Whey Protein" />
+      </label>
+      <label className={labelClass}>
+        Category <select className={fieldClass} value={productForm.categoryId} onChange={(event) => setProductForm((form) => ({ ...form, categoryId: event.target.value }))}>
+          <option value="">Select Category</option>
+          {categoryOptions.map((option) => <option key={option.value} value={option.value}>{formatDisplayValue(option.label)}</option>)}
+        </select>
+      </label>
+      <label className={labelClass}>
+        Brand <input className={fieldClass} type="text" value={productForm.brand} onChange={(event) => setProductForm((form) => ({ ...form, brand: event.target.value }))} placeholder="Optimum Nutrition" />
+      </label>
+      <label className={labelClass}>
+        SKU <input className={fieldClass} type="text" value={productForm.sku} onChange={(event) => setProductForm((form) => ({ ...form, sku: event.target.value }))} placeholder="WHEY-001" />
+      </label>
+      <label className={labelClass}>
+        Barcode <input className={fieldClass} type="text" value={productForm.barcode} onChange={(event) => setProductForm((form) => ({ ...form, barcode: event.target.value }))} placeholder="123456789" />
+      </label>
+      <label className={labelClass}>
+        Regular Price <span className="text-red-500">*</span> <input className={fieldClass} type="number" value={productForm.price} onChange={(event) => setProductForm((form) => ({ ...form, price: event.target.value }))} placeholder="4500" />
+      </label>
+      <label className={labelClass}>
+        Sale Price <input className={fieldClass} type="number" value={productForm.salePrice} onChange={(event) => setProductForm((form) => ({ ...form, salePrice: event.target.value }))} placeholder="3999" />
+      </label>
+      <label className={labelClass}>
+        Stock Quantity <span className="text-red-500">*</span> <input className={fieldClass} type="number" value={productForm.stockQuantity} onChange={(event) => setProductForm((form) => ({ ...form, stockQuantity: event.target.value }))} placeholder="20" />
+      </label>
+      <label className={labelClass}>
+        Low Stock Threshold <input className={fieldClass} type="number" value={productForm.lowStockThreshold} onChange={(event) => setProductForm((form) => ({ ...form, lowStockThreshold: event.target.value }))} placeholder="5" />
+      </label>
+      <label className={labelClass}>
+        Image URL <input className={fieldClass} type="text" value={productForm.image} onChange={(event) => setProductForm((form) => ({ ...form, image: event.target.value }))} placeholder="https://example.com/image.jpg" />
+      </label>
+      <label className={`${labelClass} sm:col-span-2`}>
+        Description <textarea className="min-h-24 w-full resize-y rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155] outline-none transition focus:border-[#0D8252] focus:bg-white" value={productForm.description} onChange={(event) => setProductForm((form) => ({ ...form, description: event.target.value }))} placeholder="Premium whey protein isolate" />
+      </label>
+      <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#334155] sm:col-span-2">
+        <input type="checkbox" checked={productForm.isActive} onChange={(event) => setProductForm((form) => ({ ...form, isActive: event.target.checked }))} className="h-4 w-4 rounded border-gray-300 accent-[#0D8252] focus:ring-2 focus:ring-[#0D8252]/20" />
+        Active in store catalog
+      </label>
+    </div>
+  );
+}
+
 function ProductModule({ user }) {
   const [activeTab, setActiveTab] = useState("products");
   const [categories, setCategories] = useState([]);
@@ -296,10 +342,73 @@ function ProductModule({ user }) {
     isActive: true,
   });
   const [categoryEditId, setCategoryEditId] = useState(null);
+  const [isCategoryModalOpen, setCategoryModalOpen] = useState(false);
   const [productEditId, setProductEditId] = useState(null);
+  const [isProductModalOpen, setProductModalOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [expandedProductId, setExpandedProductId] = useState(null);
+
+  useEffect(() => {
+    if (!categoryEditId && !isCategoryModalOpen && !productEditId && !isProductModalOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [categoryEditId, isCategoryModalOpen, productEditId, isProductModalOpen]);
+
+  const closeCategoryModal = () => {
+    setCategoryEditId(null);
+    setCategoryModalOpen(false);
+    setCategoryForm({ name: "", description: "" });
+  };
+
+  const openAddCategoryModal = () => {
+    setActiveTab("categories");
+    setCategoryEditId(null);
+    setCategoryForm({ name: "", description: "" });
+    setCategoryModalOpen(true);
+  };
+
+  const closeProductEditModal = () => {
+    setProductEditId(null);
+    setProductModalOpen(false);
+    setProductForm({
+      name: "",
+      description: "",
+      categoryId: "",
+      sku: "",
+      barcode: "",
+      brand: "",
+      price: "",
+      salePrice: "",
+      stockQuantity: "",
+      lowStockThreshold: "",
+      image: "",
+      isActive: true,
+    });
+  };
+
+  const openAddProductModal = () => {
+    setActiveTab("products");
+    setProductEditId(null);
+    setProductForm({
+      name: "",
+      description: "",
+      categoryId: "",
+      sku: "",
+      barcode: "",
+      brand: "",
+      price: "",
+      salePrice: "",
+      stockQuantity: "",
+      lowStockThreshold: "",
+      image: "",
+      isActive: true,
+    });
+    setProductModalOpen(true);
+  };
 
   const loadCategories = async () => {
     try {
@@ -390,6 +499,7 @@ function ProductModule({ user }) {
       }
       setCategoryForm({ name: "", description: "" });
       setCategoryEditId(null);
+      setCategoryModalOpen(false);
       void loadCategories();
     } catch (error) {
       toast.error(getApiError(error, "Failed to save category"));
@@ -462,6 +572,7 @@ function ProductModule({ user }) {
         isActive: true,
       });
       setProductEditId(null);
+      setProductModalOpen(false);
       void Promise.all([loadProducts(), loadCategories()]);
     } catch (error) {
       toast.error(getApiError(error, "Failed to save product"));
@@ -470,6 +581,7 @@ function ProductModule({ user }) {
 
   const handleCategoryEdit = (category) => {
     setCategoryEditId(category.id || category._id);
+    setCategoryModalOpen(true);
     setCategoryForm({
       name: category.name || "",
       description: category.description || "",
@@ -478,6 +590,7 @@ function ProductModule({ user }) {
 
   const handleProductEdit = (product) => {
     setProductEditId(product.id || product._id);
+    setProductModalOpen(true);
     setProductForm({
       name: product.name || "",
       description: product.description || "",
@@ -492,6 +605,35 @@ function ProductModule({ user }) {
       image: product.image || "",
       isActive: Boolean(product.isActive),
     });
+  };
+
+  const handleExportCsv = () => {
+    const isProductsTab = activeTab === "products";
+    const headers = isProductsTab
+      ? ["Product Name", "SKU", "Barcode", "Category", "Brand", "Price", "Sale Price", "Stock Quantity", "Low Stock Threshold"]
+      : ["Category Name", "Description"];
+    const escapeCsvValue = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const rows = isProductsTab
+      ? products.map((product) => [
+          product.name,
+          product.sku,
+          product.barcode,
+          getCategoryName(product.categoryId),
+          product.brand,
+          product.price,
+          product.salePrice,
+          product.stockQuantity,
+          product.lowStockThreshold,
+        ])
+      : categories.map((category) => [category.name, category.description]);
+    const csv = [headers, ...rows].map((row) => row.map(escapeCsvValue).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = isProductsTab ? "products.csv" : "categories.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${isProductsTab ? "Products" : "Categories"} exported successfully`);
   };
 
   const handleCategoryDelete = async (category) => {
@@ -532,36 +674,24 @@ function ProductModule({ user }) {
   const lowStockCount = products.filter(isLowStock).length;
 
   return (
-    <div className="space-y-6">
-      {/* <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-md bg-gray-950 text-white">
-              <Box size={22} />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-950">Product & Category Management</h1>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">
-                Manage product categories and inventory with authenticated API integration.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard?.writeText(JSON.stringify({ categories, products }, null, 2));
-              toast.success("JSON copied for API review");
-            }}
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
-          >
-            <Download size={17} />
-            Export JSON
-          </button>
+    <div className="min-h-full bg-[#F8F9FB] p-4 text-[#1E293B] sm:p-6 space-y-5">
+      <header className="flex flex-col gap-3 px-0.5 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-xl font-extrabold tracking-tight text-gray-950 sm:text-2xl">Product &amp; Category Management</h1>
+          <p className="mt-0.5 text-xs text-[#64748B]">Manage inventory, categories, barcodes, stock levels, and store pricing.</p>
         </div>
-      </section> */}
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          <button type="button" onClick={handleExportCsv} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] shadow-sm transition hover:bg-[#F8FAFC]"><Download size={14} />Export CSV</button>
+          {activeTab === "products" ? (
+            <button type="button" onClick={openAddProductModal} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0D8252] px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]"><Plus size={14} />Add Product</button>
+          ) : (
+            <button type="button" onClick={openAddCategoryModal} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0D8252] px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]"><Plus size={14} />Add Categories</button>
+          )}
+        </div>
+      </header>
 
-      <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-        <div className="flex flex-wrap gap-2">
+      <section className="w-fit rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
+        <div className="flex flex-wrap gap-1">
           {[
             { key: "products", label: "Products", icon: Box },
             { key: "categories", label: "Categories", icon: Tag },
@@ -570,10 +700,10 @@ function ProductModule({ user }) {
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(tab.key)}
-              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
                 activeTab === tab.key
-                  ? "border-blue-600 bg-blue-600 text-white"
-                  : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                  ? "bg-[#0D8252] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-50"
               }`}
             >
               <tab.icon size={16} />
@@ -583,33 +713,40 @@ function ProductModule({ user }) {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <p className="text-sm font-medium text-gray-500">Total Categories</p>
-          <p className="mt-2 text-2xl font-bold text-gray-950">{categories.length}</p>
+      <section className="grid gap-3 md:grid-cols-3">
+        <div className="flex min-h-[100px] flex-col justify-center rounded-2xl border border-[#EAECF0] bg-white p-4 shadow-[0_1px_3px_0_rgba(16,24,40,0.05)]">
+          <p className="text-xs font-medium text-gray-500">Total Categories</p>
+          <div className="mt-2 flex items-end justify-between gap-3">
+            <p className="text-2xl font-bold leading-none text-gray-950">{categories.length}</p>
+            <span className="rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-[#0D8252]">Active</span>
+          </div>
         </div>
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <p className="text-sm font-medium text-gray-500">Total Products</p>
-          <p className="mt-2 text-2xl font-bold text-gray-950">{products.length}</p>
+        <div className="flex min-h-[100px] flex-col justify-center rounded-2xl border border-[#EAECF0] bg-white p-4 shadow-[0_1px_3px_0_rgba(16,24,40,0.05)]">
+          <p className="text-xs font-medium text-gray-500">Total Products</p>
+          <div className="mt-2 flex items-end justify-between gap-3">
+            <p className="text-2xl font-bold leading-none text-gray-950">{products.length}</p>
+            <span className="rounded-lg bg-gray-100 px-2 py-1 text-[10px] font-medium text-gray-600">In Store</span>
+          </div>
         </div>
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <p className="text-sm font-medium text-gray-500">Low Stock Items</p>
-          <p className="mt-2 text-2xl font-bold text-gray-950">{lowStockCount}</p>
+        <div className="flex min-h-[100px] flex-col justify-center rounded-2xl border border-[#EAECF0] bg-white p-4 shadow-[0_1px_3px_0_rgba(16,24,40,0.05)]">
+          <p className="text-xs font-medium text-gray-500">Low Stock Items</p>
+          <div className="mt-2 flex items-end justify-between gap-3">
+            <p className="text-2xl font-bold leading-none text-amber-600">{lowStockCount}</p>
+            <span className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700">Needs Reorder</span>
+          </div>
         </div>
       </section>
 
       <section
         className={
           activeTab === "products"
-            ? "grid gap-6 xl:grid-cols-[minmax(24rem,0.78fr)_minmax(0,1.42fr)]"
-            : "grid gap-6 lg:grid-cols-[0.75fr_1.25fr] xl:grid-cols-[0.65fr_1.35fr]"
+            ? "flex flex-col gap-4"
+            : "grid"
         }
       >
         <form
           onSubmit={activeTab === "categories" ? handleCategorySubmit : handleProductSubmit}
-          className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${
-            activeTab === "products" ? "p-4 lg:p-5" : "p-4"
-          }`}
+          className="hidden"
         >
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -769,7 +906,7 @@ function ProductModule({ user }) {
                     type="checkbox"
                     checked={productForm.isActive}
                     onChange={(event) => setProductForm((form) => ({ ...form, isActive: event.target.checked }))}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="h-4 w-4 rounded border-gray-300 accent-[#0D8252] focus:ring-2 focus:ring-[#0D8252]/20"
                   />
                   Active Status
                 </label>
@@ -780,7 +917,7 @@ function ProductModule({ user }) {
           <div className={`mt-4 flex flex-col gap-2 sm:flex-row ${activeTab === "products" ? "sm:justify-end" : ""}`}>
             <button
               type="submit"
-              className={`rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 ${
+              className={`rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 ${
                 activeTab === "products" ? "sm:min-w-36" : "flex-1"
               }`}
             >
@@ -808,7 +945,7 @@ function ProductModule({ user }) {
                     isActive: true,
                   });
                 }}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700"
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700"
               >
                 Cancel
               </button>
@@ -816,23 +953,23 @@ function ProductModule({ user }) {
           </div>
         </form>
 
-        <div className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${activeTab === "products" ? "overflow-hidden" : ""}`}>
-          <div className="border-b border-gray-200 p-4">
+        <div className={`rounded-xl bg-white shadow-sm ring-1 ring-gray-200 ${activeTab === "products" ? "order-1 overflow-hidden" : ""}`}>
+          <div className="border-b border-gray-200 bg-white p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white p-3 shadow-sm sm:min-w-64">
-                <Search size={17} className="text-gray-400" />
+              <div className="flex h-9 min-w-0 items-center gap-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-gray-500 sm:min-w-56">
+                <Search size={15} className="text-gray-400" />
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder={`Search ${activeTab === "categories" ? "categories" : "products"}...`}
-                  className="w-full outline-none"
+                  className="w-full bg-transparent text-xs outline-none placeholder:text-gray-400"
                 />
               </div>
               {activeTab === "products" && (
                 <select
                   value={categoryFilter}
                   onChange={(event) => setCategoryFilter(event.target.value)}
-                  className="w-full rounded-md border border-gray-300 bg-white p-2 text-sm text-gray-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-auto"
+                  className="h-9 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-gray-700 outline-none transition focus:border-[#0D8252] focus:bg-white sm:w-40"
                 >
                   <option value="">All Categories</option>
                   {categoryOptions.map((option) => (
@@ -842,32 +979,43 @@ function ProductModule({ user }) {
                   ))}
                 </select>
               )}
+              {activeTab === "categories" && <span className="text-[10px] font-semibold text-[#64748B]">Total: {filteredCategories.length} Items</span>}
             </div>
           </div>
 
-          <div className={`hidden md:block ${activeTab === "products" ? "min-h-[32rem]" : ""}`}>
-            <table className={`${activeTab === "products" ? "w-full table-fixed" : "w-full"} text-left text-sm`}>
+          <div className="overflow-x-auto">
+            <table className={`${activeTab === "products" ? "min-w-[860px] w-full table-fixed" : "w-full"} text-left text-sm`}>
               {activeTab === "products" && (
                 <colgroup>
-                  <col className="w-[28%]" />
-                  <col className="w-[18%]" />
-                  <col className="w-[15%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[19%]" />
+                  <col className="w-[22%]" />
+<col className="w-[13%]" />
+<col className="w-[12%]" />
+<col className="w-[11%]" />
+<col className="w-[9%]" />
+<col className="w-[9%]" />
+<col className="w-[7%]" />
+<col className="w-[7%]" />
+<col className="w-[10%]" />
                 </colgroup>
               )}
-              <thead className="bg-gray-100 text-gray-700">
+              {activeTab === "categories" && (
+                <colgroup>
+                  <col className="w-[36%]" />
+                  <col className="w-[50%]" />
+                  <col className="w-[14%]" />
+                </colgroup>
+              )}
+              <thead className="bg-[#F8FAFC] text-[10px] font-bold uppercase tracking-wide text-[#64748B]">
                 <tr>
                   {activeTab === "categories" ? (
                     ["Category Name", "Description", "Actions"].map((header) => (
-                      <th key={header} className="min-w-32 p-3 font-semibold">
+                      <th key={header} className={`px-4 py-3 ${header === "Actions" ? "text-center" : ""}`}>
                         {header}
                       </th>
                     ))
                   ) : (
-                    ["Product", "Category", "Brand", "Price", "Stock", "Actions"].map((header) => (
-                      <th key={header} className="p-3 font-semibold">
+                    ["Product Details", "Barcode", "Category", "Brand", "Price", "Sale Price", "Stock", "Low Stock", "Actions"].map((header) => (
+                      <th key={header} className="p-3 text-[10px] font-semibold uppercase tracking-wide text-gray-600">
                         {header}
                       </th>
                     ))
@@ -877,30 +1025,28 @@ function ProductModule({ user }) {
               <tbody>
                 {(activeTab === "categories" ? filteredCategories : filteredProducts).map((entity) => {
                   const entityId = entity.id || entity._id || entity.sku || entity.name;
-                  const isExpanded = activeTab === "products" && expandedProductId === entityId;
-
                   if (activeTab === "categories") {
                     return (
-                      <tr key={entityId} className="border-t border-gray-200">
-                        <td className="p-3 text-gray-700">{formatDisplayValue(entity.name)}</td>
-                        <td className="p-3 text-gray-700">{formatDisplayValue(entity.description)}</td>
-                        <td className="p-3">
+                      <tr key={entityId} className="border-t border-[#EEF2F4] text-xs text-[#475569] transition hover:bg-[#FBFCFD]">
+                        <td className="px-4 py-3 font-semibold text-[#0F172A]">{formatDisplayValue(entity.name)}</td>
+                        <td className="px-4 py-3">{formatDisplayValue(entity.description)}</td>
+                        <td className="px-4 py-3">
                           <div className="flex justify-center gap-3">
                             <button
                               type="button"
                               onClick={() => handleCategoryEdit(entity)}
-                              className="text-blue-600"
+                              className="inline-flex items-center justify-center rounded-lg hover:text-[#0D8252] transition"
                               aria-label="Edit record"
                             >
-                              <Edit size={18} />
+                              <Edit size={15} />
                             </button>
                             <button
                               type="button"
                               onClick={() => void handleCategoryDelete(entity)}
-                              className="text-red-600"
+                              className="inline-flex items-center justify-center rounded-lg transition text-red-600"
                               aria-label="Delete record"
                             >
-                              <Trash size={18} />
+                              <Trash size={14} />
                             </button>
                           </div>
                         </td>
@@ -908,102 +1054,61 @@ function ProductModule({ user }) {
                     );
                   }
 
-                  const detailCards = [
-                    { label: "SKU", value: entity.sku },
-                    { label: "Barcode", value: entity.barcode },
-                    { label: "Sale Price", value: entity.salePrice },
-                    { label: "Low Stock Threshold", value: entity.lowStockThreshold },
-                    { label: "Image URL", value: entity.image, wide: true },
-                    { label: "Description", value: entity.description, wide: true },
-                  ];
-
                   return (
                     <React.Fragment key={entityId}>
-                      <tr className="border-t border-gray-200 align-top transition hover:bg-gray-50">
+                      <tr className="border-t border-gray-100 align-top transition hover:bg-gray-50">
                         <td className="p-3 text-gray-800">
                           <div className="flex min-w-0 items-center gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedProductId(isExpanded ? null : entityId)}
-                              className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition ${
-                                isExpanded
-                                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                                  : "border-gray-200 text-gray-600 hover:border-blue-200 hover:text-blue-700"
-                              }`}
-                              aria-label={isExpanded ? "Collapse product details" : "Expand product details"}
-                            >
-                              {isExpanded ? <Minus size={15} /> : <Plus size={15} />}
-                            </button>
-                            <span className="block min-w-0 truncate font-medium">{formatDisplayValue(entity.name)}</span>
+                            {entity.image ? (
+                              <img src={entity.image} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
+                            ) : (
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-400"><Box size={16} /></div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-bold text-gray-900">{formatDisplayValue(entity.name)}</p>
+                              <p className="mt-0.5 truncate text-[10px] text-gray-500">SKU: {formatDisplayValue(entity.sku || "-")}</p>
+                              {/* <p className="truncate text-[10px] text-gray-400">{formatDisplayValue(entity.description || "Product variant")}</p> */}
+                            </div>
                           </div>
                         </td>
-                        <td className="p-3 text-gray-700">
+                        <td className="p-3 text-xs text-gray-700">
+                          <p className=" text-gray-900">{formatDisplayValue(entity.barcode || "-")}</p>
+                          {/* <p className="mt-1 text-[10px] text-gray-500">{entity.sku ? "Standard SKU" : "No barcode"}</p> */}
+                        </td>
+                        <td className="p-3 text-gray-700 text-xs">
                           <span className="block truncate">{getCategoryName(entity.categoryId)}</span>
                         </td>
-                        <td className="p-3 text-gray-700">
+                        <td className="p-3 text-gray-700 text-xs">
                           <span className="block truncate">{formatDisplayValue(entity.brand)}</span>
                         </td>
-                        <td className="p-3 text-gray-700">{formatDisplayValue(entity.price)}</td>
-                        <td className={`p-3 ${isLowStock(entity) ? "font-semibold text-amber-700" : "text-gray-700"}`}>
+                        <td className="p-3 text-xs text-gray-800">{formatDisplayValue(entity.price)}</td>
+                        <td className="p-3 text-xs text-[#0D8252]">{formatDisplayValue(entity.salePrice)}</td>
+                        <td className={`p-3 ${isLowStock(entity) ? "font-semibold text-amber-700  text-xs" : "text-gray-700  text-xs"}`}>
                           {formatDisplayValue(entity.stockQuantity)}
                         </td>
                         <td className="p-3">
-                          <div className="flex items-center justify-end gap-2">
+                          <span className={`inline-flex min-w-7 justify-center rounded-lg px-2 py-1 text-[10px] font-semibold ${isLowStock(entity) ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600"}`}>
+                            {formatDisplayValue(entity.lowStockThreshold)}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center justify-left gap-2">
                             <button
                               type="button"
                               onClick={() => handleProductEdit(entity)}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-100 text-blue-600 transition hover:bg-blue-50"
+                              className="inline-flex items-center justify-center rounded-lg hover:text-[#0D8252] transition"
                               aria-label="Edit record"
                             >
-                              <Edit size={16} />
+                              <Edit size={15} />
                             </button>
                             <button
                               type="button"
                               onClick={() => void handleProductDelete(entity)}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-100 text-red-600 transition hover:bg-red-50"
+                              className="inline-flex items-center justify-center rounded-lg text-red-600 transition"
                               aria-label="Delete record"
                             >
-                              <Trash size={16} />
+                              <Trash size={14} />
                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                      <tr className="border-t border-gray-100">
-                        <td colSpan={6} className="p-0">
-                          <div
-                            className={`grid transition-all duration-300 ease-in-out ${
-                              isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-                            }`}
-                          >
-                            <div className="overflow-hidden">
-                              <div className="m-3 rounded-lg border border-gray-200 bg-gray-50 p-4 shadow-inner">
-                                <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200 pb-4">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <StatusBadge value={entity.isActive ? "Active" : "Inactive"} />
-                                    {isLowStock(entity) && (
-                                      <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
-                                        Low stock
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                                  {detailCards.map((item) => (
-                                    <div
-                                      key={item.label}
-                                      className={`rounded-md border border-gray-200 bg-white p-3 ${
-                                        item.wide ? "sm:col-span-2" : ""
-                                      }`}
-                                    >
-                                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{item.label}</p>
-                                      <p className="mt-1 break-words text-sm leading-6 text-gray-800">
-                                        {formatDisplayValue(item.value)}
-                                      </p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
                           </div>
                         </td>
                       </tr>
@@ -1013,7 +1118,7 @@ function ProductModule({ user }) {
 
                 {((activeTab === "categories" ? filteredCategories : filteredProducts).length === 0) && (
                   <tr>
-                    <td colSpan={activeTab === "categories" ? 3 : 6} className="p-6 text-center text-gray-500">
+                    <td colSpan={activeTab === "categories" ? 3 : 9} className="p-6 text-center text-gray-500">
                       No records found
                     </td>
                   </tr>
@@ -1023,26 +1128,15 @@ function ProductModule({ user }) {
           </div>
 
           {activeTab === "products" && (
-            <div className="hidden items-center justify-between border-t border-gray-200 px-4 py-3 text-sm text-gray-600 md:flex">
-              <span>
-                Showing {filteredProducts.length ? 1 : 0} to {filteredProducts.length} of {filteredProducts.length} results
-              </span>
-              <div className="flex items-center gap-2">
-                <button type="button" className="rounded-md px-2 py-1 text-gray-400" aria-label="Previous page">
-                  <ChevronLeft size={17} />
-                </button>
-                <span className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white">1</span>
-                <button type="button" className="rounded-md px-2 py-1 text-gray-400" aria-label="Next page">
-                  <ChevronRight size={17} />
-                </button>
-              </div>
-            </div>
+            <div class="flex flex-col gap-3 border-t border-[#EEF2F4] px-4 py-3 text-xs text-[#64748B] sm:flex-row sm:items-center sm:justify-between"><p>Page 1 of 1 <span class="mx-2 text-[#CBD5E1]">|</span> Showing 3 records</p><div class="flex items-center gap-1.5"><button type="button" disabled="" class="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50">Prev</button><span class="rounded-lg bg-[#0D8252] px-3 py-1.5 font-bold text-white">1</span><button type="button" disabled="" class="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50">Next</button></div></div>
+          )}
+          {activeTab === "categories" && (
+            <div class="flex flex-col gap-3 border-t border-[#EEF2F4] px-4 py-3 text-xs text-[#64748B] sm:flex-row sm:items-center sm:justify-between"><p>Page 1 of 1 <span class="mx-2 text-[#CBD5E1]">|</span> Showing 3 records</p><div class="flex items-center gap-1.5"><button type="button" disabled="" class="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50">Prev</button><span class="rounded-lg bg-[#0D8252] px-3 py-1.5 font-bold text-white">1</span><button type="button" disabled="" class="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50">Next</button></div></div>
           )}
 
           <div className="grid gap-3 p-4 md:hidden">
             {(activeTab === "categories" ? filteredCategories : filteredProducts).map((entity) => {
               const entityId = entity.id || entity._id || entity.sku || entity.name;
-              const isExpanded = activeTab === "products" && expandedProductId === entityId;
               const summaryFields =
                 activeTab === "categories"
                   ? [
@@ -1056,73 +1150,16 @@ function ProductModule({ user }) {
                       { label: "Price", value: entity.price },
                       { label: "Stock", value: entity.stockQuantity },
                     ];
-              const detailFields = [
-                { label: "SKU", value: entity.sku },
-                { label: "Barcode", value: entity.barcode },
-                { label: "Sale Price", value: entity.salePrice },
-                { label: "Low Stock Threshold", value: entity.lowStockThreshold },
-                { label: "Image URL", value: entity.image },
-                { label: "Description", value: entity.description },
-                { label: "Active Status", value: entity.isActive ? "Active" : "Inactive" },
-              ];
-
               return (
                 <div key={entityId} className="rounded-lg border border-gray-200 p-3">
                   <div className="space-y-3">
                     {summaryFields.map((item) => (
                       <div key={item.label} className="grid grid-cols-[6.5rem_1fr] gap-3 text-sm">
                         <span className="font-medium text-gray-500">{item.label}</span>
-                        {activeTab === "products" && item.label === "Product" ? (
-                          <span className="flex min-w-0 items-center gap-2 text-gray-800">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedProductId(isExpanded ? null : entityId)}
-                              className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition ${
-                                isExpanded
-                                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                                  : "border-gray-200 text-gray-600"
-                              }`}
-                              aria-label={isExpanded ? "Collapse product details" : "Expand product details"}
-                            >
-                              {isExpanded ? <Minus size={15} /> : <Plus size={15} />}
-                            </button>
-                            <span className="min-w-0 break-words">{formatDisplayValue(item.value)}</span>
-                          </span>
-                        ) : (
-                          <span className="min-w-0 break-words text-gray-800">{formatDisplayValue(item.value)}</span>
-                        )}
+                        <span className="min-w-0 break-words text-gray-800">{formatDisplayValue(item.value)}</span>
                       </div>
                     ))}
                   </div>
-
-                  {activeTab === "products" && (
-                    <div
-                      className={`grid transition-all duration-300 ease-in-out ${
-                        isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-                      }`}
-                    >
-                      <div className="overflow-hidden">
-                        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 shadow-inner">
-                          <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-gray-200 pb-3">
-                            <StatusBadge value={entity.isActive ? "Active" : "Inactive"} />
-                            {isLowStock(entity) && (
-                              <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
-                                Low stock
-                              </span>
-                            )}
-                          </div>
-                          <div className="grid gap-2">
-                            {detailFields.map((item) => (
-                              <div key={item.label} className="rounded-md border border-gray-200 bg-white p-3 text-sm">
-                                <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">{item.label}</span>
-                                <span className="mt-1 block min-w-0 break-words text-gray-800">{formatDisplayValue(item.value)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
 
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <button
@@ -1134,9 +1171,9 @@ function ProductModule({ user }) {
                           handleProductEdit(entity);
                         }
                       }}
-                      className="inline-flex items-center justify-center gap-2 rounded-md border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700"
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 px-3 py-2 text-sm font-semibold text-[#0D8252]"
                     >
-                      <Edit size={16} />
+                      <Edit size={15} />
                       Edit
                     </button>
                     <button
@@ -1148,7 +1185,7 @@ function ProductModule({ user }) {
                           void handleProductDelete(entity);
                         }
                       }}
-                      className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm font-semibold text-red-700"
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-700"
                     >
                       <Trash size={16} />
                       Delete
@@ -1166,6 +1203,67 @@ function ProductModule({ user }) {
           </div>
         </div>
       </section>
+
+      {activeTab === "categories" && (categoryEditId || isCategoryModalOpen) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onMouseDown={(event) => event.target === event.currentTarget && closeCategoryModal()}>
+          <form onSubmit={handleCategorySubmit} className="flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Tag size={18} /></div>
+                <div>
+                  <h2 className="text-base font-bold text-[#0F172A]">{categoryEditId ? "Edit Category" : "Add Category"}</h2>
+                  <p className="mt-0.5 text-xs text-[#64748B]">Create and manage product categories for product assignment.</p>
+                </div>
+              </div>
+              <button type="button" onClick={closeCategoryModal} aria-label="Close Category modal" className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]"><X size={17} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div className="grid gap-3">
+                <label className="grid gap-1 text-xs font-semibold text-[#334155]">
+                  Category Name
+                  <input className="h-9 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-[#334155] outline-none transition focus:border-[#0D8252] focus:bg-white" type="text" value={categoryForm.name} onChange={(event) => setCategoryForm((form) => ({ ...form, name: event.target.value }))} placeholder="Protein Powder" />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold text-[#334155]">
+                  Description
+                  <textarea className="min-h-24 w-full resize-y rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155] outline-none transition focus:border-[#0D8252] focus:bg-white" value={categoryForm.description} onChange={(event) => setCategoryForm((form) => ({ ...form, description: event.target.value }))} placeholder="All protein powder categories" />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-white px-5 py-4">
+              <button type="button" onClick={closeCategoryModal} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Cancel</button>
+              <button type="submit" className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D8252] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]"><Tag size={13} />{categoryEditId ? "Update Category" : "Add Category"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {activeTab === "products" && (productEditId || isProductModalOpen) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onMouseDown={(event) => event.target === event.currentTarget && closeProductEditModal()}>
+          <form onSubmit={handleProductSubmit} className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Box size={18} /></div>
+                <div>
+                  <h2 className="text-base font-bold text-[#0F172A]">{productEditId ? "Edit Product" : "Add Product"}</h2>
+                  <p className="mt-0.5 text-xs text-[#64748B]">{productEditId ? "Update product information, inventory, pricing, and category assignments." : "Create a product with inventory, pricing, and category details."}</p>
+                </div>
+              </div>
+              <button type="button" onClick={closeProductEditModal} aria-label="Close Product modal" className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]"><X size={17} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <ProductFormFields productForm={productForm} setProductForm={setProductForm} categoryOptions={categoryOptions} formatDisplayValue={formatDisplayValue} />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-white px-5 py-4">
+              <button type="button" onClick={closeProductEditModal} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Cancel</button>
+              <button type="submit" className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D8252] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]"><Edit size={15} />{productEditId ? "Update Product" : "Add Product"}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -1460,7 +1558,7 @@ function StaffModule({ user }) {
                 handleCancel();
                 setIsFormOpen(true);
               }}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
             >
               <Plus size={18} />
               Add Staff
@@ -1610,14 +1708,14 @@ function StaffModule({ user }) {
               <div className="grid grid-cols-2 gap-2 pt-2">
                 <button
                   type="submit"
-                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                 >
                   {editingId ? "Update" : "Create"}
                 </button>
                 <button
                   type="button"
                   onClick={handleCancel}
-                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
                 </button>
@@ -1657,21 +1755,21 @@ function StaffModule({ user }) {
                       <div className="flex justify-center gap-2">
                         <button
                           onClick={() => handleViewDetails(s)}
-                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-gray-600 hover:bg-gray-100"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-gray-600 hover:bg-gray-100"
                           title="View Details"
                         >
                           <Eye size={16} />
                         </button>
                         <button
                           onClick={() => handleEdit(s)}
-                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-blue-600 hover:bg-blue-50"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-blue-600 hover:bg-blue-50"
                           title="Edit"
                         >
-                          <Edit size={16} />
+                          <Edit size={15} />
                         </button>
                         <button
                           onClick={() => handleDelete(s.id)}
-                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-red-600 hover:bg-red-50"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-red-600 hover:bg-red-50"
                           title="Delete"
                         >
                           <Trash size={16} />
@@ -1700,14 +1798,14 @@ function StaffModule({ user }) {
               <button
                 onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
                 disabled={currentPage === 1}
-                className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-lg border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Prev
               </button>
               <button
                 onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages || 1))}
                 disabled={currentPage === totalPages || totalPages === 0}
-                className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-lg border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Next
               </button>
@@ -1723,7 +1821,7 @@ function StaffModule({ user }) {
               <h2 className="text-xl font-bold text-gray-950">Staff Details</h2>
               <button
                 onClick={() => setViewingStaff(null)}
-                className="inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                className="inline-flex items-center justify-center rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
               >
                 <X size={20} />
               </button>
@@ -1784,14 +1882,14 @@ function StaffModule({ user }) {
                     handleEdit(viewingStaff);
                     setViewingStaff(null);
                   }}
-                  className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                 >
-                  <Edit size={16} />
+                  <Edit size={15} />
                   Edit
                 </button>
                 <button
                   onClick={() => setViewingStaff(null)}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Close
                 </button>
@@ -1835,6 +1933,7 @@ function loadRazorpayScript() {
 
 function OwnerSubscriptionsModule({ user }) {
   const token = user?.accessToken || user?.token;
+  const { refreshSubscriptionStatus, updateUser } = useAuth();
   const [plans, setPlans] = useState([]);
   const [subscription, setSubscription] = useState(null);
   const [payments, setPayments] = useState([]);
@@ -1844,7 +1943,9 @@ function OwnerSubscriptionsModule({ user }) {
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [subscribingPlanId, setSubscribingPlanId] = useState("");
   const [processingAction, setProcessingAction] = useState("");
-  const [paymentForm, setPaymentForm] = useState({ amount: "", method: "CASH", transactionId: "", notes: "" });
+  const [showCancelConfirmation, setShowCancelConfirmation] = useState(false);
+  const [showPaymentHistory, setShowPaymentHistory] = useState(false);
+  const [billingPeriod, setBillingPeriod] = useState("MONTHLY");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [refundForm, setRefundForm] = useState({ amount: "", reason: "" });
 
@@ -1911,6 +2012,24 @@ function OwnerSubscriptionsModule({ user }) {
     void loadPaymentOrders();
   }, [token]);
 
+  useEffect(() => {
+    if (!showCancelConfirmation) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showCancelConfirmation]);
+
+  useEffect(() => {
+    if (!showPaymentHistory) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showPaymentHistory]);
+
   const refreshBilling = async () => {
     await Promise.all([loadSubscription(), loadPayments(), loadPaymentOrders()]);
   };
@@ -1944,6 +2063,7 @@ function OwnerSubscriptionsModule({ user }) {
           if (verified.success || verified.status === "CAPTURED") {
             toast.success(successMessage);
             await refreshBilling();
+            await refreshSubscriptionStatus();
           } else {
             toast.error(getApiError({ response: { data: verified } }, "Payment verification failed"));
           }
@@ -2024,6 +2144,7 @@ function OwnerSubscriptionsModule({ user }) {
       if (!(await openCheckout(checkout, "Payment successful"))) {
         toast.success("Subscribed to plan successfully");
         await refreshBilling();
+        await refreshSubscriptionStatus();
       }
     } catch (error) {
       const providerUnavailable = error?.response?.status === 503 || getApiError(error, "").toLowerCase().includes("no payment provider");
@@ -2053,28 +2174,10 @@ function OwnerSubscriptionsModule({ user }) {
       if (!(await openCheckout(checkout, "Upgrade payment successful"))) {
         toast.success("Subscription upgraded");
         await refreshBilling();
+        await refreshSubscriptionStatus();
       }
     } catch (error) {
       toast.error(getApiError(error, "Unable to upgrade subscription"));
-    } finally {
-      setProcessingAction("");
-    }
-  };
-
-  const handleRecordPayment = async (event) => {
-    event.preventDefault();
-    if (!subscription?.id || !paymentForm.amount || Number(paymentForm.amount) <= 0) {
-      toast.error("Enter a valid payment amount");
-      return;
-    }
-    try {
-      setProcessingAction("payment");
-      await recordBillingPayment({ ...paymentForm, subscriptionId: subscription.id, amount: Number(paymentForm.amount) }, token);
-      toast.success("Payment recorded");
-      setPaymentForm({ amount: "", method: "CASH", transactionId: "", notes: "" });
-      await refreshBilling();
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to record payment"));
     } finally {
       setProcessingAction("");
     }
@@ -2085,8 +2188,14 @@ function OwnerSubscriptionsModule({ user }) {
     try {
       setProcessingAction("cancel");
       const response = await cancelSubscription(token);
-      setSubscription(response?.data || response || null);
+      const cancelledSubscription = response?.data || response || null;
+      setSubscription(cancelledSubscription);
+      const returnedStatus = cancelledSubscription?.subscription?.status
+        || cancelledSubscription?.subscriptionStatus
+        || cancelledSubscription?.status;
+      updateUser({ ...user, subscriptionStatus: returnedStatus || "CANCELLED" });
       toast.success("Subscription cancelled");
+      setShowCancelConfirmation(false);
     } catch (error) {
       toast.error(getApiError(error, "Unable to cancel subscription"));
     } finally {
@@ -2104,6 +2213,7 @@ function OwnerSubscriptionsModule({ user }) {
       if (!(await openCheckout(checkout, "Renewal payment successful"))) {
         toast.success("Subscription renewed");
         await refreshBilling();
+        await refreshSubscriptionStatus();
       }
     } catch (error) {
       toast.error(getApiError(error, "Unable to renew subscription"));
@@ -2113,9 +2223,8 @@ function OwnerSubscriptionsModule({ user }) {
   };
 
   const status = String(subscription?.status || "").toUpperCase();
-  const hasActiveSubscription = ["ACTIVE", "TRIAL"].includes(status);
+  const hasActiveSubscription = isSubscriptionActive(status);
   const canRenew = ["EXPIRED", "CANCELLED", "PENDING_PAYMENT", "PAYMENT_FAILED"].includes(status);
-  const canPay = Boolean(subscription?.id) && ["PENDING_PAYMENT", "PAYMENT_FAILED", "EXPIRED", "CANCELLED", "ACTIVE"].includes(status);
   const currentPlanPrice = Number(subscription?.saasPlan?.price || 0);
 
   const formatMoney = (amount, currency = "INR") => {
@@ -2139,264 +2248,387 @@ function OwnerSubscriptionsModule({ user }) {
     return "Feature";
   };
 
+  const normalizeBillingPeriod = (plan) => {
+    const cycle = String(plan?.billingCycle || plan?.billingPeriod || plan?.planType || plan?.period || "").toUpperCase();
+    if (cycle.includes("QUARTER")) return "QUARTERLY";
+    if (cycle.includes("YEAR") || cycle.includes("ANNUAL")) return "YEARLY";
+    const durationDays = getPlanDurationDays({ ...plan, planType: plan?.planType || plan?.billingCycle || plan?.billingPeriod || plan?.period });
+    if (durationDays >= 300) return "YEARLY";
+    if (durationDays >= 80) return "QUARTERLY";
+    return "MONTHLY";
+  };
+  const billingPeriods = ["MONTHLY", "QUARTERLY", "YEARLY"].filter((period) =>
+    plans.some((plan) => normalizeBillingPeriod(plan) === period)
+  );
+  const activeBillingPeriod = billingPeriods.includes(billingPeriod) ? billingPeriod : billingPeriods[0] || "";
+  const filteredPlans = plans.filter((plan) => normalizeBillingPeriod(plan) === activeBillingPeriod);
+  const formatPlanCycle = (plan) => normalizeBillingPeriod(plan);
+  const formatDuration = (plan) => `${Number(plan?.durationDays || plan?.duration || 30) || 30} days`;
+  const paymentPlanFor = (payment) => payment?.subscription?.saasPlan
+    || payment?.saasSubscription?.saasPlan
+    || payment?.plan
+    || payment?.saasPlan;
+  const paymentBillingPeriod = (payment) => {
+    const plan = paymentPlanFor(payment);
+    const cycle = plan?.billingCycle || plan?.planType || payment?.billingCycle || payment?.planType;
+    return cycle ? normalizeBillingPeriod({ billingCycle: cycle }) : "-";
+  };
+  const paymentDate = (payment) => {
+    const value = payment?.paidAt || payment?.createdAt || payment?.paymentDate || payment?.date;
+    if (!value) return "-";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString();
+  };
+  const paymentReference = (payment) => {
+    const transaction = payment?.transactions?.[0] || payment?.transaction || {};
+    return payment?.providerPaymentId
+      || payment?.paymentId
+      || transaction?.providerPaymentId
+      || transaction?.paymentId
+      || payment?.providerOrderId
+      || payment?.id
+      || "-";
+  };
+  const paymentMethod = (payment) => {
+    const transaction = payment?.transactions?.[0] || payment?.transaction || {};
+    return payment?.paymentMethod || payment?.method || transaction?.paymentMethod || transaction?.method || "-";
+  };
+  const currentSubscriptionLabel = loadingSubscription
+    ? "Loading subscription..."
+    : subscription
+      ? `${status || "UNKNOWN"}${subscription?.endDate ? ` - Ends ${new Date(subscription.endDate).toLocaleDateString()}` : ""}`
+      : "No subscription yet";
+
   return (
-    <div className="space-y-6">
-      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-950">SaaS Subscription Management</h1>
-            <p className="mt-2 text-sm leading-6 text-gray-600">
-              Browse available SaaS plans, manage your gym subscription, and review billing history.
+    <div className="min-h-full bg-[#F8F9FB] p-4 text-[#1E293B] sm:p-6 space-y-5">
+      <div>
+        <h1 className="text-2xl font-extrabold leading-6 tracking-tight text-[#020617]">SaaS Subscription Management</h1>
+        <p className="mt-1 text-xs text-[#64748B]">
+          Browse available SaaS plans, manage your gym subscription, and review billing history.
+        </p>
+      </div>
+
+      <section className="rounded-lg border border-gray-200 bg-white px-5 py-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[9px] font-semibold uppercase text-gray-500">Current subscription</p>
+            <h2 className="mt-1 truncate text-lg font-bold text-gray-950">
+              {subscription?.saasPlan?.name || "No active plan"}
+            </h2>
+            <p className="mt-1 text-xs text-gray-600">
+              {subscription ? `Status: ${currentSubscriptionLabel}` : "Subscribe to a plan to activate your gym account."}
             </p>
           </div>
-          <div className="rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
-            {loadingSubscription ? "Loading subscription..." : subscription ? `${status} subscription` : "No subscription yet"}
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {subscription ? (
+              <>
+                {canRenew && (
+                  <button
+                    type="button"
+                    onClick={() => void handleRenew()}
+                    disabled={processingAction === "renew"}
+                    className="rounded-lg border border-emerald-600 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                  >
+                    {processingAction === "renew" ? "Renewing..." : "Renew"}
+                  </button>
+                )}
+                {hasActiveSubscription && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCancelConfirmation(true)}
+                    disabled={processingAction === "cancel"}
+                    className="rounded-lg border border-red-500 px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    Cancel Subscription
+                  </button>
+                )}
+              </>
+            ) : (
+              <span className="rounded-md bg-gray-100 px-3 py-2 text-sm text-gray-600">No current subscription</span>
+            )}
           </div>
-        </div>
-
-        <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-500">Current subscription</p>
-              <p className="mt-1 text-lg font-semibold text-gray-950">
-                {subscription?.saasPlan?.name || "No active plan"}
-              </p>
-              <p className="mt-1 text-sm text-gray-600">
-                {subscription
-                  ? `Status: ${subscription.status || "-"} • Ends ${subscription.endDate ? new Date(subscription.endDate).toLocaleDateString() : "-"}`
-                  : "Subscribe to a plan to activate your gym account."}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {subscription ? (
-                <>
-                  {canRenew && (
-                    <button
-                      type="button"
-                      onClick={() => void handleRenew()}
-                      disabled={processingAction === "renew"}
-                      className="rounded-full border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-60"
-                    >
-                      {processingAction === "renew" ? "Renewing..." : "Renew"}
-                    </button>
-                  )}
-                  {hasActiveSubscription && (
-                    <button
-                      type="button"
-                      onClick={() => void handleCancel()}
-                      disabled={processingAction === "cancel"}
-                      className="rounded-full border border-red-500 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                    >
-                      {processingAction === "cancel" ? "Cancelling..." : "Cancel"}
-                    </button>
-                  )}
-                </>
-              ) : (
-                <span className="rounded-full bg-gray-100 px-3 py-2 text-sm text-gray-600">No current subscription</span>
-              )}
-            </div>
-          </div>
-          {canPay && (
-            <form onSubmit={handleRecordPayment} className="mt-4 border-t border-gray-200 pt-4">
-              <p className="text-sm font-semibold text-gray-900">Record a payment</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  placeholder={`Amount (${subscription?.currency || subscription?.saasPlan?.currency || "INR"})`}
-                  value={paymentForm.amount}
-                  onChange={(event) => setPaymentForm((form) => ({ ...form, amount: event.target.value }))}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                  required
-                />
-                <select
-                  value={paymentForm.method}
-                  onChange={(event) => setPaymentForm((form) => ({ ...form, method: event.target.value }))}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                >
-                  {['CASH', 'CARD', 'BANK_TRANSFER', 'ONLINE'].map((method) => <option key={method}>{method}</option>)}
-                </select>
-                <input
-                  placeholder="Transaction ID (optional)"
-                  value={paymentForm.transactionId}
-                  onChange={(event) => setPaymentForm((form) => ({ ...form, transactionId: event.target.value }))}
-                  className="rounded-md border border-gray-300 p-2 text-sm"
-                />
-                <button
-                  type="submit"
-                  disabled={processingAction === "payment"}
-                  className="rounded-md bg-gray-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {processingAction === "payment" ? "Recording..." : "Record payment"}
-                </button>
-              </div>
-            </form>
-          )}
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2">
-            <CreditCard size={18} className="text-blue-600" />
-            <h2 className="text-lg font-semibold text-gray-950">Available SaaS plans</h2>
+      {showCancelConfirmation && (
+        <div
+          className="fixed inset-0 z-50 h-screen flex items-center justify-center bg-slate-900/30 p-4"
+          onMouseDown={(event) => event.target === event.currentTarget && processingAction !== "cancel" && setShowCancelConfirmation(false)}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="cancel-subscription-title"
+            aria-describedby="cancel-subscription-message"
+            className="w-full max-w-md overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-600"><TriangleAlert size={18} /></div>
+                <div>
+                  <h2 id="cancel-subscription-title" className="text-base font-bold text-[#0F172A]">Cancel Subscription</h2>
+                  <p className="mt-0.5 text-xs text-[#64748B]">Confirm your subscription cancellation.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirmation(false)}
+                disabled={processingAction === "cancel"}
+                aria-label="Close cancellation confirmation"
+                className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <p id="cancel-subscription-message" className="text-sm font-semibold text-[#334155]">Are you sure you want to cancel your subscription?</p>
+              <p className="mt-2 text-xs leading-5 text-[#64748B]">Your subscription will be cancelled, and access to subscription features may be affected according to your subscription terms.</p>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-white px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirmation(false)}
+                disabled={processingAction === "cancel"}
+                className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Keep Subscription
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCancel()}
+                disabled={processingAction === "cancel"}
+                className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {processingAction === "cancel" ? "Cancelling..." : "Cancel Subscription"}
+              </button>
+            </div>
           </div>
+        </div>
+      )}
+
+      <section className="grid gap-5">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+                <CreditCard size={16} />
+              </span>
+              <h2 className="text-base font-bold text-gray-950">Available SaaS plans</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPaymentHistory(true)}
+              className="inline-flex h-9 items-center justify-center gap-1.5 self-start rounded-lg border border-[#E2E8F0] bg-white px-3 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC] sm:self-auto"
+            >
+              <CalendarDays size={14} /> Payment History
+            </button>
+          </div>
+
+          {!loadingPlans && billingPeriods.length > 0 && (
+            <div role="tablist" aria-label="Billing period" className="mt-4 inline-flex max-w-full flex-wrap gap-1 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] p-1">
+              {billingPeriods.map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeBillingPeriod === period}
+                  onClick={() => setBillingPeriod(period)}
+                  className={`h-8 rounded-md px-3 text-xs font-semibold transition ${activeBillingPeriod === period ? "bg-[#0D8252] text-white shadow-sm" : "text-[#475569] hover:bg-white hover:text-[#0F172A]"}`}
+                >
+                  {period.charAt(0) + period.slice(1).toLowerCase()}
+                </button>
+              ))}
+            </div>
+          )}
 
           {loadingPlans ? (
             <p className="mt-4 text-sm text-gray-500">Loading plans...</p>
-          ) : plans.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-500">No plans available right now.</p>
+          ) : filteredPlans.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500">No plans available</p>
           ) : (
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {plans.map((plan) => (
-                <div key={plan.id} className="rounded-xl border border-gray-200 p-4">
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              {filteredPlans.map((plan) => {
+                const planId = idOf(plan);
+                const isCurrentPlan = String(subscription?.saasPlan?.id) === String(planId);
+                const canUpgrade = hasActiveSubscription && !isCurrentPlan && Number(plan.price || 0) >= currentPlanPrice;
+                const isRetry = isCurrentPlan && ["PENDING_PAYMENT", "PAYMENT_FAILED"].includes(status);
+                const isProcessing = subscribingPlanId === planId || processingAction === `upgrade-${planId}`;
+
+                return (
+                  <div
+                    key={planId}
+                    className={`rounded-lg border p-4 ${isCurrentPlan ? "border-emerald-200 bg-emerald-50/20" : "border-gray-200 bg-white"}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-bold text-gray-950">{plan.name}</h3>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
+                          {plan.description || "Flexible SaaS access for your gym."}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-[#0D8252]/10 px-2.5 py-1 text-[10px] font-bold text-[#0D8252]">
+                        {formatPlanCycle(plan)}
+                      </span>
+                    </div>
+
+                    <div className="mt-5">
+                      <div className="flex items-baseline gap-2">
+                        <p className="text-2xl font-bold text-gray-950">
+                          {formatMoney(plan.price, plan.currency || subscription?.currency || subscription?.saasPlan?.currency || "INR")}
+                        </p>
+                        <p className="text-xs text-gray-500">/ {formatDuration(plan)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void (canUpgrade ? handleUpgrade(plan) : handleSubscribe(plan))}
+                        disabled={isProcessing || (hasActiveSubscription && !canUpgrade)}
+                        className={`mt-4 h-9 w-full rounded-lg px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-60 ${
+                          isRetry
+                            ? "border border-emerald-700 text-emerald-800 hover:bg-emerald-50"
+                            : "bg-emerald-700 text-white hover:bg-emerald-800"
+                        }`}
+                      >
+                        {isProcessing
+                          ? "Processing..."
+                          : canUpgrade
+                            ? "Upgrade"
+                            : isRetry
+                              ? "Retry payment"
+                              : hasActiveSubscription
+                                ? "Active"
+                                : "Subscribe"}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 rounded-md border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <CalendarDays size={14} className="text-emerald-600" /> Trial: {plan.trialDays ? `${plan.trialDays} days` : "None"}
+                      </div>
+                    </div>
+
+                    <div className="mt-5 text-xs text-gray-600">
+                      <p className="font-semibold uppercase text-gray-400">Included features</p>
+                      {Array.isArray(plan.features) && plan.features.length ? (
+                        <ul className="mt-3 space-y-2">
+                          {plan.features.map((feature, index) => (
+                            <li key={`${formatFeatureLabel(feature)}-${index}`} className="flex items-start gap-2">
+                              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                              <span>{formatFeatureLabel(feature)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-3 text-xs text-gray-500">No feature list provided.</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+      </section>
+
+      {showPaymentHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-3 sm:p-4" onMouseDown={(event) => event.target === event.currentTarget && setShowPaymentHistory(false)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="payment-history-title" className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><CreditCard size={18} /></div>
+                <div>
+                  <h2 id="payment-history-title" className="text-base font-bold text-[#0F172A]">Payment History</h2>
+                  <p className="mt-0.5 text-xs text-[#64748B]">Review SaaS subscription payments and order details.</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowPaymentHistory(false)} aria-label="Close payment history" className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]"><X size={17} /></button>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              {loadingPayments ? (
+                <div className="flex min-h-40 items-center justify-center text-sm text-gray-500">Loading payment history...</div>
+              ) : paymentOrders.length === 0 && payments.length === 0 ? (
+                <div className="flex min-h-64 flex-col items-center justify-center text-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-50 text-gray-400"><CreditCard size={24} /></div>
+                  <p className="mt-4 text-sm font-bold text-gray-700">No payment history available</p>
+                  <p className="mt-1 max-w-sm text-xs leading-5 text-gray-500">Completed subscription payments and their receipts will appear here.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-[#E2E8F0]">
+                  <table className="w-full min-w-[900px] text-left text-xs">
+                    <thead className="bg-[#F8FAFC] text-[10px] font-bold uppercase text-[#64748B]">
+                      <tr>
+                        <th className="px-3 py-3">Payment date</th>
+                        <th className="px-3 py-3">Plan</th>
+                        <th className="px-3 py-3">Billing period</th>
+                        <th className="px-3 py-3">Amount</th>
+                        <th className="px-3 py-3">Status</th>
+                        <th className="px-3 py-3">Reference ID</th>
+                        <th className="px-3 py-3">Method</th>
+                        <th className="px-3 py-3">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(paymentOrders.length ? paymentOrders : payments).map((payment) => {
+                        const plan = paymentPlanFor(payment);
+                        const paymentId = payment.id || payment._id;
+                        return (
+                          <tr key={paymentId || paymentReference(payment)} className="border-t border-[#EEF2F4] text-[#475569]">
+                            <td className="whitespace-nowrap px-3 py-3">{paymentDate(payment)}</td>
+                            <td className="px-3 py-3 font-semibold text-[#0F172A]">{plan?.name || plan?.title || payment?.planName || "-"}</td>
+                            <td className="px-3 py-3">{paymentBillingPeriod(payment)}</td>
+                            <td className="whitespace-nowrap px-3 py-3 font-semibold">{formatMoney(payment.amount, payment.currency)}</td>
+                            <td className="px-3 py-3"><StatusBadge status={payment.status || "UNKNOWN"} label={payment.status || "-"} /></td>
+                            <td className="max-w-44 truncate px-3 py-3" title={paymentReference(payment)}>{paymentReference(payment)}</td>
+                            <td className="px-3 py-3">{paymentMethod(payment)}</td>
+                            <td className="px-3 py-3">
+                              {paymentOrders.length > 0 && paymentId ? (
+                                <button type="button" onClick={() => void handleViewOrder(paymentId)} disabled={processingAction === `order-${paymentId}`} className="whitespace-nowrap font-semibold text-[#0D8252] hover:text-[#086B43] disabled:opacity-60">
+                                  {processingAction === `order-${paymentId}` ? "Loading..." : "View details"}
+                                </button>
+                              ) : "-"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {selectedOrder && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-semibold text-gray-950">{plan.name}</h3>
-                      <p className="mt-1 text-sm text-gray-600">{plan.description || "Flexible SaaS access for your gym."}</p>
+                      <p className="font-semibold text-gray-900">Order details</p>
+                      <p className="mt-1 break-all text-xs text-gray-600">{selectedOrder.providerOrderId || selectedOrder.id}</p>
                     </div>
-                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                      {plan.billingCycle || "MONTHLY"}
-                    </span>
+                    <button type="button" onClick={() => setSelectedOrder(null)} className="rounded-lg font-semibold text-gray-500 hover:text-gray-900">Close details</button>
                   </div>
-
-                  <div className="mt-4 flex items-end justify-between">
-                    <div>
-                      <p className="text-2xl font-semibold text-gray-950">{formatMoney(plan.price, plan.currency || subscription?.currency || subscription?.saasPlan?.currency || "INR")}</p>
-                      <p className="text-sm text-gray-500">{plan.durationDays || 0} days</p>
-                    </div>
-                    {(() => {
-                      const isCurrentPlan = String(subscription?.saasPlan?.id) === String(plan.id);
-                      const canUpgrade = hasActiveSubscription && !isCurrentPlan && Number(plan.price || 0) >= currentPlanPrice;
-                      const isRetry = isCurrentPlan && ["PENDING_PAYMENT", "PAYMENT_FAILED"].includes(status);
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => void (canUpgrade ? handleUpgrade(plan) : handleSubscribe(plan))}
-                          disabled={subscribingPlanId === plan.id || processingAction === `upgrade-${plan.id}` || (hasActiveSubscription && !canUpgrade)}
-                          className="rounded-full bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {subscribingPlanId === plan.id || processingAction === `upgrade-${plan.id}`
-                            ? "Processing..."
-                            : canUpgrade
-                              ? "Upgrade"
-                              : isRetry
-                                ? "Retry payment"
-                                : hasActiveSubscription
-                                  ? "Active"
-                                  : "Subscribe"}
-                        </button>
-                      );
-                    })()}
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-700 sm:grid-cols-4">
+                    <span>Status: <strong>{selectedOrder.status || "-"}</strong></span>
+                    <span>Amount: <strong>{formatMoney(selectedOrder.amount, selectedOrder.currency)}</strong></span>
+                    <span>Transactions: <strong>{selectedOrder.transactions?.length || 0}</strong></span>
+                    <span>Refunds: <strong>{selectedOrder.refunds?.length || 0}</strong></span>
                   </div>
-
-                  <div className="mt-4 space-y-2 text-sm text-gray-600">
-                    <div className="flex items-center gap-2"><CalendarDays size={16} className="text-gray-400" /> Trial: {plan.trialDays ? `${plan.trialDays} days` : "None"}</div>
-                    {Array.isArray(plan.features) && plan.features.length ? (
-                      <ul className="list-disc pl-5 space-y-1">
-                        {plan.features.map((feature, index) => (
-                          <li key={`${formatFeatureLabel(feature)}-${index}`}>{formatFeatureLabel(feature)}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-sm text-gray-500">No feature list provided.</p>
-                    )}
-                  </div>
+                  {selectedOrder.status === "CAPTURED" && (
+                    <form onSubmit={handleRefund} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.5fr_auto]">
+                      <input type="number" min="0.01" max={Number(selectedOrder.amount || 0)} step="0.01" placeholder="Refund amount" value={refundForm.amount} onChange={(event) => setRefundForm((form) => ({ ...form, amount: event.target.value }))} className="rounded-md border border-gray-300 bg-white p-2 text-xs" required />
+                      <input placeholder="Reason (optional)" value={refundForm.reason} onChange={(event) => setRefundForm((form) => ({ ...form, reason: event.target.value }))} className="rounded-md border border-gray-300 bg-white p-2 text-xs" />
+                      <button type="submit" disabled={processingAction === "refund"} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{processingAction === "refund" ? "Requesting..." : "Refund"}</button>
+                    </form>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2">
-            <CalendarDays size={18} className="text-blue-600" />
-            <h2 className="text-lg font-semibold text-gray-950">Payment orders</h2>
-          </div>
-
-          {loadingPayments ? (
-            <p className="mt-4 text-sm text-gray-500">Loading payments...</p>
-          ) : paymentOrders.length === 0 && payments.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-500">No payment orders recorded yet.</p>
-          ) : (
-            <div className="mt-4 space-y-3">
-              {paymentOrders.map((order) => (
-                <div key={order.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-gray-900">{order.provider || "Payment"} order</span>
-                    <span className="font-semibold text-gray-900">{formatMoney(order.amount, order.currency)}</span>
-                  </div>
-                  <div className="mt-1 text-gray-500">{order.status || "-"} • {order.providerOrderId || order.id}</div>
-                  <div className="mt-1 flex items-center justify-between gap-2 text-xs text-gray-400">
-                    <span>{order.paidAt || order.createdAt ? new Date(order.paidAt || order.createdAt).toLocaleDateString() : "-"}</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleViewOrder(order.id)}
-                      disabled={processingAction === `order-${order.id}`}
-                      className="font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-60"
-                    >
-                      {processingAction === `order-${order.id}` ? "Loading..." : "View details"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {paymentOrders.length === 0 && payments.map((payment) => (
-                <div key={payment.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-gray-900">{payment.subscription?.saasPlan?.name || "Plan"}</span>
-                    <span className="font-semibold text-gray-900">{formatMoney(payment.amount, payment.currency)}</span>
-                  </div>
-                  <div className="mt-1 text-gray-500">{payment.method || "-"} • {payment.status || "-"}</div>
-                  <div className="mt-1 text-xs text-gray-400">{payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "-"}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {selectedOrder && (
-            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-gray-900">Order details</p>
-                  <p className="mt-1 text-xs text-gray-600">{selectedOrder.providerOrderId || selectedOrder.id}</p>
-                </div>
-                <button type="button" onClick={() => setSelectedOrder(null)} className="font-semibold text-gray-500 hover:text-gray-900">Close</button>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-700">
-                <span>Status: <strong>{selectedOrder.status || "-"}</strong></span>
-                <span>Amount: <strong>{formatMoney(selectedOrder.amount, selectedOrder.currency)}</strong></span>
-                <span>Transactions: <strong>{selectedOrder.transactions?.length || 0}</strong></span>
-                <span>Refunds: <strong>{selectedOrder.refunds?.length || 0}</strong></span>
-              </div>
-              {selectedOrder.status === "CAPTURED" && (
-                <form onSubmit={handleRefund} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.5fr_auto]">
-                  <input
-                    type="number"
-                    min="0.01"
-                    max={Number(selectedOrder.amount || 0)}
-                    step="0.01"
-                    placeholder="Refund amount"
-                    value={refundForm.amount}
-                    onChange={(event) => setRefundForm((form) => ({ ...form, amount: event.target.value }))}
-                    className="rounded-md border border-gray-300 bg-white p-2 text-xs"
-                    required
-                  />
-                  <input
-                    placeholder="Reason (optional)"
-                    value={refundForm.reason}
-                    onChange={(event) => setRefundForm((form) => ({ ...form, reason: event.target.value }))}
-                    className="rounded-md border border-gray-300 bg-white p-2 text-xs"
-                  />
-                  <button type="submit" disabled={processingAction === "refund"} className="rounded-md bg-red-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">
-                    {processingAction === "refund" ? "Requesting..." : "Refund"}
-                  </button>
-                </form>
               )}
             </div>
-          )}
+
+            <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-white px-5 py-4">
+              <button type="button" onClick={() => setShowPaymentHistory(false)} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Close</button>
+            </div>
+          </section>
         </div>
-      </section>
+      )}
     </div>
   );
 }
@@ -2650,7 +2882,7 @@ function ModuleWorkspace({ moduleKey, definition }) {
             <button
               type="submit"
               disabled={(editId && !canEdit) || (!editId && !canCreate)}
-              className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {editId ? "Update" : "Save"}
             </button>
@@ -2661,7 +2893,7 @@ function ModuleWorkspace({ moduleKey, definition }) {
                   setEditId(null);
                   setForm(getEmptyForm(definition.fields));
                 }}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700"
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700"
               >
                 Cancel
               </button>
@@ -2698,9 +2930,9 @@ function ModuleWorkspace({ moduleKey, definition }) {
                 {filteredRecords.map((record) => (
                   <tr key={record.id} className="border-t border-gray-200">
                     {displayFields.map((field) => (
-                      <td key={field.name} className="p-3 text-gray-700">
+                      <td key={field.name} className="p-3 text-gray-700 text-xs">
                         {field.name === "status" || field.name === "apiAccess" ? (
-                          <StatusBadge value={record[field.name]} />
+                          record[field.name] ? <StatusBadge status={record[field.name]} label={record[field.name]} /> : null
                         ) : field.name === "member" && moduleKey === "subscriptions" ? (
                           getMemberName(record[field.name])
                         ) : field.name === "plan" && moduleKey === "subscriptions" ? (
@@ -2716,19 +2948,19 @@ function ModuleWorkspace({ moduleKey, definition }) {
                           type="button"
                           onClick={() => handleEdit(record)}
                           disabled={!canEdit}
-                          className="text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="rounded-lg text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
                           aria-label="Edit record"
                         >
-                          <Edit size={18} />
+                          <Edit size={15} />
                         </button>
               <button
                           type="button"
                           onClick={() => handleDelete(record.id)}
                           disabled={!canDelete}
-                          className="text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="rounded-lg text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
                           aria-label="Delete record"
                         >
-                          <Trash size={18} />
+                          <Trash size={14} />
                         </button>
                       </div>
                     </td>
@@ -2755,7 +2987,7 @@ function ModuleWorkspace({ moduleKey, definition }) {
                       <span className="font-medium text-gray-500">{field.label}</span>
                       <span className="min-w-0 break-words text-gray-800">
                         {field.name === "status" || field.name === "apiAccess" ? (
-                          <StatusBadge value={record[field.name]} />
+                          record[field.name] ? <StatusBadge status={record[field.name]} label={record[field.name]} /> : null
                         ) : field.name === "member" && moduleKey === "subscriptions" ? (
                           getMemberName(record[field.name])
                         ) : field.name === "plan" && moduleKey === "subscriptions" ? (
@@ -2772,16 +3004,16 @@ function ModuleWorkspace({ moduleKey, definition }) {
                     type="button"
                     onClick={() => handleEdit(record)}
                     disabled={!canEdit}
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    <Edit size={16} />
+                    <Edit size={15} />
                     Edit
                   </button>
                   <button
                     type="button"
                     onClick={() => handleDelete(record.id)}
                     disabled={!canDelete}
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Trash size={16} />
                     Delete

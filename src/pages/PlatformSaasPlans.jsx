@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
-import { ClipboardList, Code2, Plus, Search, Edit3, Trash2, X } from "lucide-react";
+import TablePagination from "../components/TablePagination";
+import StatusBadge from "../components/StatusBadge";
+import { ClipboardList, Code2, Plus, Search, Edit, Trash2, X } from "lucide-react";
 import {
   createSaasPlan,
   getSaasPlans,
@@ -326,7 +328,7 @@ export default function PlatformSaasPlans() {
             key={tab.key}
             type="button"
             onClick={() => setActiveTab(tab.key)}
-            className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+            className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition ${
               activeTab === tab.key
                 ? "border-blue-600 bg-blue-600 text-white"
                 : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
@@ -361,7 +363,7 @@ export default function PlatformSaasPlans() {
               </div>
               <button
                 onClick={openCreate}
-                className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 text-sm rounded w-full md:w-auto"
+                className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 text-sm rounded-lg w-full md:w-auto"
               >
                 <Plus size={18} /> Add SaaS Plan
               </button>
@@ -412,15 +414,7 @@ export default function PlatformSaasPlans() {
                         </td>
                         <td className="p-3">{p.sortOrder || "-"}</td>
                         <td className="p-3">
-                          <span
-                            className={`rounded px-2 py-1 text-xs font-semibold ${
-                              p.isActive
-                                ? "bg-green-100 text-green-700"
-                                : "bg-gray-100 text-gray-600"
-                            }`}
-                          >
-                            {p.isActive ? "Active" : "Inactive"}
-                          </span>
+                          <StatusBadge status={p.isActive ? "ACTIVE" : "INACTIVE"} label={p.isActive ? "Active" : "Inactive"} />
                         </td>
                         <td className="p-3 max-w-[150px] truncate" title={p.features.map((f) => f.name).join(", ")}>
                           {p.features.length
@@ -431,13 +425,13 @@ export default function PlatformSaasPlans() {
                           <div className="flex justify-center gap-3">
                             <button
                               onClick={() => openEdit(p)}
-                              className="text-blue-500 hover:scale-110 transition"
+                              className="rounded-lg text-blue-500 hover:scale-110 transition"
                             >
-                              <Edit3 size={18} />
+                              <Edit size={15} />
                             </button>
                             <button
                               onClick={() => handleDelete(p.id, p.name)}
-                              className="text-red-500 hover:scale-110 transition"
+                              className="rounded-lg text-red-500 hover:scale-110 transition"
                             >
                               <Trash2 size={18} />
                             </button>
@@ -461,22 +455,7 @@ export default function PlatformSaasPlans() {
               <p className="text-sm text-gray-600">
                 Page {page} of {totalPages || 1}
               </p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1}
-                  className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
-                >
-                  Prev
-                </button>
-                <button
-                  onClick={() => setPage((p) => p + 1)}
-                  disabled={page >= totalPages}
-                  className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
+              <TablePagination page={page} totalPages={totalPages || 1} onPageChange={setPage} previousLabel="Prev" className="gap-2" />
             </div>
           </div>
 
@@ -490,7 +469,7 @@ export default function PlatformSaasPlans() {
                   </h2>
                   <button
                     onClick={() => setShowModal(false)}
-                    className="text-gray-500 hover:text-gray-700"
+                    className="rounded-lg text-gray-500 hover:text-gray-700"
                   >
                     <X size={20} />
                   </button>
@@ -599,7 +578,7 @@ export default function PlatformSaasPlans() {
                           type="checkbox"
                           checked={form.featureIds.includes(feature.id)}
                           onChange={() => toggleFeature(feature.id)}
-                          className="accent-blue-600"
+                          className="accent-[#0D8252]"
                         />
                         {feature.name}
                       </label>
@@ -610,14 +589,14 @@ export default function PlatformSaasPlans() {
                 <div className="flex justify-end gap-2">
                   <button
                     onClick={() => setShowModal(false)}
-                    className="px-4 py-2 text-sm border rounded"
+                    className="px-4 py-2 text-sm border rounded-lg"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="bg-blue-600 text-white px-4 py-2 text-sm rounded disabled:opacity-60"
+                    className="bg-blue-600 text-white px-4 py-2 text-sm rounded-lg disabled:opacity-60"
                   >
                     {saving ? "Saving..." : editData ? "Update" : "Save"}
                   </button>
@@ -653,7 +632,7 @@ export default function PlatformSaasPlans() {
                   setFormFeatureName("");
                   setShowFeatureModal(true);
                 }}
-                className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 text-sm rounded"
+                className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 text-sm rounded-lg"
               >
                 <Plus size={18} /> Add Feature
               </button>
@@ -662,7 +641,7 @@ export default function PlatformSaasPlans() {
                   setBulkNames([""]);
                   setShowBulkModal(true);
                 }}
-                className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 text-sm rounded"
+                className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 text-sm rounded-lg"
               >
                 <Plus size={18} /> Bulk Create
               </button>
@@ -701,13 +680,13 @@ export default function PlatformSaasPlans() {
                                 setFormFeatureName(feature.name);
                                 setShowFeatureModal(true);
                               }}
-                              className="text-blue-500 hover:scale-110 transition"
+                              className="rounded-lg text-blue-500 hover:scale-110 transition"
                             >
-                              <Edit3 size={18} />
+                              <Edit size={15} />
                             </button>
                             <button
                               onClick={() => handleFeatureDelete(feature.id)}
-                              className="text-red-500 hover:scale-110 transition"
+                              className="rounded-lg text-red-500 hover:scale-110 transition"
                             >
                               <Trash2 size={18} />
                             </button>
@@ -733,14 +712,14 @@ export default function PlatformSaasPlans() {
                 <button
                   onClick={() => setFeaturesPage((p) => Math.max(1, p - 1))}
                   disabled={featuresPage <= 1}
-                  className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+                  className="px-3 py-1 bg-gray-200 rounded-lg disabled:opacity-50"
                 >
                   Prev
                 </button>
                 <button
                   onClick={() => setFeaturesPage((p) => p + 1)}
                   disabled={featuresPage >= featuresTotalPages}
-                  className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+                  className="px-3 py-1 bg-gray-200 rounded-lg disabled:opacity-50"
                 >
                   Next
                 </button>
@@ -766,13 +745,13 @@ export default function PlatformSaasPlans() {
                 <div className="flex justify-end gap-2">
                   <button
                     onClick={() => { setShowFeatureModal(false); setEditFeature(null); }}
-                    className="px-4 py-2 text-sm border rounded"
+                    className="px-4 py-2 text-sm border rounded-lg"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleFeatureSave}
-                    className="bg-blue-500 text-white px-4 py-2 text-sm rounded"
+                    className="bg-blue-500 text-white px-4 py-2 text-sm rounded-lg"
                   >
                     {editFeature ? "Update" : "Save"}
                   </button>
@@ -806,7 +785,7 @@ export default function PlatformSaasPlans() {
                       {bulkNames.length > 1 && (
                         <button
                           onClick={() => setBulkNames((prev) => prev.filter((_, j) => j !== i))}
-                          className="text-red-500 hover:text-red-700"
+                          className="rounded-lg text-red-500 hover:text-red-700"
                         >
                           <X size={18} />
                         </button>
@@ -816,20 +795,20 @@ export default function PlatformSaasPlans() {
                 </div>
                 <button
                   onClick={() => setBulkNames((prev) => [...prev, ""])}
-                  className="mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                  className="rounded-lg mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
                 >
                   <Plus size={16} /> Add row
                 </button>
                 <div className="flex justify-end gap-2 mt-4">
                   <button
                     onClick={() => { setShowBulkModal(false); setBulkNames([""]); }}
-                    className="px-4 py-2 text-sm border rounded"
+                    className="px-4 py-2 text-sm border rounded-lg"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleBulkCreate}
-                    className="bg-emerald-600 text-white px-4 py-2 text-sm rounded"
+                    className="bg-emerald-600 text-white px-4 py-2 text-sm rounded-lg"
                   >
                     Create All
                   </button>

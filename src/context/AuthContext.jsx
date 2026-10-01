@@ -1,10 +1,9 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import {
   clearTokens,
   extractToken,
-  gymOwnerLogin,
-  gymUserLogin,
   platformLogin,
+  tenantLogin,
   registerGymMember,
   unwrapObject,
   memberCheckIn,
@@ -15,8 +14,9 @@ import {
   setTokens,
   logoutAuth,
   logoutAllAuth,
+  getCurrentSubscription,
 } from "../services/api";
-import { getRoleLabel, isValidPortalLogin, normalizePermissions } from "../utils/rbac";
+import { getPrimaryRole, getRoleLabel, getUserRoles, normalizePermissions } from "../utils/rbac";
 
 /* eslint-disable react-refresh/only-export-components */
 const AuthContext = createContext();
@@ -29,34 +29,191 @@ function readJson(key, fallback = null) {
   }
 }
 
+function getTokenClaims(token) {
+  try {
+    const payload = token.split(".")[1];
+    return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    return {};
+  }
+}
+
+function getAuthPayload(response) {
+  const responseData = response?.data || response || {};
+  const authData = responseData.data && typeof responseData.data === "object" ? responseData.data : responseData;
+  const responseUser = authData.user || responseData.user || {};
+  const roles = getUserRoles({ roles: responseUser.roles || responseUser.role });
+  const token = extractToken(responseData);
+  const refreshToken = authData.refreshToken || responseData.refreshToken || "";
+  const claims = getTokenClaims(token);
+  const id = responseUser.id || responseUser._id || responseUser.userId || claims.id || claims.sub || "";
+  const gymId = responseUser.gymId || responseUser.gym?.id || authData.gymId || claims.gymId || claims.gym_id || "";
+
+  return { responseData, authData, responseUser, roles, token, refreshToken, id, gymId };
+}
+
+function getSubscriptionStatus(response) {
+  const subscription = response?.data?.subscription
+    || response?.data?.data?.subscription
+    || response?.subscription
+    || response?.data?.data
+    || response?.data
+    || response
+    || {};
+  return String(subscription?.status || subscription?.subscriptionStatus || "").toUpperCase();
+}
+
+function isOwnerSession(session) {
+  return getPrimaryRole(session) === "gym_owner";
+}
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(readJson("authSession", null));
   const [loading, setLoading] = useState(true);
 
-  const persistSession = (session) => {
-    setUser(session);
-    localStorage.setItem("authSession", JSON.stringify(session));
-  };
+  const persistSession = useCallback((session) => {
+    const nextSession = session
+      ? {
+          ...session,
+          accessToken: session.accessToken || session.token || null,
+          token: session.token || session.accessToken || null,
+        }
+      : null;
 
-  useEffect(() => {
-    const storedRefreshToken = loadRefreshToken();
-    if (!storedRefreshToken) {
-      setLoading(false);
+    setUser(nextSession);
+    if (nextSession) {
+      localStorage.setItem("authSession", JSON.stringify(nextSession));
+      setTokens(nextSession.accessToken || nextSession.token, nextSession.refreshToken || getRefreshToken());
       return;
     }
-    refreshAuthToken(storedRefreshToken)
-      .then((response) => {
-        const data = response?.data || response;
-        setTokens(data.accessToken, data.refreshToken);
-        const stored = readJson("authSession", {}) || {};
-        persistSession({ ...stored, token: data.accessToken, accessToken: data.accessToken });
-      })
-      .catch(() => {
+
+    localStorage.removeItem("authSession");
+  }, []);
+
+  const refreshSubscriptionStatus = useCallback(async (session = null) => {
+    const currentSession = session || readJson("authSession", null);
+    if (!currentSession || !isOwnerSession(currentSession)) return currentSession;
+
+    let subscriptionStatus = currentSession.subscriptionStatus || "";
+    try {
+      const response = await getCurrentSubscription(currentSession.accessToken || currentSession.token);
+      subscriptionStatus = getSubscriptionStatus(response) || subscriptionStatus;
+    } catch {
+      // Keep the last known status when the subscription endpoint is temporarily unavailable.
+    }
+
+    const nextSession = { ...currentSession, subscriptionStatus };
+    persistSession(nextSession);
+    return nextSession;
+  }, [persistSession]);
+
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      clearTokens();
+      localStorage.removeItem("authSession");
+      setUser(null);
+    };
+    window.addEventListener("auth:expired", handleExpiredSession);
+
+    const storedSession = readJson("authSession", null);
+    const storedAccessToken = storedSession?.accessToken || storedSession?.token || null;
+    const storedRefreshToken = loadRefreshToken() || storedSession?.refreshToken || null;
+
+    if (storedSession && (storedAccessToken || storedRefreshToken)) {
+      const hydratedSession = {
+        ...storedSession,
+        accessToken: storedAccessToken,
+        token: storedAccessToken || storedSession?.token || null,
+        refreshToken: storedRefreshToken || storedSession?.refreshToken || null,
+      };
+
+      setTokens(storedAccessToken, storedRefreshToken);
+      let active = true;
+      void (async () => {
+        let restoredSession = hydratedSession;
+        try {
+          if (storedRefreshToken) {
+            try {
+              const response = await refreshAuthToken(storedRefreshToken);
+              const data = getAuthPayload(response);
+              if (data.token) {
+                const roles = data.roles.length ? data.roles : hydratedSession.roles || [];
+                const primaryRole = getPrimaryRole({ roles }) || hydratedSession.userRole;
+                restoredSession = {
+                  ...hydratedSession,
+                  token: data.token,
+                  accessToken: data.token,
+                  refreshToken: data.refreshToken || storedRefreshToken,
+                  id: data.id || hydratedSession.id,
+                  email: data.responseUser.email || hydratedSession.email || "",
+                  gymId: data.gymId || hydratedSession.gymId,
+                  roles,
+                  userRole: primaryRole,
+                  role: data.roles.length ? getRoleLabel(primaryRole) : hydratedSession.role,
+                  loginType: primaryRole || hydratedSession.loginType,
+                };
+                setTokens(restoredSession.accessToken, restoredSession.refreshToken);
+                if (!isOwnerSession(restoredSession)) persistSession(restoredSession);
+              }
+            } catch {
+              // Keep the existing persisted session if token refresh is temporarily unavailable.
+            }
+          }
+
+          if (isOwnerSession(restoredSession)) await refreshSubscriptionStatus(restoredSession);
+        } finally {
+          if (active) setLoading(false);
+        }
+      })();
+
+      return () => {
+        active = false;
+        window.removeEventListener("auth:expired", handleExpiredSession);
+      };
+    }
+
+    Promise.resolve().then(() => {
+      clearTokens();
+      localStorage.removeItem("authSession");
+      setUser(null);
+      setLoading(false);
+    });
+
+    return () => window.removeEventListener("auth:expired", handleExpiredSession);
+  }, [persistSession, refreshSubscriptionStatus]);
+
+  useEffect(() => {
+    const handleSessionStorage = (event) => {
+      if (event.key !== "authSession") return;
+
+      if (!event.newValue) {
         clearTokens();
-        localStorage.removeItem("authSession");
         setUser(null);
-      })
-      .finally(() => setLoading(false));
+        return;
+      }
+
+      try {
+        const storedSession = JSON.parse(event.newValue);
+        if (!storedSession || typeof storedSession !== "object") return;
+        const accessToken = storedSession.accessToken || storedSession.token || null;
+        const refreshToken = storedSession.refreshToken || loadRefreshToken() || getRefreshToken();
+        if (!accessToken && !refreshToken) return;
+
+        const synchronizedSession = {
+          ...storedSession,
+          accessToken,
+          token: accessToken || storedSession.token || null,
+          refreshToken,
+        };
+        setTokens(accessToken, refreshToken);
+        setUser(synchronizedSession);
+      } catch {
+        // Ignore malformed session values from another tab.
+      }
+    };
+
+    window.addEventListener("storage", handleSessionStorage);
+    return () => window.removeEventListener("storage", handleSessionStorage);
   }, []);
 
   const updateUser = (nextUser) => {
@@ -68,74 +225,91 @@ export const AuthProvider = ({ children }) => {
     return unwrapObject(response);
   };
 
-  const login = async ({ email, password, gymSlug, loginType }) => {
-    const credentials = loginType === "platform" ? { email, password } : { email, gymSlug, password };
-    const response =
-      loginType === "platform"
-        ? await platformLogin({ email, password })
-        : loginType === "owner"
-          ? await gymOwnerLogin(credentials)
-          : await gymUserLogin(credentials);
+  const completeOwnerRegistration = async (response) => {
+    const data = getAuthPayload(response);
+    const { responseData, authData, roles, token, refreshToken } = data;
+    const responseUser = responseData.owner || authData.owner || {};
+    const responseGym = responseData.gym || authData.gym || {};
+    const registrationRoles = responseUser.roles || roles;
+    const sessionRole = getPrimaryRole({ roles: registrationRoles.length ? registrationRoles : ["owner"] });
+    const userId = responseUser.id || responseUser.userId || "";
+    const gymId = responseGym.id || responseGym.gymId || "";
 
-    const responseData = response?.data || response;
-    const token = extractToken(responseData);
+    if (!token || !refreshToken || !sessionRole) {
+      throw new Error("Registration response did not include a valid owner session.");
+    }
+
+    setTokens(token, refreshToken);
+    const session = {
+      token,
+      accessToken: token,
+      refreshToken,
+      id: userId,
+      email: responseUser.email || "",
+      name: responseUser.name || responseUser.ownerName || "",
+      gymId,
+      roles: registrationRoles.length ? registrationRoles : ["owner"],
+      userRole: sessionRole,
+      role: getRoleLabel(sessionRole),
+      loginType: sessionRole,
+      permissions: normalizePermissions(responseUser.permissions || authData.permissions || responseData.permissions),
+    };
+    persistSession(session);
+    if (sessionRole === "gym_owner") await refreshSubscriptionStatus(session);
+    return session;
+  };
+
+  const login = async ({ email, password, gymId, gymSlug, loginType } = {}) => {
+    const credentials = { email, password };
+    if (gymId) credentials.gymId = gymId;
+    if (gymSlug) credentials.gymSlug = gymSlug;
+    const response = loginType === "platform" ? await platformLogin(credentials) : await tenantLogin(credentials);
+    if (response?.ambiguous) return { ambiguous: true, gyms: response.data?.gyms || response.gyms || [] };
+
+    const data = getAuthPayload(response);
+    const { responseData, authData, responseUser, roles, token, refreshToken, id: userId, gymId: responseGymId } = data;
     if (!token) return null;
+    const sessionRole = getPrimaryRole({ roles });
 
-    setTokens(token, responseData.refreshToken || responseData.hashedRefreshToken || responseData.data?.refreshToken);
+    setTokens(token, refreshToken);
 
-    const responseUser = unwrapObject(responseData);
-    const userId = responseUser.id || responseUser._id || responseUser.userId || responseUser.user?.id || "";
-
-    if (!isValidPortalLogin(loginType, responseUser)) {
+    if (!sessionRole) {
       clearTokens();
       localStorage.removeItem("authSession");
       setUser(null);
-      const portalName =
-        loginType === "platform"
-          ? "Platform Admin"
-          : loginType === "owner"
-            ? "Gym Owner"
-            : loginType === "staff"
-              ? "Gym Staff"
-              : "Gym Member";
-      throw new Error(`Invalid user: this account is not a ${portalName}.`);
+      throw new Error("Your account does not have a valid portal role assigned.");
     }
 
     const storedPermissions = userId ? readJson(`userPermissions:${userId}`, []) : [];
     const responsePermissions = normalizePermissions(
-      responseUser.permissions || responseUser.userPermissions || responseUser.user?.permissions || responseData.permissions
+      responseUser.permissions || responseUser.userPermissions || authData.permissions || responseData.permissions
     );
-    const role =
-      loginType === "platform"
-        ? "Platform Admin"
-        : getRoleLabel(
-            responseUser.role || responseUser.user?.roles?.[0] || (loginType === "owner" ? "Gym Owner" : loginType),
-            loginType
-          );
+    const role = getRoleLabel(sessionRole);
     const session = {
       token,
       accessToken: token,
       id: userId,
       email,
-      gymId: responseUser.gymId || responseUser.gym?.id || "",
-      gymSlug: responseUser.gymSlug || responseUser.slug || responseUser.gym?.slug || gymSlug || "",
+      gymId: responseGymId,
       name: responseUser.name || responseUser.ownerName || email,
       role,
-      staffRole: responseUser.staffRole || responseUser.roleName || responseUser.designation || responseUser.position || responseUser.type || "",
-      userRole: responseUser.role || responseUser.userRole || "",
-      loginType,
-      refreshToken: responseData.refreshToken || responseData.data?.refreshToken || "",
+      roles,
+      staffRole: responseUser.staffRole || responseUser.roleName || responseUser.designation || responseUser.position || "",
+      userRole: sessionRole,
+      loginType: sessionRole,
+      refreshToken,
       permissions: responsePermissions.length ? responsePermissions : storedPermissions,
     };
 
     persistSession(session);
+    if (sessionRole === "gym_owner") await refreshSubscriptionStatus(session);
 
     // Auto check-in for members and trainers (uses JWT identity - no body needed)
     try {
-      if (loginType === "member" && userId) {
+      if (sessionRole === "member" && userId) {
         await memberCheckIn(token);
         localStorage.setItem("checkInTime", JSON.stringify(new Date().toISOString()));
-      } else if (loginType === "trainer" && userId) {
+      } else if (sessionRole === "trainer" && userId) {
         await trainerCheckIn(token);
         localStorage.setItem("checkInTime", JSON.stringify(new Date().toISOString()));
       }
@@ -174,7 +348,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, logoutAll, register, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, isAuthenticated: Boolean(user), login, logout, logoutAll, register, completeOwnerRegistration, refreshSubscriptionStatus, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { UserPlus, X } from "lucide-react";
 
 const getEmptyForm = () => ({
   name: "",
@@ -73,7 +74,23 @@ export default function AddTrainerModal({
 
   if (!isOpen) return null;
 
-  const fieldClass = "h-9 w-full rounded border px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  const fieldClass = "h-9 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-[#334155] outline-none transition focus:border-[#0D8252] focus:bg-white disabled:cursor-not-allowed disabled:bg-[#F1F5F9] disabled:text-[#94A3B8]";
+  const labelClass = "mb-1 block text-xs font-semibold text-[#334155]";
+
+  const renderInput = (name, label, options = {}) => (
+    <label className={options.full ? "sm:col-span-2" : ""}>
+      <span className={labelClass}>{label}{options.required && <span className="text-red-500"> *</span>}</span>
+      <input
+        name={name}
+        type={options.type || "text"}
+        value={form[name] || ""}
+        onChange={(e) => setForm({ ...form, [name]: e.target.value })}
+        placeholder={options.placeholder || label}
+        className={fieldClass}
+        disabled={options.disabled}
+      />
+    </label>
+  );
 
   const handleSubmit = () => {
     if (!form.name || !form.email || (!editData && (!form.password || !form.role))) {
@@ -86,128 +103,45 @@ export default function AddTrainerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-xl rounded bg-white p-4 shadow-xl">
-        <h2 className="mb-3 text-base font-bold">
-          {editData ? "Edit Staff" : "Add Staff"}
-        </h2>
-
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            placeholder="Name"
-            className={fieldClass}
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-
-          <input
-            type="email"
-            placeholder="Email"
-            className={fieldClass}
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-
-          {!editData && (
-            <input
-              type="password"
-              placeholder="Password"
-              className={fieldClass}
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-            />
-          )}
-
-          {!editData && (
-            <select
-              className={fieldClass}
-              value={form.role}
-              onChange={(e) => setForm({ ...form, role: e.target.value })}
-            >
-              <option value="">Select Role</option>
-              <option value="admin">Admin</option>
-              <option value="trainer">Trainer</option>
-              <option value="receptionist">Receptionist</option>
-            </select>
-          )}
-
-          <input
-            placeholder="Phone Number"
-            className={fieldClass}
-            value={form.phoneNumber}
-            onChange={(e) => setForm({ ...form, phoneNumber: e.target.value })}
-          />
-
-          <select
-            className={fieldClass}
-            value={form.gender}
-            onChange={(e) => setForm({ ...form, gender: e.target.value })}
-          >
-            <option value="">Select Gender</option>
-            <option value="MALE">Male</option>
-            <option value="FEMALE">Female</option>
-            <option value="OTHER">Other</option>
-          </select>
-
-          <input
-            type="date"
-            placeholder="Date of Birth"
-            className={fieldClass}
-            value={form.dateOfBirth}
-            onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
-          />
-
-          <input
-            placeholder="Postal Code"
-            className={fieldClass}
-            value={form.postalCode}
-            onChange={(e) => setForm({ ...form, postalCode: e.target.value })}
-          />
-
-          <input
-            placeholder="Address Line 1"
-            className={fieldClass}
-            value={form.addressLine1}
-            onChange={(e) => setForm({ ...form, addressLine1: e.target.value })}
-          />
-
-          <input
-            placeholder="Address Line 2"
-            className={fieldClass}
-            value={form.addressLine2}
-            onChange={(e) => setForm({ ...form, addressLine2: e.target.value })}
-          />
-
-          <input
-            placeholder="City"
-            className={fieldClass}
-            value={form.city}
-            onChange={(e) => setForm({ ...form, city: e.target.value })}
-          />
-
-          <input
-            placeholder="State"
-            className={fieldClass}
-            value={form.state}
-            onChange={(e) => setForm({ ...form, state: e.target.value })}
-          />
-
-          <input
-            placeholder="Country"
-            className={fieldClass}
-            value={form.country}
-            onChange={(e) => setForm({ ...form, country: e.target.value })}
-          />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onClick={onClose}>
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><UserPlus size={18} /></div>
+            <div>
+              <h2 className="text-base font-bold text-[#0F172A]">{editData ? "Edit Staff" : "Add Staff"}</h2>
+              <p className="mt-0.5 text-xs text-[#64748B]">{editData ? "Review and update this staff profile." : "Enter employee credentials, contact details, and role permissions."}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close staff modal" className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]"><X size={17} /></button>
         </div>
 
-        <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded px-3 py-1.5 text-sm hover:bg-gray-100">Cancel</button>
-          <button
-            onClick={handleSubmit}
-            className="rounded bg-blue-500 px-3 py-1.5 text-sm text-white"
-          >
-            Save
-          </button>
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {renderInput("name", "Full Name", { required: true, placeholder: "e.g. John Doe" })}
+            {renderInput("email", "Email Address", { type: "email", required: true, disabled: Boolean(editData), placeholder: "e.g. name@gymmaster.com" })}
+            {!editData && renderInput("password", "Temporary Password", { type: "password", required: true, placeholder: "••••••••" })}
+            <label>
+              <span className={labelClass}>Role{!editData && <span className="text-red-500"> *</span>}</span>
+              <select name="role" className={fieldClass} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} disabled={Boolean(editData)}>
+                <option value="">Select Role</option><option value="admin">Admin</option><option value="trainer">Trainer</option><option value="receptionist">Receptionist</option>
+              </select>
+            </label>
+            {renderInput("phoneNumber", "Phone Number", { placeholder: "+1 (555) 000-0000" })}
+            <label><span className={labelClass}>Gender</span><select name="gender" value={form.gender || ""} onChange={(e) => setForm({ ...form, gender: e.target.value })} className={fieldClass}><option value="">Select Gender</option><option value="MALE">Male</option><option value="FEMALE">Female</option><option value="OTHER">Other</option></select></label>
+            {renderInput("dateOfBirth", "Date of Birth", { type: "date", placeholder: "dd-mm-yyyy" })}
+            {renderInput("postalCode", "Postal / Zip Code", { placeholder: "e.g. 90210" })}
+            {renderInput("addressLine1", "Address Line 1", { placeholder: "Street address or P.O. Box" })}
+            {renderInput("addressLine2", "Address Line 2", { placeholder: "Apartment, suite, unit, etc." })}
+            {renderInput("city", "City", { placeholder: "City" })}
+            {renderInput("state", "State / Province", { placeholder: "State" })}
+            {renderInput("country", "Country", { placeholder: "e.g. United States" })}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-white px-5 py-4">
+          <button type="button" onClick={onClose} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Cancel</button>
+          <button type="button" onClick={handleSubmit} className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D8252] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43]">{editData ? "Update" : "Save"}</button>
         </div>
       </div>
     </div>

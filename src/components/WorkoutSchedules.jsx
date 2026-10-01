@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { CalendarDays, Plus, CheckCircle, X, Clock } from "lucide-react";
 import toast from "react-hot-toast";
+import StatusBadge from "./StatusBadge";
 import {
   createSchedule, getMySchedules, getUpcomingSchedules,
   updateSchedule, deleteSchedule, checkInToSchedule,
@@ -12,21 +13,11 @@ function displayDate(value) { if (!value) return "-"; const date = new Date(valu
 function displayDateTime(value) { if (!value) return "-"; const date = new Date(value); if (Number.isNaN(date.getTime())) return value; return date.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
-const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
+const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
 
 const scheduleStatuses = ["SCHEDULED", "CHECKED_IN", "COMPLETED", "MISSED", "CANCELLED"];
-
-function getStatusClass(status) {
-  const s = String(status || "").toUpperCase();
-  if (s === "SCHEDULED") return "bg-blue-50 text-blue-700 ring-blue-200";
-  if (s === "CHECKED_IN") return "bg-emerald-50 text-emerald-700 ring-emerald-200";
-  if (s === "COMPLETED") return "bg-gray-50 text-gray-600 ring-gray-200";
-  if (s === "MISSED") return "bg-red-50 text-red-700 ring-red-200";
-  if (s === "CANCELLED") return "bg-gray-100 text-gray-500 ring-gray-200";
-  return "bg-gray-50 text-gray-600 ring-gray-200";
-}
 
 export default function WorkoutSchedules({ user, role, canSchedule, canSession, workoutDays = [], onSessionStarted }) {
   const [upcoming, setUpcoming] = useState([]);
@@ -230,7 +221,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession, 
               <div key={scheduleId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ring-1 ring-inset ${getStatusClass(status)}`}>{status}</span>
+                    <StatusBadge status={status} label={status} />
                     {schedule.workoutDay?.title && <span className="text-sm font-medium text-gray-800">{schedule.workoutDay.title}</span>}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500">
@@ -360,15 +351,15 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession, 
                         {schedule.workoutDay?.title || schedule.workoutPlan?.title || "-"}
                       </td>
                       <td className="px-4 py-2">
-                        <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ring-1 ring-inset ${getStatusClass(status)}`}>{status}</span>
+                        <StatusBadge status={status} label={status} />
                       </td>
                       <td className="px-4 py-2">
                         <input className={`${inputClass} h-8`} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} placeholder="Notes" />
                       </td>
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-1">
-                          <button type="button" onClick={() => handleUpdate(scheduleId)} className="inline-flex h-7 items-center rounded bg-blue-600 px-2 text-xs font-medium text-white hover:bg-blue-700">Save</button>
-                          <button type="button" onClick={cancelEdit} className="inline-flex h-7 items-center rounded bg-gray-200 px-2 text-xs font-medium text-gray-700 hover:bg-gray-300">Cancel</button>
+                          <button type="button" onClick={() => handleUpdate(scheduleId)} className="inline-flex h-7 items-center rounded-lg bg-blue-600 px-2 text-xs font-medium text-white hover:bg-blue-700">Save</button>
+                          <button type="button" onClick={cancelEdit} className="inline-flex h-7 items-center rounded-lg bg-gray-200 px-2 text-xs font-medium text-gray-700 hover:bg-gray-300">Cancel</button>
                         </div>
                       </td>
                     </tr>
@@ -380,7 +371,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession, 
                     <td className="px-4 py-3 text-gray-600">{schedule.scheduledTime || "-"}</td>
                     <td className="px-4 py-3 text-gray-800">{schedule.workoutDay?.title || schedule.workoutPlan?.title || "-"}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ring-1 ring-inset ${getStatusClass(status)}`}>{status}</span>
+                      <StatusBadge status={status} label={status} />
                     </td>
                     <td className="px-4 py-3 text-gray-500 max-w-40 truncate">{schedule.notes || "-"}</td>
                     <td className="px-4 py-3">
@@ -410,8 +401,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession, 
           )}
         </div>
 
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+        <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
             <button type="button" className={buttonClass} disabled={page <= 1} onClick={() => handlePageChange(page - 1)}>
               Previous
             </button>
@@ -421,7 +411,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession, 
                   key={p}
                   type="button"
                   onClick={() => handlePageChange(p)}
-                  className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-medium transition ${p === page ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-sm font-medium transition ${p === page ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
                 >
                   {p}
                 </button>
@@ -430,8 +420,7 @@ export default function WorkoutSchedules({ user, role, canSchedule, canSession, 
             <button type="button" className={buttonClass} disabled={page >= totalPages} onClick={() => handlePageChange(page + 1)}>
               Next
             </button>
-          </div>
-        )}
+        </div>
       </div>}
     </section>
   );

@@ -7,12 +7,14 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://79pgwtvr-3000.inc1.devtunnels.ms',
+        //target: 'https://79pgwtvr-3000.inc1.devtunnels.ms',
+        target: 'https://gym-api.wazeefa.in',
         changeOrigin: true,
         secure: false,
       },
       '/auth': {
-        target: 'https://79pgwtvr-3000.inc1.devtunnels.ms',
+        //target: 'https://79pgwtvr-3000.inc1.devtunnels.ms',
+        target: 'https://gym-api.wazeefa.in',
         changeOrigin: true,
         secure: false,
       },

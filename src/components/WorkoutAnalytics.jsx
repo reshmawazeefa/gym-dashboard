@@ -19,8 +19,8 @@ function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId
 const CHART_COLORS = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4"];
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
 
 function StatCard({ icon: Icon, label, value, color }) {
   return (
@@ -352,7 +352,7 @@ export default function WorkoutAnalytics({ user }) {
             key={tab.key}
             type="button"
             onClick={() => handleTabChange(tab.key)}
-            className={`h-10 rounded-md px-4 text-sm font-semibold transition ${
+            className={`h-10 rounded-lg px-4 text-sm font-semibold transition ${
               analyticsTab === tab.key ? "bg-gray-950 text-white shadow-sm" : "text-gray-600 bg-white border border-gray-300 hover:bg-gray-50"
             }`}
           >

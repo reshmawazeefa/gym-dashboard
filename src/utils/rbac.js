@@ -4,15 +4,17 @@ export const MODULE_PERMISSIONS = [
   { key: "dashboard", label: "Dashboard", actions: ["view"] },
   { key: "members", label: "Members", actions: ["read", "create", "update", "delete"] },
   { key: "plans", label: "Our Packages", actions: ["read", "create", "update", "delete"] },
+  { key: "gym.settings", label: "Gym Settings", actions: ["update"] },
   { key: "payments", label: "Payments", actions: ["read", "create", "update"] },
   { key: "staff", label: "Staff", actions: ["read", "create", "update", "delete"] },
   { key: "permissions", label: "Permissions", actions: ["read", "assign", "remove"] },
   { key: "gyms", label: "Platform Gyms", actions: ["read", "create", "edit", "delete"] },
   { key: "saas-plans", label: "SaaS Plans", actions: ["read", "create", "update", "delete"] },
   { key: "attendance", label: "Attendance", actions: ["mark", "view", "update", "delete", "export", "force.checkout"] },
-  { key: "subscriptions", label: "Subscriptions" },
+  { key: "subscriptions", label: "Subscriptions", actions: ["read", "create", "update"] },
   { key: "classes", label: "Classes" },
   { key: "workouts", label: "Workouts", actions: ["view", "create", "edit", "delete", "assign", "progress", "session", "schedule", "measurements", "goals", "feedback"] },
+  { key: "payroll", label: "Payroll", actions: ["read", "create", "update", "delete", "pay", "self.read"] },
   { key: "nutrition", label: "Nutrition" },
   { key: "products", label: "Products" },
   { key: "facilities", label: "Facilities" },
@@ -38,9 +40,22 @@ export const MODULE_PERMISSION_MAP = MODULE_PERMISSIONS.reduce((map, module) => 
 export const ROLE_LABELS = {
   platform_admin: "Platform Admin",
   gym_owner: "Gym Owner",
+  admin: "Admin",
   staff: "Staff",
+  trainer: "Trainer",
+  receptionist: "Receptionist",
   member: "Member",
 };
+
+export const ROLE_PRIORITY = [
+  "platform_admin",
+  "gym_owner",
+  "admin",
+  "trainer",
+  "receptionist",
+  "staff",
+  "member",
+];
 
 export const STAFF_ROLE_CATEGORIES = [
   { key: "admin", label: "Admin" },
@@ -75,6 +90,7 @@ const STAFF_MODULES = [
   "attendance",
   "classes",
   "workouts",
+  "payroll",
   "nutrition",
   "products",
   "facilities",
@@ -116,13 +132,13 @@ export const DEFAULT_ROLE_PERMISSIONS = {
     finance: ["view"],
     reports: ["view", "create"],
     attendance: ["mark", "view", "update", "export"],
+    payroll: ["self.read"],
   }),
   member: buildPermissions(MEMBER_MODULES, {
     dashboard: ["view"],
     plans: ["read"],
     payments: ["view", "create"],
     attendance: ["mark", "view"],
-    subscriptions: ["view"],
     classes: ["view"],
     workouts: ["view", "session", "schedule", "progress", "measurements", "goals"],
     nutrition: ["view"],
@@ -137,21 +153,23 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
     finance: ["view"],
     reports: ["view", "create"],
     attendance: ["mark", "view", "update", "export"],
+    payroll: ["self.read"],
   }),
   "category:staff:trainer": buildPermissions(
-    ["dashboard", "members", "attendance", "subscriptions", "classes", "workouts", "nutrition", "communication"],
+    ["dashboard", "members", "attendance", "subscriptions", "classes", "workouts", "payroll", "nutrition", "communication"],
     {
       members: ["read"],
       attendance: ["mark", "view", "update"],
       subscriptions: ["view", "create"],
       classes: ["view", "create", "edit", "delete"],
       workouts: ["view", "create", "edit", "delete", "assign", "progress", "session", "schedule", "measurements", "goals", "feedback"],
+      payroll: ["self.read"],
       nutrition: ["view", "create", "edit"],
       communication: ["view"],
     }
   ),
   "category:staff:receptionist": buildPermissions(
-    ["dashboard", "members", "plans", "payments", "attendance", "subscriptions", "classes", "communication", "reminders", "workouts"],
+    ["dashboard", "members", "plans", "payments", "attendance", "subscriptions", "classes", "communication", "reminders", "workouts", "payroll"],
     {
       members: ["read", "create", "update"],
       plans: ["read"],
@@ -160,12 +178,17 @@ export const DEFAULT_CATEGORY_PERMISSIONS = {
       subscriptions: ["view", "create", "edit"],
       classes: ["view", "create", "edit", "delete"],
       workouts: ["view", "read", "progress", "session", "schedule"],
+      payroll: ["self.read"],
       communication: ["view", "create"],
       reminders: ["view", "create", "edit"],
     }
   ),
   "category:member:member": DEFAULT_ROLE_PERMISSIONS.member,
 };
+
+DEFAULT_ROLE_PERMISSIONS.admin = DEFAULT_CATEGORY_PERMISSIONS["category:staff:admin"];
+DEFAULT_ROLE_PERMISSIONS.trainer = DEFAULT_CATEGORY_PERMISSIONS["category:staff:trainer"];
+DEFAULT_ROLE_PERMISSIONS.receptionist = DEFAULT_CATEGORY_PERMISSIONS["category:staff:receptionist"];
 
 const OWNER_ROLES = new Set(["platform_admin", "gym_owner", "owner", "super_admin"]);
 const STAFF_ROLES = new Set([
@@ -176,7 +199,7 @@ const STAFF_ROLES = new Set([
   "receptionalist",
 ]);
 
-function getUserRoles(user = {}) {
+export function getUserRoles(user = {}) {
   const candidates = [
     user?.roles,
     user?.role,
@@ -200,38 +223,47 @@ function getUserRoles(user = {}) {
   return roles.map((value) => String(value).trim()).filter(Boolean);
 }
 
+export function getPrimaryRole(user = {}) {
+  const roles = getUserRoles(user)
+    .map((role) => normalizeRole(role))
+    .filter((role) => ROLE_PRIORITY.includes(role));
+
+  return ROLE_PRIORITY.find((role) => roles.includes(role)) || "";
+}
+
 export function getPortalKey(user = {}) {
-  const roles = getUserRoles(user);
-  const roleValue = roles[0] || user?.role || user?.loginType || "";
-  const normalized = normalizeRole(roleValue, user?.loginType);
+  const normalized = getPrimaryRole(user);
 
   if (normalized === "platform_admin") return "platform_admin";
   if (normalized === "gym_owner") return "gym_owner";
-  if (normalized === "staff") return "staff";
-  return "member";
+  if (["admin", "trainer", "receptionist", "staff"].includes(normalized)) return normalized;
+  if (normalized === "member") return "member";
+  return "";
 }
 
 export function getPortalHomePath(user = {}) {
   const portalKey = getPortalKey(user);
 
   if (portalKey === "platform_admin") return "/platform/gyms";
-  return "/";
+  const roleRoutes = {
+    gym_owner: "/owner",
+    admin: "/admin",
+    trainer: "/trainer",
+    receptionist: "/receptionist",
+    staff: "/staff",
+    member: "/member",
+  };
+  return roleRoutes[portalKey] || "";
 }
 
 export function isValidPortalLogin(loginType = "", user = {}) {
-  const userRoles = getUserRoles(user);
-  const roleValues = userRoles.length ? userRoles : [user?.role || user?.userRole || user?.staffRole || user?.type || user?.userType || user?.roleName || user?.user?.role || user?.user?.userType || user?.loginType || ""];
+  if (!loginType) return Boolean(getPrimaryRole(user));
 
-  if (!roleValues.length || !roleValues.some((role) => String(role).trim())) return false;
-
-  const normalizedRoles = roleValues.map((role) => normalizeRole(role, loginType));
-
-  if (loginType === "platform") return normalizedRoles.includes("platform_admin");
-  if (loginType === "owner") return normalizedRoles.includes("gym_owner");
-  if (loginType === "staff") return normalizedRoles.includes("staff");
-  if (loginType === "member") return normalizedRoles.includes("member");
-
-  return true;
+  const expectedRole = loginType === "platform" ? "platform_admin" : loginType === "owner" ? "gym_owner" : loginType;
+  return getUserRoles(user).some((role) => {
+    const normalizedRole = normalizeRole(role);
+    return normalizedRole === expectedRole || (expectedRole === "staff" && ["admin", "trainer", "receptionist"].includes(normalizedRole));
+  });
 }
 
 function normalizePortalRoute(pathname = "/") {
@@ -246,15 +278,22 @@ export function isUserAllowedInPortal(user = {}, pathname = "/") {
   const portalKey = getPortalKey(user);
   const safeRoute = normalizePortalRoute(pathname);
 
-  if (["/login", "/register", "/forgot-password", "/verify-otp", "/reset-password"].includes(safeRoute)) {
+  if (portalKey === "member" && (safeRoute === "/payments" || safeRoute.startsWith("/payments/") || safeRoute === "/modules/subscriptions" || safeRoute.startsWith("/modules/subscriptions/"))) {
+    return false;
+  }
+
+  if (["/login", "/platform/login", "/register", "/forgot-password", "/verify-otp", "/reset-password"].includes(safeRoute)) {
     return true;
   }
 
   const portalAccess = {
     platform_admin: ["/platform", "/profile", "/modules"],
-    gym_owner: ["/", "/members", "/plans", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
-    staff: ["/", "/members", "/plans", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
-    member: ["/", "/plans", "/payments", "/profile", "/modules"],
+    gym_owner: ["/", "/owner", "/members", "/plans", "/membership", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
+    admin: ["/", "/admin", "/members", "/plans", "/membership", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
+    trainer: ["/", "/trainer", "/members", "/attendance", "/membership", "/profile", "/modules"],
+    receptionist: ["/", "/receptionist", "/members", "/plans", "/membership", "/payments", "/attendance", "/profile", "/modules"],
+    staff: ["/", "/staff", "/members", "/plans", "/membership", "/payments", "/trainers", "/permissions", "/profile", "/modules"],
+    member: ["/", "/member", "/plans", "/membership", "/profile", "/modules"],
   };
 
   const allowedPrefixes = portalAccess[portalKey] || ["/"];
@@ -271,6 +310,8 @@ export function normalizeRole(role, loginType = "") {
 
   if (value === "platform" || value === "platform_admin" || value === "super_admin") return "platform_admin";
   if (value === "gym_owner" || value === "owner") return "gym_owner";
+  if (value === "administrator") return "admin";
+  if (value === "admin" || value === "trainer" || value === "receptionist" || value === "receptionalist") return value === "receptionalist" ? "receptionist" : value;
   if (value === "gym_member" || value === "member") return "member";
   if (STAFF_ROLES.has(value) || loginType === "staff") return "staff";
 
@@ -355,6 +396,14 @@ export function isPrivilegedRole(role, loginType = "") {
 
 export function permissionKey(moduleKey, action = "view") {
   if (moduleKey === "workouts" && (action === "read" || action === "view")) return "workouts.view";
+
+  if (moduleKey === "subscriptions") {
+    if (action === "view" || action === "read") return "subscription.read";
+    if (action === "create" || action === "assign") return "subscription.create";
+    if (action === "edit" || action === "update") return "subscription.update";
+    return `subscription.${action}`;
+  }
+  if (moduleKey === "payroll") return `payroll.${action === "view" ? "read" : action}`;
 
   if (
     moduleKey === "members" ||
@@ -484,6 +533,9 @@ export function canAccess(user, moduleKey, action = "view") {
   }
 
   const permissions = getUserPermissions(user);
+  if (moduleKey === "payroll" && action === "view") {
+    return permissions.includes("payroll.read") || permissions.includes("payroll.self.read");
+  }
   return permissions.includes(permissionKey(moduleKey, action));
 }
 

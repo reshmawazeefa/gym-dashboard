@@ -1,26 +1,29 @@
 import { Fragment, useEffect, useState } from "react";
-import { CalendarDays, ChevronDown, Copy, Download, Dumbbell, Pencil, Plus, Search, Trash, X } from "lucide-react";
+import { CalendarDays, ChevronDown, Copy, Download, Dumbbell, Edit, Plus, Search, Trash, X } from "lucide-react";
 import toast from "react-hot-toast";
-import { createWorkoutPlan, updateWorkoutPlan, deleteWorkoutPlan, cloneWorkoutPlan, createWorkoutDay, assignWorkoutToMember, assignExerciseToWorkoutDay, updateWorkoutDayExercise, removeWorkoutDayExercise, getApiError, getWorkoutDays } from "../services/api";
+import { deleteWorkoutPlan, cloneWorkoutPlan, createWorkoutDay, assignWorkoutToMember, assignExerciseToWorkoutDay, updateWorkoutDayExercise, removeWorkoutDayExercise, getApiError, getWorkoutDays } from "../services/api";
+import TablePagination from "./TablePagination";
+import { generateWorkoutSchedule, normalizeRepeatDays, validateWorkoutAssignment } from "../utils/workoutScheduling";
 
 function idOf(item) { return item?.id || item?._id || item?.uuid || item?.userId || ""; }
 function nameOf(item) { return item?.name || item?.fullName || item?.title || item?.email || idOf(item) || "-"; }
 function displayDate(value) { if (!value) return "-"; const date = new Date(value); if (Number.isNaN(date.getTime())) return value; return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
 function titleCase(value) { return String(value || "").toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "); }
 function metricValue(value) { return value === null || value === undefined || value === "" ? "-" : String(value); }
-function emptyPlan() { return { name: "", description: "", goal: "STRENGTH", difficulty: "BEGINNER", duration: "", image: "" }; }
+function emptyDay() { return { title: "", dayNumber: "", notes: "" }; }
 
 const goals = ["WEIGHT_LOSS", "MUSCLE_GAIN", "STRENGTH", "ENDURANCE", "FAT_BURN"];
 const difficulties = ["BEGINNER", "INTERMEDIATE", "ADVANCED"];
+const PLAN_PAGE_SIZE = 10;
 
-const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
-const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
-const adminPlanGridClass = "lg:grid-cols-[2rem_minmax(12rem,1fr)_9rem_9rem_6rem_5rem]";
+const inputClass = "h-8 w-full rounded-lg border border-[#E2E8F0]/20 bg-[#FBFCFD]/20 px-3 text-xs text-[#0F172A] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252]/30 focus:bg-white disabled:bg-[#F1F5F9] disabled:text-[#94A3B8]";
+const buttonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-[#0D8252] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43] disabled:cursor-not-allowed disabled:opacity-60";
+const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
+const adminPlanGridClass = "lg:grid-cols-[minmax(16rem,1.6fr)_minmax(10rem,1fr)_8rem_7rem_minmax(14rem,auto)]";
 
 function Card({ children, className = "" }) {
-  return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
+  return <section className={`rounded-xl border border-[#E5EAF0] bg-white shadow-[0_1px_4px_rgba(15,23,42,0.06)] ${className}`}>{children}</section>;
 }
 
 function Field({ label, children, className = "" }) {
@@ -64,21 +67,14 @@ function normalizeDayExerciseLinks(day) {
 
 function normalizePlanDays(plan) {
   if (!plan) return [];
-  const candidates = [
-    plan?.days,
-    plan?.workoutDays,
-    plan?.data?.days,
-    plan?.data?.workoutDays,
-  ];
+  const candidates = [plan?.days, plan?.workoutDays, plan?.data?.days, plan?.data?.workoutDays];
   return candidates.find(Array.isArray) || [];
 }
 
 function planExerciseCount(plan) {
   const explicitCount = Number(plan?.totalExercises || plan?.exerciseCount || 0);
   if (explicitCount) return explicitCount;
-
-  const days = normalizePlanDays(plan);
-  return days.reduce((total, day) => total + normalizeDayExerciseLinks(day).length, 0);
+  return normalizePlanDays(plan).reduce((total, day) => total + normalizeDayExerciseLinks(day).length, 0);
 }
 
 function trainerAssignmentName(assignment) {
@@ -86,47 +82,34 @@ function trainerAssignmentName(assignment) {
 }
 
 export default function WorkoutPlans(props) {
-  const { user, role, canManage, canEdit, canDelete, canAssign, canManageAssignments, plans, setPlans, loading, planSearch, setPlanSearch, goalFilter, setGoalFilter, difficultyFilter, setDifficultyFilter, selectedPlanId, setSelectedPlanId, expandedPlanId, setExpandedPlanId, editingPlanId, setEditingPlanId, planForm, setPlanForm, filteredPlans, assignedMemberCount, memberWorkoutDaysCount, memberWorkoutExercisesCount, loadPlans, refreshSelectedPlan, selectedPlan, planTrainers, members, exercises = [], setActiveTab, showCreatePlanModal = false, setShowCreatePlanModal = () => {} } = props;
+  const { user, role, canManage, canEdit, canDelete, canAssign, canManageAssignments, plans, setPlans, loading, planSearch, setPlanSearch, goalFilter, setGoalFilter, difficultyFilter, setDifficultyFilter, selectedPlanId, setSelectedPlanId, expandedPlanId, setExpandedPlanId, editingPlanId, setEditingPlanId, planForm, setPlanForm, filteredPlans, assignedMemberCount, memberWorkoutDaysCount, memberWorkoutExercisesCount, loadPlans, refreshSelectedPlan, selectedPlan, planTrainers, members, exercises = [], setActiveTab, setShowCreatePlanModal = () => {} } = props;
 
   const [showAddDayModal, setShowAddDayModal] = useState(false);
   const [showAssignMemberModal, setShowAssignMemberModal] = useState(false);
   const [showExerciseModal, setShowExerciseModal] = useState(false);
   const [showDayExerciseDetailsModal, setShowDayExerciseDetailsModal] = useState(false);
+  const [addDayPlanDayCount, setAddDayPlanDayCount] = useState(0);
+  const [savingDay, setSavingDay] = useState(false);
+  const [planPage, setPlanPage] = useState(1);
   const [selectedDayForExercise, setSelectedDayForExercise] = useState(null);
   const [selectedDayForDetails, setSelectedDayForDetails] = useState(null);
   const [editingExerciseLinkId, setEditingExerciseLinkId] = useState("");
   const [editingExerciseForm, setEditingExerciseForm] = useState({ sets: "", reps: "", duration: "", restTime: "" });
-  const [dayForm, setDayForm] = useState({ title: "", dayNumber: "", notes: "" });
+  const [dayForm, setDayForm] = useState(emptyDay());
   const [assignmentForm, setAssignmentForm] = useState({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" });
   const [exerciseForm, setExerciseForm] = useState({ exerciseId: "", sets: "", reps: "", duration: "", restTime: "", orderIndex: "" });
 
-  const handleSavePlan = async (event) => {
-    event.preventDefault();
-    if (!canManage || !planForm.name.trim()) {
-      toast.error("Workout plan name is required");
-      return;
-    }
+  const closeAddDayModal = () => {
+    setShowAddDayModal(false);
+    setAddDayPlanDayCount(0);
+    setDayForm(emptyDay());
+  };
 
-    const payload = {
-      ...planForm,
-      duration: planForm.duration ? Number(planForm.duration) : undefined,
-    };
-
-    try {
-      if (editingPlanId) {
-        await updateWorkoutPlan(editingPlanId, payload, user?.token);
-        toast.success("Workout plan updated");
-      } else {
-        await createWorkoutPlan(payload, user?.token);
-        toast.success("Workout plan created");
-      }
-      setPlanForm(emptyPlan());
-      setEditingPlanId("");
-      setShowCreatePlanModal(false);
-      await loadPlans();
-    } catch (error) {
-      toast.error(getApiError(error, "Unable to save workout plan"));
-    }
+  const openAddDayModal = (planId, dayCount) => {
+    setSelectedPlanId(planId);
+    setAddDayPlanDayCount(dayCount);
+    setDayForm({ ...emptyDay(), dayNumber: String(dayCount + 1) });
+    setShowAddDayModal(true);
   };
 
   const handleDeletePlan = async (planId) => {
@@ -136,7 +119,7 @@ export default function WorkoutPlans(props) {
       toast.success("Workout plan deleted");
       await loadPlans();
     } catch (error) {
-      toast.error(getApiError(error, "Unable to delete plan"));
+      toast.error(getApiError(error, "Unable to delete workout plan"));
     }
   };
 
@@ -148,32 +131,6 @@ export default function WorkoutPlans(props) {
     } catch (error) {
       toast.error(getApiError(error, "Unable to clone plan"));
     }
-  };
-
-  const handleExportCSV = () => {
-    const headers = ["Workout", "Goal", "Difficulty", "Duration", "Days", "Description", "Trainers"];
-    const rows = filteredPlans.map((plan) => {
-      const totalDays = countOf(plan.days || plan.workoutDays || plan.totalDays);
-      const trainers = (plan.trainers || plan.trainerAssignments || []).map(trainerAssignmentName).join("; ");
-      return [
-        plan.name || plan.title || assignmentPlanName(plan, "Workout plan"),
-        titleCase(metricValue(plan.goal)),
-        titleCase(metricValue(plan.difficulty)),
-        metricValue(plan.duration),
-        totalDays,
-        (plan.description || "").slice(0, 100),
-        trainers,
-      ];
-    });
-
-    const csvContent = [headers, ...rows].map((row) => row.map((cell) => `"${cell ?? ""}"`).join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `workout-plans-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   const editPlan = (plan) => {
@@ -191,19 +148,76 @@ export default function WorkoutPlans(props) {
 
   const handleCreateDay = async (event) => {
     event.preventDefault();
-    if (!selectedPlanId || !dayForm.title.trim() || !dayForm.dayNumber) {
-      toast.error("Day title and day number are required");
+    if (savingDay) return;
+    const dayNumber = Number(dayForm.dayNumber);
+    if (!dayForm.title.trim() || !dayForm.dayNumber) {
+      toast.error("Day title and number are required");
+      return;
+    }
+    if (!Number.isInteger(dayNumber) || dayNumber < 1) {
+      toast.error("Day number must be a positive whole number");
+      return;
+    }
+    const plan = plans.find((item) => String(idOf(item)) === String(selectedPlanId));
+    const currentDays = String(idOf(selectedPlan)) === String(selectedPlanId) && hydratedPlanDays.length
+      ? hydratedPlanDays
+      : normalizePlanDays(plan);
+    if (currentDays.some((day) => Number(day.dayNumber) === dayNumber)) {
+      toast.error("Day number must be unique within this workout plan");
+      return;
+    }
+    if (!selectedPlanId) {
+      toast.error("Select a workout plan before creating a workout day");
       return;
     }
     try {
-      await createWorkoutDay(selectedPlanId, { ...dayForm, dayNumber: Number(dayForm.dayNumber) }, user?.token);
+      setSavingDay(true);
+      const response = await createWorkoutDay(selectedPlanId, {
+        dayNumber,
+        title: dayForm.title.trim(),
+        ...(dayForm.notes.trim() && { notes: dayForm.notes.trim() }),
+      }, user?.token);
+      const createdDay = response?.data?.data || response?.data || response;
+      const newDay = {
+        ...(createdDay && typeof createdDay === "object" ? createdDay : {}),
+        dayNumber,
+        title: dayForm.title.trim(),
+        ...(dayForm.notes.trim() && { notes: dayForm.notes.trim() }),
+        exercises: Array.isArray(createdDay?.exercises) ? createdDay.exercises : [],
+      };
+      const nextDays = [...currentDays.filter((day) => Number(day.dayNumber) !== dayNumber), newDay]
+        .sort((first, second) => Number(first.dayNumber) - Number(second.dayNumber));
+      setPlans((current) => current.map((item) => {
+        if (String(idOf(item)) !== String(selectedPlanId)) return item;
+        const itemDays = [...normalizePlanDays(item).filter((day) => Number(day.dayNumber) !== dayNumber), newDay]
+          .sort((first, second) => Number(first.dayNumber) - Number(second.dayNumber));
+        const hasDayList = Array.isArray(item.days) || Array.isArray(item.workoutDays);
+        return {
+          ...item,
+          ...(hasDayList ? { days: itemDays, workoutDays: itemDays } : {}),
+          totalDays: hasDayList ? itemDays.length : countOf(item.totalDays) + 1,
+        };
+      }));
+      if (String(idOf(selectedPlan)) === String(selectedPlanId)) setHydratedPlanDays(nextDays);
       toast.success("Workout day created");
-      setShowAddDayModal(false);
-      setDayForm({ title: "", dayNumber: "", notes: "" });
-      await refreshSelectedPlan();
-      await loadPlans();
+      closeAddDayModal();
+      try {
+        const refreshedDays = await refreshSelectedPlan();
+        if (Array.isArray(refreshedDays) && String(idOf(selectedPlan)) === String(selectedPlanId)) {
+          setHydratedPlanDays(refreshedDays);
+        }
+      } catch (error) {
+        toast.error(getApiError(error, "Workout day created, but the list could not be refreshed"));
+      }
+      try {
+        await loadPlans();
+      } catch (error) {
+        toast.error(getApiError(error, "Workout day created, but workout plans could not be refreshed"));
+      }
     } catch (error) {
       toast.error(getApiError(error, "Unable to create workout day"));
+    } finally {
+      setSavingDay(false);
     }
   };
 
@@ -213,6 +227,11 @@ export default function WorkoutPlans(props) {
       toast.error("Select a member to assign this workout plan");
       return;
     }
+    const validation = validateWorkoutAssignment(assignmentForm);
+    if (validation.errors.length) {
+      toast.error(validation.errors[0]);
+      return;
+    }
     try {
       const payload = { userId: assignmentForm.memberId };
       if (assignmentForm.startDate) payload.startDate = assignmentForm.startDate;
@@ -220,10 +239,7 @@ export default function WorkoutPlans(props) {
       if (assignmentForm.repeatType && assignmentForm.repeatType !== "NONE") {
         payload.repeatType = assignmentForm.repeatType;
         if (assignmentForm.repeatEndDate) payload.repeatEndDate = assignmentForm.repeatEndDate;
-        if (assignmentForm.repeatType === "CUSTOM" && assignmentForm.repeatDays.length) {
-          const dayMap = { MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6, SUNDAY: 7 };
-          payload.repeatDays = assignmentForm.repeatDays.map((day) => dayMap[day] || day);
-        }
+        payload.repeatDays = normalizeRepeatDays(assignmentForm.repeatDays);
       }
       await assignWorkoutToMember(selectedPlanId, payload, user?.token);
       toast.success("Workout assigned to member");
@@ -340,6 +356,17 @@ export default function WorkoutPlans(props) {
     return () => { active = false; };
   }, [selectedPlanId, selectedPlan?.id, selectedPlan?._id, user?.token]);
 
+  useEffect(() => {
+    if (!showAddDayModal) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showAddDayModal]);
+
   const openDayExerciseDetails = async (day) => {
     const planId = selectedPlanId || idOf(selectedPlan);
     setSelectedDayForDetails(day);
@@ -383,59 +410,77 @@ export default function WorkoutPlans(props) {
   };
 
   const planDaysForSelected = selectedPlan ? (hydratedPlanDays.length ? hydratedPlanDays : (selectedPlan.days || selectedPlan.workoutDays || [])) : [];
+  const assignmentSchedulePreview = selectedPlan
+    ? generateWorkoutSchedule({
+        workoutDays: planDaysForSelected,
+        startDate: assignmentForm.startDate,
+        endDate: assignmentForm.endDate,
+        repeatEndDate: assignmentForm.repeatEndDate,
+        repeatType: assignmentForm.repeatType,
+        repeatDays: assignmentForm.repeatDays,
+      })
+    : null;
   const selectedPlanExerciseCount = selectedPlan ? planExerciseCount({ ...selectedPlan, days: planDaysForSelected, workoutDays: planDaysForSelected }) : 0;
+  const planTotalPages = Math.max(1, Math.ceil(filteredPlans.length / PLAN_PAGE_SIZE));
+  const currentPlanPage = Math.min(planPage, planTotalPages);
+  const planPageStart = (currentPlanPage - 1) * PLAN_PAGE_SIZE;
+  const paginatedPlans = filteredPlans.slice(planPageStart, planPageStart + PLAN_PAGE_SIZE);
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[minmax(620px,1fr)_minmax(330px,420px)]">
+    <section className="grid gap-4">
       <Card className="overflow-hidden">
-        <div className="grid gap-3 border-b border-gray-200 p-4 lg:grid-cols-[minmax(0,1fr)_12rem_12rem_auto]">
-          <div className="flex items-center gap-2 rounded-md border border-gray-200 px-3">
-            <Search size={17} className="text-gray-400" />
-            <input className="h-10 min-w-0 flex-1 text-sm outline-none" value={planSearch} onChange={(event) => setPlanSearch(event.target.value)} placeholder="Search workout plans..." />
+        <div className="grid gap-2.5 border-b border-[#EEF2F4] p-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+          <div className="flex h-8 items-center gap-2 rounded-lg border border-[#E2E8F0] bg-[#FBFCFD] px-2.5 focus-within:border-[#0D8252] focus-within:bg-white">
+            <Search size={14} className="text-[#94A3B8]" />
+            <input className="h-7 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-[#94A3B8]" value={planSearch} onChange={(event) => { setPlanSearch(event.target.value); setPlanPage(1); }} placeholder="Search workout plans..." />
           </div>
-          <select className={inputClass} value={goalFilter} onChange={(event) => setGoalFilter(event.target.value)}>
-            <option value="">All Goals</option>
-            {goals.map((goal) => <option key={goal} value={goal}>{titleCase(goal)}</option>)}
-          </select>
-          <select className={inputClass} value={difficultyFilter} onChange={(event) => setDifficultyFilter(event.target.value)}>
-            <option value="">All Levels</option>
-            {difficulties.map((level) => <option key={level} value={level}>{titleCase(level)}</option>)}
-          </select>
-          <button
-            type="button"
-            onClick={handleExportCSV}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            <Download size={16} /> Export CSV
-          </button>
+          <label className="flex h-8 w-full items-center gap-2">
+            <span className="text-xs font-semibold text-[#475569]">Goal</span>
+            <select className={`${inputClass} min-w-0`} value={goalFilter} onChange={(event) => { setGoalFilter(event.target.value); setPlanPage(1); }}>
+              <option value="">All</option>
+              {goals.map((goal) => <option key={goal} value={goal}>{titleCase(goal)}</option>)}
+            </select>
+          </label>
+          <label className="flex h-8 w-full items-center gap-2">
+            <span className="text-xs font-semibold text-[#475569]">Levels</span>
+            <select className={`${inputClass} min-w-0`} value={difficultyFilter} onChange={(event) => { setDifficultyFilter(event.target.value); setPlanPage(1); }}>
+              <option value="">All</option>
+              {difficulties.map((level) => <option key={level} value={level}>{titleCase(level)}</option>)}
+            </select>
+          </label>
         </div>
         <div className="divide-y divide-gray-100">
-          <div className={`hidden gap-3 bg-gray-100 px-0 py-3 text-xs font-semibold uppercase text-gray-500 lg:grid ${adminPlanGridClass} lg:items-center`}>
-            <span aria-hidden="true"></span>
-            <span>Workout</span>
-           
+          <div className={`hidden gap-3 bg-[#F8FAFC] px-3 py-3 text-[10px] font-bold uppercase tracking-wide text-[#64748B] lg:grid ${adminPlanGridClass} lg:items-center`}>
+            <span>Workout Plan</span>
+            <span>Trainers</span>
+            <span>Goal</span>
+            <span>Duration</span>
+            <span>Actions</span>
           </div>
-          {filteredPlans.map((plan) => {
+          {paginatedPlans.map((plan) => {
             const planId = idOf(plan);
             const totalDays = countOf(plan.days || plan.workoutDays || plan.totalDays);
             const isExpanded = expandedPlanId === planId;
             return (
-              <div key={planId} className={selectedPlanId === planId ? "bg-blue-50/40" : "bg-white"}>
-                <div className={`grid gap-3 px-0 py-3 ${adminPlanGridClass} lg:items-center`}>
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedPlanId(planId); setExpandedPlanId(isExpanded ? "" : planId); }}
-                    className={iconButtonClass}
-                    aria-label={isExpanded ? "Collapse workout plan" : "Expand workout plan"}
-                  >
-                    <Plus size={17} className={`transition ${isExpanded ? "rotate-45" : ""}`} />
+              <div key={planId} className={selectedPlanId === planId ? "bg-white" : "bg-white"}>
+                <div className={`grid gap-3 px-3 py-3 text-xs ${adminPlanGridClass} lg:items-center`}>
+                  <button type="button" onClick={() => setSelectedPlanId(planId)} className="rounded-lg min-w-0 text-left">
+                    <h3 className="truncate text-xs font-bold text-[#0F172A]">{plan.name || plan.title || assignmentPlanName(plan, "Workout plan")}</h3>
+                    <p className="mt-0.5 truncate text-[10px] text-[#94A3B8]">{plan.description || "Workout plan"}</p>
                   </button>
-                  <button type="button" onClick={() => setSelectedPlanId(planId)} className="min-w-0 text-left">
-                    <h3 className="truncate font-semibold text-gray-950">{plan.name || plan.title || assignmentPlanName(plan, "Workout plan")}</h3>
-                  </button>
-             
+                  <div className="hidden min-w-0 lg:block">
+                    {(plan.trainers || plan.trainerAssignments || []).length ? <p className="truncate text-xs text-[#475569]">{(plan.trainers || plan.trainerAssignments || []).map(trainerAssignmentName).join(", ")}</p> : <p className="text-xs text-[#94A3B8]">No trainers assigned</p>}
+                  </div>
+                  <span className="hidden w-fit rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 lg:inline-flex">{titleCase(metricValue(plan.goal))}</span>
+                  <span className="hidden whitespace-nowrap text-xs font-semibold text-[#334155] lg:inline">{metricValue(plan.duration)} mins</span>
+                  <div className="hidden shrink-0 items-center justify-left gap-1 whitespace-nowrap lg:flex lg:flex-nowrap">
+                    <button type="button" onClick={() => openAddDayModal(planId, totalDays)} className="inline-flex h-8 items-center rounded-lg border border-[#E2E8F0] px-3 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC]">Add Days</button>
+                    {canEdit && <button type="button" onClick={() => editPlan(plan)} className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#E2E8F0] bg-white text-[#475569] transition hover:bg-[#F8FAFC] hover:text-[#0D8252]" aria-label="Edit workout plan"><Edit size={15} /></button>}
+                    {canManage && <button type="button" onClick={() => handleClonePlan(planId)} className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#E2E8F0] bg-white text-[#475569] transition hover:bg-[#F8FAFC] hover:text-[#0D8252]" aria-label="Clone workout plan"><Copy size={13} /></button>}
+                    {canDelete && <button type="button" onClick={() => handleDeletePlan(planId)} className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-500 transition hover:bg-rose-100 hover:text-rose-600" aria-label="Delete workout plan"><Trash size={13} /></button>}
+                  </div>
                 </div>
-                {isExpanded && (
+                {false && isExpanded && (
                   <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                       <div className="flex justify-between gap-5 lg:pe-3">
@@ -487,7 +532,7 @@ export default function WorkoutPlans(props) {
                             setSelectedPlanId(planId);
                             setActiveTab("days");
                           }}
-                          className="inline-flex h-8 items-center justify-center rounded-md bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                          className="inline-flex h-8 items-center justify-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
                         >
                           View Workout
                         </button>
@@ -500,24 +545,24 @@ export default function WorkoutPlans(props) {
                               setSelectedPlanId(planId);
                               setActiveTab("days");
                             }}
-                            className="inline-flex h-8 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                            className="inline-flex h-8 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
                           >
                             Add Days
                           </button>
                           {canEdit && (
-                            <button type="button" onClick={() => editPlan(plan)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
-                              <Pencil size={14} />
+                            <button type="button" onClick={() => editPlan(plan)} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
+                              <Edit size={15} />
                               Edit
                             </button>
                           )}
                           {canManage && (
-                            <button type="button" onClick={() => handleClonePlan(planId)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
+                            <button type="button" onClick={() => handleClonePlan(planId)} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50">
                               <Copy size={14} />
                               Clone
                             </button>
                           )}
                           {canDelete && (
-                            <button type="button" onClick={() => handleDeletePlan(planId)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-red-200 px-3 text-xs font-medium text-red-700 transition hover:bg-red-50">
+                            <button type="button" onClick={() => handleDeletePlan(planId)} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-red-200 px-3 text-xs font-medium text-red-700 transition hover:bg-red-50">
                               <Trash size={14} />
                               Delete
                             </button>
@@ -531,58 +576,18 @@ export default function WorkoutPlans(props) {
             );
           })}
           {!filteredPlans.length && (
-            <div className="p-8 text-center text-sm text-gray-500">
+            <div className="p-8 text-center text-xs text-gray-500">
               {loading ? "Loading workout plans..." : "No workout plans yet. Create your first plan to get started."}
             </div>
           )}
         </div>
+        <div className="flex flex-col gap-3 border-t border-[#EEF2F4] px-4 py-3 text-xs text-[#64748B] sm:flex-row sm:items-center sm:justify-between">
+          <p>Page {currentPlanPage} of {planTotalPages} <span className="mx-2 text-[#CBD5E1]">|</span> Showing {paginatedPlans.length} records</p>
+          <TablePagination page={currentPlanPage} totalPages={planTotalPages} onPageChange={setPlanPage} previousLabel="Prev" />
+        </div>
       </Card>
 
-      {showCreatePlanModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Workout Planning</p>
-                <h3 className="mt-1 text-xl font-bold text-gray-950">{editingPlanId ? "Edit Workout" : "Create Workout"}</h3>
-              </div>
-              <button type="button" onClick={() => { setShowCreatePlanModal(false); setEditingPlanId(""); setPlanForm(emptyPlan()); }} className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
-                <X size={18} />
-              </button>
-            </div>
-            <form onSubmit={handleSavePlan} className="grid gap-4 p-5 md:grid-cols-2">
-              <Field label="Workout Name" className="md:col-span-2">
-                <input className={inputClass} value={planForm.name} onChange={(event) => setPlanForm({ ...planForm, name: event.target.value })} placeholder="Strength Builder" />
-              </Field>
-              <Field label="Goal">
-                <select className={inputClass} value={planForm.goal} onChange={(event) => setPlanForm({ ...planForm, goal: event.target.value })}>
-                  {goals.map((goal) => <option key={goal} value={goal}>{titleCase(goal)}</option>)}
-                </select>
-              </Field>
-              <Field label="Level">
-                <select className={inputClass} value={planForm.difficulty} onChange={(event) => setPlanForm({ ...planForm, difficulty: event.target.value })}>
-                  {difficulties.map((level) => <option key={level} value={level}>{titleCase(level)}</option>)}
-                </select>
-              </Field>
-              <Field label="Duration">
-                <input className={inputClass} type="number" min="1" value={planForm.duration} onChange={(event) => setPlanForm({ ...planForm, duration: event.target.value })} placeholder="30" />
-              </Field>
-              <Field label="Image URL">
-                <input className={inputClass} type="url" value={planForm.image} onChange={(event) => setPlanForm({ ...planForm, image: event.target.value })} placeholder="https://example.com/image.jpg" />
-              </Field>
-              <Field label="Description" className="md:col-span-2">
-                <textarea className="min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100" value={planForm.description} onChange={(event) => setPlanForm({ ...planForm, description: event.target.value })} placeholder="Plan focus" />
-              </Field>
-              <div className="md:col-span-2 flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={() => { setShowCreatePlanModal(false); setEditingPlanId(""); setPlanForm(emptyPlan()); }} className={buttonClass}>Cancel</button>
-                <button type="submit" className={primaryButtonClass} disabled={!canManage}> {editingPlanId ? "Update Plan" : "Create Plan"} </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {selectedPlan && (
+      {false && selectedPlan && (
         <Card className="overflow-hidden">
           <div className="border-b border-gray-200 p-4">
             <div className="flex items-center justify-between gap-3">
@@ -607,7 +612,7 @@ export default function WorkoutPlans(props) {
             <div className="mt-4 rounded-lg border border-gray-200 bg-white">
               <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
                 <h4 className="font-semibold text-gray-950">Plan Details</h4>
-                <button type="button" onClick={() => setActiveTab("days")} className="text-xs font-semibold text-blue-600">View All Days</button>
+                <button type="button" onClick={() => setActiveTab("days")} className="rounded-lg text-xs font-semibold text-blue-600">View All Days</button>
               </div>
               <div className="divide-y divide-gray-100 px-4 py-2">
                 <div className="flex items-center justify-between py-3">
@@ -628,10 +633,10 @@ export default function WorkoutPlans(props) {
               <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
                 <h4 className="font-semibold text-gray-950">Workout Days</h4>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => { setDayForm({ title: "", dayNumber: String(planDaysForSelected.length + 1), notes: "" }); setShowAddDayModal(true); }} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600">
+                  <button type="button" onClick={() => openAddDayModal(idOf(selectedPlan), planDaysForSelected.length)} className="rounded-lg inline-flex items-center gap-1 text-xs font-semibold text-blue-600">
                     <Plus size={14} /> Add Day
                   </button>
-                  <button type="button" onClick={() => setActiveTab("days")} className="text-xs font-semibold text-blue-600">View All</button>
+                  <button type="button" onClick={() => setActiveTab("days")} className="rounded-lg text-xs font-semibold text-blue-600">View All</button>
                 </div>
               </div>
               <div className="divide-y divide-gray-100">
@@ -645,7 +650,7 @@ export default function WorkoutPlans(props) {
                         <span>{day.notes || "No notes"}</span>
                       </div>
                     </div>
-                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedDayForExercise(day); setShowExerciseModal(true); }} className="inline-flex h-8 items-center justify-center rounded-md bg-blue-600 px-3 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedDayForExercise(day); setShowExerciseModal(true); }} className="inline-flex h-8 items-center justify-center rounded-lg bg-blue-600 px-3 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-700">
                       <Plus size={14} className="mr-1" /> Add Exercise
                     </button>
                   </div>
@@ -656,7 +661,7 @@ export default function WorkoutPlans(props) {
               </div>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={() => setShowAssignMemberModal(true)} className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">Assign Members</button>
+              <button type="button" onClick={() => setShowAssignMemberModal(true)} className="inline-flex h-9 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">Assign Members</button>
               {/* <button type="button" onClick={handleClonePlan.bind(null, idOf(selectedPlan))} className="inline-flex h-9 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50">Clone Plan</button> */}
             </div>
           </div>
@@ -664,33 +669,37 @@ export default function WorkoutPlans(props) {
       )}
 
       {showAddDayModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Workout Day</p>
-                <h3 className="mt-1 text-xl font-bold text-gray-950">Add Workout Day</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onMouseDown={(event) => event.target === event.currentTarget && !savingDay && closeAddDayModal()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="add-workout-day-title" className="w-full max-w-md overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Dumbbell size={15} /></div>
+                <div>
+                  <h3 id="add-workout-day-title" className="text-base font-bold text-[#0F172A]">Add Days</h3>
+                  <p className="mt-0.5 text-xs leading-4 text-[#64748B]">{addDayPlanDayCount} day(s) in this plan</p>
+                </div>
               </div>
-              <button type="button" onClick={() => { setShowAddDayModal(false); setDayForm({ title: "", dayNumber: "", notes: "" }); }} className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
-                <X size={18} />
+              <button type="button" onClick={closeAddDayModal} disabled={savingDay} className="rounded-lg p-1 text-[#94A3B8] transition hover:bg-[#F8FAFC] hover:text-[#0F172A] disabled:cursor-not-allowed disabled:opacity-50" aria-label="Close add days modal">
+                <X size={14} />
               </button>
             </div>
-            <form onSubmit={handleCreateDay} className="grid gap-4 p-5">
-              <label className="grid gap-1 text-xs font-semibold uppercase text-gray-500">
-                Day Title
-                <input className={inputClass} value={dayForm.title} onChange={(event) => setDayForm({ ...dayForm, title: event.target.value })} placeholder="Upper Body" />
-              </label>
-              <label className="grid gap-1 text-xs font-semibold uppercase text-gray-500">
-                Day Number
-                <input className={inputClass} type="number" min="1" value={dayForm.dayNumber} onChange={(event) => setDayForm({ ...dayForm, dayNumber: event.target.value })} placeholder="1" />
-              </label>
-              <label className="grid gap-1 text-xs font-semibold uppercase text-gray-500">
-                Notes
-                <textarea className="min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100" value={dayForm.notes} onChange={(event) => setDayForm({ ...dayForm, notes: event.target.value })} placeholder="Day focus or notes" />
-              </label>
-              <div className="flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={() => { setShowAddDayModal(false); setDayForm({ title: "", dayNumber: "", notes: "" }); }} className={buttonClass}>Cancel</button>
-                <button type="submit" className={primaryButtonClass}>Create Day</button>
+            <form onSubmit={handleCreateDay}>
+              <div className="grid gap-3 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Day Number">
+                  <input className={inputClass} type="number" min="1" value={dayForm.dayNumber} onChange={(event) => setDayForm({ ...dayForm, dayNumber: event.target.value })} placeholder="1" />
+                </Field>
+                <Field label="Title">
+                  <input className={inputClass} value={dayForm.title} onChange={(event) => setDayForm({ ...dayForm, title: event.target.value })} placeholder="Push Day" />
+                </Field>
+              </div>
+              <Field label="Notes">
+                <textarea className="min-h-20 w-full resize-y rounded-lg border border-[#E2E8F0] bg-[#FBFCFD] px-3 py-2 text-xs text-[#334155] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252] focus:bg-white" value={dayForm.notes} onChange={(event) => setDayForm({ ...dayForm, notes: event.target.value })} placeholder="Optional notes" />
+              </Field>
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-[#E2E8F0] bg-[#FBFCFD] px-5 py-4">
+                <button type="button" onClick={closeAddDayModal} disabled={savingDay} className={buttonClass}>Cancel</button>
+                <button type="submit" disabled={savingDay} className={primaryButtonClass}>{savingDay ? "Creating..." : "Create Day"}</button>
               </div>
             </form>
           </div>
@@ -705,7 +714,7 @@ export default function WorkoutPlans(props) {
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Workout Day</p>
                 <h3 className="mt-1 text-xl font-bold text-gray-950">{selectedDayForDetails.title || "Workout Day"}</h3>
               </div>
-              <button type="button" onClick={() => { setShowDayExerciseDetailsModal(false); setSelectedDayForDetails(null); }} className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
+              <button type="button" onClick={() => { setShowDayExerciseDetailsModal(false); setSelectedDayForDetails(null); }} className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -771,7 +780,7 @@ export default function WorkoutPlans(props) {
                           </div>
                           <div className="flex items-center gap-2">
                             <button type="button" onClick={() => startEditExerciseLink(link)} className={iconButtonClass} aria-label="Edit exercise link">
-                              <Pencil size={14} />
+                              <Edit size={15} />
                             </button>
                             <button type="button" onClick={() => handleDeleteExerciseLink(link)} className={iconButtonClass} aria-label="Delete exercise link">
                               <Trash size={14} />
@@ -797,7 +806,7 @@ export default function WorkoutPlans(props) {
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Workout Day</p>
                 <h3 className="mt-1 text-xl font-bold text-gray-950">Add Exercise</h3>
               </div>
-              <button type="button" onClick={() => { setShowExerciseModal(false); setSelectedDayForExercise(null); setExerciseForm({ exerciseId: "", sets: "", reps: "", duration: "", restTime: "", orderIndex: "" }); }} className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
+              <button type="button" onClick={() => { setShowExerciseModal(false); setSelectedDayForExercise(null); setExerciseForm({ exerciseId: "", sets: "", reps: "", duration: "", restTime: "", orderIndex: "" }); }} className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -852,7 +861,7 @@ export default function WorkoutPlans(props) {
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Workout Assignment</p>
                 <h3 className="mt-1 text-xl font-bold text-gray-950">Assign Member</h3>
               </div>
-              <button type="button" onClick={() => { setShowAssignMemberModal(false); setAssignmentForm({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" }); }} className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
+              <button type="button" onClick={() => { setShowAssignMemberModal(false); setAssignmentForm({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" }); }} className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-950" aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -891,7 +900,7 @@ export default function WorkoutPlans(props) {
                   <input className={inputClass} type="date" value={assignmentForm.repeatEndDate} onChange={(event) => setAssignmentForm({ ...assignmentForm, repeatEndDate: event.target.value })} />
                 </label>
               </div>
-              {assignmentForm.repeatType === "CUSTOM" && (
+              {(assignmentForm.repeatType === "WEEKLY" || assignmentForm.repeatType === "CUSTOM") && (
                 <label className="grid gap-1 text-xs font-semibold uppercase text-gray-500">
                   Repeat Days
                   <select className={inputClass} multiple value={assignmentForm.repeatDays} onChange={(event) => setAssignmentForm({ ...assignmentForm, repeatDays: Array.from(event.target.selectedOptions, (option) => option.value) })}>
@@ -904,6 +913,13 @@ export default function WorkoutPlans(props) {
                     <option value="SUNDAY">Sunday</option>
                   </select>
                 </label>
+              )}
+              {assignmentSchedulePreview && (
+                <div className="rounded-lg border border-[#E2E8F0] bg-[#FBFCFD] p-3 text-xs normal-case">
+                  <div className="flex items-center justify-between gap-3"><span className="font-semibold text-[#334155]">Schedule Preview</span><span className="font-semibold text-[#0D8252]">{assignmentSchedulePreview.schedules.length} session{assignmentSchedulePreview.schedules.length === 1 ? "" : "s"}</span></div>
+                  {assignmentSchedulePreview.schedules.length > 0 && <p className="mt-1 text-[#64748B]">{assignmentSchedulePreview.schedules.slice(0, 5).map((item) => item.date).join(" · ")}{assignmentSchedulePreview.schedules.length > 5 ? " · ..." : ""}</p>}
+                  {assignmentSchedulePreview.warnings.length > 0 && <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-amber-700">{assignmentSchedulePreview.warnings.map((warning) => <p key={warning.workoutDayId}>{warning.message}</p>)}</div>}
+                </div>
               )}
               <div className="flex flex-wrap justify-end gap-2">
                 <button type="button" onClick={() => { setShowAssignMemberModal(false); setAssignmentForm({ memberId: "", startDate: "", endDate: "", repeatType: "NONE", repeatDays: [], repeatEndDate: "" }); }} className={buttonClass}>Cancel</button>

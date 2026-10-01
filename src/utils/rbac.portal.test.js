@@ -1,6 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getPortalKey, isUserAllowedInPortal, isValidPortalLogin } from './rbac.js';
+import { getPortalHomePath, getPortalKey, getPrimaryRole, isUserAllowedInPortal, isValidPortalLogin } from './rbac.js';
+
+test('backend roles determine the highest priority dashboard', () => {
+  const user = { roles: ['member', 'trainer', 'owner'], email: 'owner@example.com' };
+
+  assert.equal(getPrimaryRole(user), 'gym_owner');
+  assert.equal(getPortalKey(user), 'gym_owner');
+  assert.equal(getPortalHomePath(user), '/owner');
+});
+
+test('unsupported or missing backend roles have no dashboard', () => {
+  assert.equal(getPrimaryRole({ roles: [] }), '');
+  assert.equal(getPortalHomePath({ roles: ['auditor'] }), '');
+});
+
+test('supported backend roles receive their dedicated dashboards', () => {
+  assert.equal(getPortalHomePath({ roles: ['admin'] }), '/admin');
+  assert.equal(getPortalHomePath({ roles: ['trainer'] }), '/trainer');
+  assert.equal(getPortalHomePath({ roles: ['receptionist'] }), '/receptionist');
+  assert.equal(getPortalHomePath({ roles: ['staff'] }), '/staff');
+  assert.equal(getPortalHomePath({ roles: ['member'] }), '/member');
+});
 
 test('owner portal only allows owner paths', () => {
   const user = { loginType: 'owner', role: 'Gym Owner' };
@@ -35,6 +56,9 @@ test('member portal restricts to member areas', () => {
   assert.equal(getPortalKey(user), 'member');
   assert.equal(isUserAllowedInPortal(user, '/'), true);
   assert.equal(isUserAllowedInPortal(user, '/plans'), true);
+  assert.equal(isUserAllowedInPortal(user, '/membership'), true);
+  assert.equal(isUserAllowedInPortal(user, '/payments'), false);
+  assert.equal(isUserAllowedInPortal(user, '/modules/subscriptions'), false);
   assert.equal(isUserAllowedInPortal(user, '/members'), false);
   assert.equal(isUserAllowedInPortal(user, '/trainers'), false);
   assert.equal(isUserAllowedInPortal(user, '/profile'), true);

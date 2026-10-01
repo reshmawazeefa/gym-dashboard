@@ -180,6 +180,16 @@ export const moduleDefinitions = {
       "Workout analytics dashboard with volume trends",
     ],
   },
+  payroll: {
+    title: "Staff Payroll",
+    description: "Manage staff wages, salary payments, absences, holidays, and payroll balances.",
+    storageKey: "payroll",
+    icon: WalletCards,
+    primaryAction: "Manage Payroll",
+    fields: [],
+    seed: [],
+    insights: ["Staff wages and payroll balances", "Salary payment history", "Absences and gym holidays"],
+  },
   nutrition: {
     title: "Nutrition Management",
     description: "Create nutrition plans and assign diet charts to members.",

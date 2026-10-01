@@ -8,8 +8,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -21,6 +19,7 @@ import {
   Bell,
   Building2,
   CalendarDays,
+  ChevronDown,
   ClipboardList,
   CreditCard,
   Dumbbell,
@@ -30,21 +29,15 @@ import {
   Package,
   Plus,
   QrCode,
-  ReceiptText,
   Settings,
   ShieldCheck,
   ShoppingBag,
   Users,
   WalletCards,
+  X,
 } from "lucide-react";
 
 const membershipColors = ["#16a34a", "#f59e0b", "#ef4444"];
-
-const quickActions = [
-  { label: "Add member", icon: Plus, to: "/members", moduleKey: "members" },
-  { label: "Record payment", icon: ReceiptText, to: "/payments", moduleKey: "payments" },
-  { label: "Classes", icon: CalendarDays, to: "/modules/classes", moduleKey: "classes" },
-];
 
 const modules = [
   { name: "Members", detail: "Profiles, plans, expiry, trainers", icon: Users, to: "/members", moduleKey: "members" },
@@ -60,6 +53,20 @@ const modules = [
   { name: "Communication", detail: "Member and staff communication", icon: MessageSquare, to: "/modules/communication", moduleKey: "communication" },
   { name: "Settings", detail: "Language, currency, gym theme", icon: Settings, to: "/modules/localization", moduleKey: "localization" },
 ];
+
+const emptyProductForm = {
+  productName: "",
+  category: "Gym Apparel",
+  brand: "",
+  sku: "",
+  barcode: "",
+  regularPrice: "",
+  salePrice: "",
+  lowStockThreshold: "",
+  imageUrl: "",
+  description: "",
+  active: true,
+};
 
 function readStorage(key) {
   try {
@@ -184,6 +191,10 @@ function getDashboardData() {
       ).length,
     };
   });
+  const todayIso = today.toISOString().split("T")[0];
+  const todayCheckIns = attendanceRecords.filter(
+    (record) => record.date === todayIso && ["Present", "Late"].includes(record.status)
+  ).length;
 
   const memberPlanCounts = members.reduce((counts, member) => {
     const planName = member.planName || member.plan || "Unassigned";
@@ -236,6 +247,13 @@ function getDashboardData() {
   return {
     stats,
     staffCount,
+    activeMemberCount: activeMembers.length,
+    expiringMemberCount: expiringMembers.length,
+    inactiveMemberCount: inactiveMembers.length,
+    monthlyIncome: monthlyIncomeFromPayments + monthlyFinanceIncome,
+    dueAmount,
+    pendingPaymentCount: pendingPayments.length,
+    todayCheckIns,
     revenueData,
     attendanceData,
     membershipData,
@@ -348,8 +366,62 @@ export default function Dashboard() {
   const userRole = normalizeRole(user?.role, user?.loginType);
   const isMember = userRole === "member";
   const alerts = getDashboardNotifications();
-  const { stats, staffCount, revenueData, attendanceData, membershipData, planData } = getDashboardData();
+  const {
+    stats,
+    activeMemberCount,
+    expiringMemberCount,
+    inactiveMemberCount,
+    monthlyIncome,
+    dueAmount,
+    pendingPaymentCount,
+    todayCheckIns,
+    revenueData,
+    attendanceData,
+    membershipData,
+    planData,
+  } = getDashboardData();
   const [liveAttendance, setLiveAttendance] = React.useState(null);
+  const [overviewRange, setOverviewRange] = React.useState("This Month");
+  const [transactionsRange, setTransactionsRange] = React.useState("This Year");
+  const [periodMenuOpen, setPeriodMenuOpen] = React.useState(false);
+  const [transactionsMenuOpen, setTransactionsMenuOpen] = React.useState(false);
+  const [isAddProductOpen, setIsAddProductOpen] = React.useState(false);
+  const [productForm, setProductForm] = React.useState(emptyProductForm);
+  const periodMenuRef = React.useRef(null);
+  const transactionMenuRef = React.useRef(null);
+
+  const updateProductField = (field, value) => {
+    setProductForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleProductCategoryChange = (category) => {
+    setProductForm({ ...emptyProductForm, category });
+  };
+
+  React.useEffect(() => {
+    if (!isAddProductOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isAddProductOpen]);
+
+  React.useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (periodMenuRef.current && !periodMenuRef.current.contains(event.target)) {
+        setPeriodMenuOpen(false);
+      }
+      if (transactionMenuRef.current && !transactionMenuRef.current.contains(event.target)) {
+        setTransactionsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -394,260 +466,474 @@ export default function Dashboard() {
     ? stats.filter((s) => s.label !== "Total Members")
     : stats;
 
-  const visibleQuickActions = quickActions
-    .filter((action) => canAccess(user, action.moduleKey))
-    .filter((action) => !(isMember && action.moduleKey === "communication"));
-
   const visibleModules = isMember
     ? modules.filter((module) => ["products", "facilities"].includes(module.moduleKey) && canAccess(user, module.moduleKey))
     : modules.filter((module) => canAccess(user, module.moduleKey) && !["finance", "payments", "communication", "localization"].includes(module.moduleKey));
 
+  const totalMembers = membershipData.reduce((total, item) => total + item.value, 0);
+  const activeRate = totalMembers ? Math.round((activeMemberCount / totalMembers) * 100) : 0;
+  const monthlyRevenueMax = Math.max(...revenueData.map((item) => item.income), 1);
+  const revenueAxisMax = Math.max(40000, Math.ceil(monthlyRevenueMax / 10000) * 10000);
+  const revenueAxisTicks = Array.from({ length: revenueAxisMax / 10000 + 1 }, (_, index) => index * 10000);
+  const dashboardStats = visibleStats.map((stat, index) => ({
+    ...stat,
+    accent:
+      index === 0
+        ? "bg-[#0b8a56] text-white ring-[#0b8a56]"
+        : index === 1
+          ? "bg-white text-slate-900 ring-slate-200"
+          : index === 2
+            ? "bg-white text-slate-900 ring-slate-200"
+            : "bg-white text-slate-900 ring-slate-200",
+    iconClass:
+      index === 0
+        ? "bg-white/15 text-white"
+        : index === 1
+          ? "bg-sky-50 text-sky-600"
+          : index === 2
+            ? "bg-emerald-50 text-emerald-600"
+            : "bg-amber-50 text-amber-600",
+  }));
+  const managementModules = visibleModules.slice(0, 6);
+  const productCategories = [
+    { title: "Whey Isolate Protein 2kg", detail: "Optimum Gold - Nutrition", status: "48 in stock", tone: "bg-emerald-50 text-[#0D8252] border-emerald-100" },
+    { title: "Electrolyte Hydration Tub", detail: "HydroMax - Drinks", status: "12 in stock (Low)", tone: "bg-amber-50 text-amber-600 border-amber-100" },
+    { title: "Gym Master Lifting Straps", detail: "GymMaster Gear - Gear", status: "85 in stock", tone: "bg-emerald-50 text-[#0D8252] border-emerald-100" },
+  ];
+  const cardClass = "rounded-2xl border border-[#EAECF0] bg-white shadow-[0_1px_3px_0_rgba(16,24,40,0.05),0_1px_2px_0_rgba(16,24,40,0.02)]";
+  const cardHoverClass = "transition-all hover:shadow-[0_10px_25px_-5px_rgba(16,24,40,0.08),0_8px_10px_-6px_rgba(16,24,40,0.04)]";
 
   return (
-    <div className="space-y-6">
-      {/* <section className="rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 p-6 text-white shadow-md">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-[#F8F9FB] p-4 text-[#1E293B] sm:p-6 md:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-6">
+        <section className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="mt-2 text-blue-100">Welcome back{user?.name ? `, ${user.name}` : ""} to Gym Master</p>
+            <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">Overview</h1>
+            <p className="mt-0.5 text-xs text-[#64748B]">Here is the summary of gym performance, attendance and financials</p>
           </div>
-          <div className="flex items-center gap-4">
-            <Link to="/profile" className="rounded-md bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20">My Profile</Link>
-            <ShieldCheck size={48} className="opacity-20" />
-          </div>
-        </div>
-      </section> */}
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {visibleStats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <div key={stat.label} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">{stat.label}</p>
-                  <p className="mt-2 text-2xl font-bold text-gray-950">{stat.value}</p>
+          <div className="flex items-center gap-2.5">
+            <div className="relative" ref={periodMenuRef}>
+              <button
+                type="button"
+                onClick={() => setPeriodMenuOpen((open) => !open)}
+                className="inline-flex items-center gap-2 rounded-lg border border-[#EAECF0] bg-white px-3 py-1.5 text-xs font-semibold text-[#0F172A] shadow-[0_1px_3px_0_rgba(16,24,40,0.05)] transition hover:bg-[#F8F9FB]"
+              >
+                {overviewRange}
+                <ChevronDown size={14} className={periodMenuOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+              </button>
+              {periodMenuOpen && (
+                <div className="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-xl border border-[#EAECF0] bg-white shadow-lg">
+                  {['This Month', 'This Year'].map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => {
+                        setOverviewRange(option);
+                        setPeriodMenuOpen(false);
+                      }}
+                      className={`rounded-lg flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-[#0F172A] transition hover:bg-[#F8F9FB] ${overviewRange === option ? "bg-[#F3F9F6] text-[#0D8252]" : ""}`}
+                    >
+                      <span>{option}</span>
+                    </button>
+                  ))}
                 </div>
-                <div className={`rounded-md p-2 ${stat.tone}`}>
-                  <Icon size={22} />
-                </div>
-              </div>
-              <p className="mt-3 text-sm text-gray-500">{stat.change}</p>
+              )}
             </div>
-          );
-        })}
-      </section>
 
-      {liveAttendance && (
-        <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
-                <QrCode size={20} />
+            <button type="button" className="inline-flex items-center rounded-lg border border-[#EAECF0] bg-white px-3 py-1.5 text-xs font-medium text-[#64748B] shadow-[0_1px_3px_0_rgba(16,24,40,0.05)] transition hover:bg-[#F8F9FB] hover:text-[#0F172A]">Reset Data</button>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+          {dashboardStats.map((stat, index) => {
+            const Icon = stat.icon;
+            return (
+              <div key={stat.label} className={`${index === 0 ? "bg-gradient-to-br from-[#0D8252] via-[#0b7449] to-[#065F46] text-white shadow-[0_10px_25px_-5px_rgba(13,130,82,0.35)]" : `${cardClass} ${cardHoverClass}`} group flex min-h-[154px] flex-col justify-between overflow-hidden rounded-2xl p-5`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-3">
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${index === 0 ? "border-white/10 bg-white/15 text-white" : "border-emerald-100 bg-emerald-50 text-[#0D8252]"}`}>
+                        <Icon size={18} />
+                      </span>
+                      <div>
+                        <p className={`text-xs font-semibold uppercase tracking-wider ${index === 0 ? "text-emerald-100" : "text-[#64748B]"}`}>{stat.label}</p>
+                        <p className={`text-[11px] ${index === 0 ? "text-emerald-200" : "text-[#94A3B8]"}`}>{stat.change}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-end justify-left gap-2">
+                      <p className={`text-3xl font-extrabold tracking-tight ${index === 0 ? "text-white" : "text-[#0F172A]"}`}>{stat.value}</p>
+                      {index !== 0 && <span className="inline-flex items-center rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-[#0D8252]">+3.2%</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`mt-4 flex items-center justify-between text-xs ${index === 0 ? "text-emerald-100" : "text-[#64748B]"}`}>
+                  <span>{index === 0 ? "Total member registered" : "Updated this period"}</span>
+                  <Link to={index === 0 ? "/members" : index === 3 ? "/payments" : "/modules/reports"} className={`font-semibold transition-transform group-hover:translate-x-0.5 ${index === 0 ? "text-white" : "text-[#0D8252]"}`}>
+                    {index === 0 ? "See details" : index === 1 ? "View Staff" : index === 2 ? "Report" : "Invoices"} &rarr;
+                  </Link>
+                </div>
               </div>
+            );
+          })}
+        </section>
+
+        <section className={`${cardClass} p-6`}>
+          <div className="flex flex-col gap-4 border-b border-[#EAECF0] pb-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3.5">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-100 bg-emerald-50 text-[#0D8252] shadow-sm">
+                <QrCode size={22} />
+              </span>
               <div>
-                <h2 className="font-semibold text-gray-950">Live Attendance</h2>
-                <p className="text-sm text-gray-500">Today's check-in activity at a glance</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-bold text-[#0F172A]">Live Attendance Command</h2>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-[#0D8252]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#0D8252]" />
+                    Real-time Sync
+                  </span>
+                </div>
+                <p className="text-xs text-[#64748B]">Facility turnstile & biometric check-in activity at a glance</p>
               </div>
             </div>
-            <Link to="/modules/attendance" className="text-sm font-medium text-blue-600 hover:text-blue-700">
-              View All &rarr;
-            </Link>
+            <Link to="/modules/attendance" className="text-xs font-semibold text-[#0D8252] transition hover:text-[#065F46]">View all logs &rarr;</Link>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div>
-              <p className="text-xs font-medium text-gray-500">Today Check-Ins</p>
-              <p className="mt-1 text-2xl font-bold text-gray-950">{liveAttendance.today?.checkIns ?? "-"}</p>
+
+          <div className="mt-5 grid grid-cols-2 gap-6 lg:grid-cols-4">
+            <DashboardMiniMetric label="Today Check-ins" value={liveAttendance?.today?.checkIns ?? todayCheckIns} detail="members" />
+            <DashboardMiniMetric label="Active Floor Presence" value={liveAttendance?.today?.activeSessions ?? 0} detail="Currently working out" positive />
+            <DashboardMiniMetric label="Week to Date" value={liveAttendance?.weekToDate?.checkIns ?? attendanceData.reduce((total, day) => total + day.visits, 0)} detail={liveAttendance?.weekToDate?.vsLastWeek != null ? `${liveAttendance.weekToDate.vsLastWeek}% vs last week` : "check-ins"} />
+            <DashboardMiniMetric label="Month to Date" value={liveAttendance?.monthToDate?.checkIns ?? todayCheckIns} detail={liveAttendance?.monthToDate?.vsLastMonth != null ? `${liveAttendance.monthToDate.vsLastMonth}% vs last month` : "check-ins"} danger={Number(liveAttendance?.monthToDate?.vsLastMonth || 0) < 0} />
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1.55fr_0.95fr]">
+          <div className={`${cardClass} flex flex-col justify-between p-6`}>
+            <div className="mb-[2rem] flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-base font-bold text-[#0F172A]">Transactions Overview</h2>
+                <p className="mt-1 text-3xl font-extrabold tracking-tight text-[#0F172A]">
+                  ₹{Number(monthlyIncome || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+
+              <div className="flex flex-col items-start gap-3 sm:items-end">
+                <div className="relative self-start sm:self-auto" ref={transactionMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setTransactionsMenuOpen((open) => !open)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#EAECF0] bg-white px-3 py-1.5 text-xs font-medium text-[#0F172A] shadow-[0_1px_3px_0_rgba(16,24,40,0.05)] transition hover:bg-[#F8F9FB]"
+                  >
+                    {transactionsRange}
+                    <ChevronDown size={14} className={transactionsMenuOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+                  </button>
+
+                  {transactionsMenuOpen && (
+                    <div className="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-xl border border-[#EAECF0] bg-white shadow-lg">
+                      {['This Month', 'This Year'].map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => {
+                            setTransactionsRange(option);
+                            setTransactionsMenuOpen(false);
+                          }}
+                          className={`rounded-lg flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-[#0F172A] transition hover:bg-[#F8F9FB] ${transactionsRange === option ? "bg-[#F3F9F6] text-[#0D8252]" : ""}`}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1 font-semibold text-[#0D8252]"><span className="h-2 w-2 rounded-full bg-[#0D8252]" />Total Transaction</span>
+                  <span className="inline-flex items-center gap-1 font-semibold text-[#94A3B8]"><span className="h-2 w-2 rounded-full bg-[#CBD5E1]" />Earning</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500">Active Sessions</p>
-              <p className="mt-1 text-2xl font-bold text-emerald-700">{liveAttendance.today?.activeSessions ?? "-"}</p>
+
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={revenueData} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                <CartesianGrid stroke="#EAECF0" vertical={false} />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <YAxis
+                  domain={[0, revenueAxisMax]}
+                  ticks={revenueAxisTicks}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: "#94a3b8", fontSize: 11 }}
+                  tickFormatter={(value) => `${value / 1000}k`}
+                />
+                <Tooltip cursor={{ fill: "#f8fafc" }} formatter={(value) => formatCurrency(value)} />
+                <Bar dataKey="income" radius={[10, 10, 0, 0]}>
+                  {revenueData.map((item) => (
+                    <Cell
+                      key={item.month}
+                      fill={item.income === monthlyRevenueMax ? "#079669" : "#F6F8FA"}
+                      stroke={item.income === monthlyRevenueMax ? "#079669" : "#DCE5EC"}
+                      strokeWidth={item.income === monthlyRevenueMax ? 0 : 1.5}
+                      strokeDasharray={item.income === monthlyRevenueMax ? undefined : "4 3"}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+
+            <div className="mt-4 flex items-center justify-between border-t border-[#EAECF0] pt-3 text-xs text-[#64748B]">
+              <span>Projection: Onboarding Phase</span>
+              <Link to="/payments" className="font-semibold text-[#0D8252] transition hover:text-[#065F46]">View All Details &rarr;</Link>
             </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500">Week to Date</p>
-              <p className="mt-1 text-2xl font-bold text-gray-950">
-                {liveAttendance.weekToDate?.checkIns ?? "-"}
-                {liveAttendance.weekToDate?.vsLastWeek != null && (
-                  <span className={`ml-2 text-sm font-medium ${liveAttendance.weekToDate.vsLastWeek >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                    {liveAttendance.weekToDate.vsLastWeek >= 0 ? "+" : ""}{liveAttendance.weekToDate.vsLastWeek}%
-                  </span>
-                )}
-              </p>
+          </div>
+
+          <div className={`${cardClass} flex flex-col justify-between p-6`}>
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <h2 className="text-base font-bold text-[#0F172A]">Membership Status</h2>
+                <p className="mt-0.5 text-xs text-[#64748B]">Active, expiring, and inactive ratios</p>
+              </div>
+              <span className="rounded-full bg-[#F1F5F9] px-2 py-0.5 text-xs font-semibold text-[#64748B]">{totalMembers} Total</span>
             </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500">Month to Date</p>
-              <p className="mt-1 text-2xl font-bold text-gray-950">
-                {liveAttendance.monthToDate?.checkIns ?? "-"}
-                {liveAttendance.monthToDate?.vsLastMonth != null && (
-                  <span className={`ml-2 text-sm font-medium ${liveAttendance.monthToDate.vsLastMonth >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                    {liveAttendance.monthToDate.vsLastMonth >= 0 ? "+" : ""}{liveAttendance.monthToDate.vsLastMonth}%
-                  </span>
-                )}
-              </p>
+
+            <div className="relative mx-auto mt-2 h-56 w-56">
+              <svg viewBox="0 0 220 220" className="h-full w-full -rotate-90">
+                <circle cx="110" cy="110" r="82" fill="none" stroke="#EAF0F3" strokeWidth="18" />
+                <circle
+                  cx="110"
+                  cy="110"
+                  r="82"
+                  fill="none"
+                  stroke="#0D8252"
+                  strokeWidth="18"
+                  strokeLinecap="round"
+                  strokeDasharray={2 * Math.PI * 82}
+                  strokeDashoffset={2 * Math.PI * 82 * (1 - (activeRate || 100) / 100)}
+                />
+              </svg>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-4xl font-extrabold tracking-tight text-[#0F172A]">{activeRate}%</span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#0D8252]">Health</span>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2 border-t border-[#EAECF0] pt-3 text-center">
+              {membershipData.map((item, index) => (
+                <div key={item.name} className="rounded-xl border border-[#EAECF0] bg-[#F8F9FB] p-2">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-[#0F172A]">
+                    <span className="h-2 w-2 rounded-full" style={{ background: membershipColors[index] }} />
+                    <span>{item.name}</span>
+                  </div>
+                  <p className={`mt-1 text-lg font-bold ${index === 0 ? "text-[#0F172A]" : "text-[#64748B]"}`}>{item.value}</p>
+                </div>
+              ))}
             </div>
           </div>
         </section>
-      )}
 
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-[1.5fr_1fr]">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex items-center justify-between gap-3">
+        <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className={`${cardClass} flex h-full flex-col justify-between p-6`}>
             <div>
-              <h2 className="font-semibold text-gray-950">Fee Payment & Income</h2>
-              <p className="text-sm text-gray-500">Monthly collection trend and payment count</p>
-            </div>
-            <CreditCard className="text-gray-400" size={22} />
-          </div>
-          <ResponsiveContainer width="100%" height={290}>
-            <LineChart data={revenueData}>
-              <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
-              <XAxis dataKey="month" stroke="#6b7280" />
-              <YAxis stroke="#6b7280" />
-              <Tooltip />
-              <Line type="monotone" dataKey="income" stroke="#2563eb" strokeWidth={3} dot={false} />
-              <Line type="monotone" dataKey="payments" stroke="#16a34a" strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-gray-950">Membership Status</h2>
-              <p className="text-sm text-gray-500">Active, expiring, and inactive members</p>
-            </div>
-            <Users className="text-gray-400" size={22} />
-          </div>
-          <ResponsiveContainer width="100%" height={290}>
-            <PieChart>
-              <Pie data={membershipData} dataKey="value" innerRadius={68} outerRadius={105} paddingAngle={3}>
-                {membershipData.map((entry, index) => (
-                  <Cell key={entry.name} fill={membershipColors[index]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
-            {membershipData.map((item, index) => (
-              <div key={item.name} className="rounded-md bg-gray-50 p-2">
-                <span className="mx-auto mb-1 block h-2 w-6 rounded-full" style={{ background: membershipColors[index] }} />
-                <p className="font-semibold text-gray-900">{item.value}</p>
-                <p className="text-xs text-gray-500">{item.name}</p>
+              <div className="flex items-center justify-between border-b border-[#EAECF0] pb-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-[#0F172A]">Notifications</h2>
+                  <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-[#0D8252]">All Up to date</span>
+                </div>
+                <Bell size={16} className="text-[#94A3B8]" />
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-3 xl:grid-cols-3">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200 lg:col-span-2 xl:col-span-2">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-gray-950">Attendance & Plan Distribution</h2>
-              <p className="text-sm text-gray-500">Daily visits with current membership plan mix</p>
+              <div className="mt-4 space-y-3">
+                {alerts.slice(0, 3).map((alert, index) => (
+                  <Link key={alert.title} to={alert.to} className={`block rounded-xl border p-3.5 transition hover:border-[#0D8252] ${index === 0 ? "border-emerald-100 bg-emerald-50/50 text-[#0F172A]" : "border-[#EAECF0] bg-[#F8F9FB] text-[#64748B]"}`}>
+                    <div className="flex items-start gap-2.5">
+                      <Mail size={14} className={index === 0 ? "mt-0.5 shrink-0 text-[#0D8252]" : "mt-0.5 shrink-0 text-[#94A3B8]"} />
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-bold text-[#0F172A]">{alert.title}</p>
+                        <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-[#64748B]">{alert.detail}</p>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
             </div>
-            <QrCode className="text-gray-400" size={22} />
-          </div>
-          <div className="grid gap-5 lg:grid-cols-2">
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={attendanceData}>
-                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
-                <XAxis dataKey="day" stroke="#6b7280" />
-                <YAxis stroke="#6b7280" />
-                <Tooltip />
-                <Bar dataKey="visits" fill="#0f766e" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={planData} layout="vertical" margin={{ left: 18 }}>
-                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
-                <XAxis type="number" stroke="#6b7280" />
-                <YAxis dataKey="plan" type="category" stroke="#6b7280" />
-                <Tooltip />
-                <Bar dataKey="members" fill="#7c3aed" radius={[0, 6, 6, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
 
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-gray-950">Quick Actions</h2>
-              <p className="text-sm text-gray-500">{isMember ? "Common tasks for members" : "Common admin tasks"}</p>
+            <div className="mt-3 flex items-center justify-between border-t border-[#EAECF0] pt-3 text-xs text-[#64748B]">
+              <span>System Status: Optimal</span>
+              <Link to="/modules/notifications" className="font-semibold text-[#0D8252] transition hover:text-[#065F46]">View all &rarr;</Link>
             </div>
-            <Plus className="text-gray-400" size={22} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {visibleQuickActions.map((action) => {
-              const Icon = action.icon;
-              return (
-                <Link
-                  key={action.label}
-                  to={action.to}
-                  className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-center text-sm font-semibold text-gray-800 transition hover:border-blue-300 hover:bg-blue-50"
-                >
-                  <Icon size={22} />
-                  {action.label}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </section>
 
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-[1fr_1.4fr]">
-        <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex items-center justify-between">
+          <div className={`${cardClass} flex h-full flex-col justify-between p-6`}>
             <div>
-              <h2 className="font-semibold text-gray-950">Notifications</h2>
-              <p className="text-sm text-gray-500">Renewals, dues, and reminders</p>
-            </div>
-            <Bell className="text-gray-400" size={22} />
-          </div>
-          <div className="space-y-3">
-            {alerts.map((alert) => (
-              <Link
-                key={alert.title}
-                to={alert.to}
-                className={`block rounded-md border p-3 transition hover:shadow-sm ${alert.tone}`}
-              >
-                <p className="font-semibold">{alert.title}</p>
-                <p className="mt-1 text-sm">{alert.detail}</p>
-              </Link>
-            ))}
-          </div>
-        </div>
+              <div className="flex items-center justify-between border-b border-[#EAECF0] pb-3">
+                <h2 className="text-base font-bold text-[#0F172A]">Management Modules</h2>
+                <Package size={16} className="text-[#94A3B8]" />
+              </div>
 
-          <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-gray-950">{isMember ? "Available Modules" : "Admin Modules"}</h2>
-              <p className="text-sm text-gray-500">{isMember ? "Modules available to you" : "Gym Master portal coverage"}</p>
+              <div className="my-3.5 grid max-h-[310px] grid-cols-2 gap-2.5 overflow-y-auto pr-1">
+                {managementModules.map((module) => {
+                  const Icon = module.icon;
+                  return (
+                    <Link key={module.name} to={module.to} className="group flex flex-col rounded-xl border border-[#EAECF0] bg-white p-3 text-left transition-all hover:border-[#0D8252] hover:bg-[#F8F9FB]">
+                      <span className="mb-2 flex h-7 w-7 items-center justify-center rounded-lg bg-[#F1F5F9] text-[#64748B] transition-colors group-hover:bg-emerald-50 group-hover:text-[#0D8252]">
+                        <Icon size={15} />
+                      </span>
+                      <span className="truncate text-xs font-bold leading-tight text-[#0F172A]">{module.name}</span>
+                      <span className="mt-0.5 line-clamp-1 text-[10px] leading-snug text-[#64748B]">{module.detail}</span>
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-            <Package className="text-gray-400" size={22} />
+
+            <div className="flex items-center justify-between border-t border-[#EAECF0] pt-3 text-xs text-[#64748B]">
+              <span>All modules operational</span>
+              <Link to="/modules/reports" className="font-semibold text-[#0D8252] transition hover:text-[#065F46]">View all &rarr;</Link>
+            </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {visibleModules.map((module) => {
-              const Icon = module.icon;
-              return (
-                <Link
-                  key={module.name}
-                  to={module.to}
-                  className="rounded-md border border-gray-200 p-3 transition hover:border-blue-300 hover:bg-blue-50"
-                >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-gray-100 text-gray-700">
-                    <Icon size={19} />
+
+          <div className={`${cardClass} flex h-full flex-col justify-between p-6`}>
+            <div>
+              <div className="flex items-center justify-between border-b border-[#EAECF0] pb-3">
+                <h2 className="text-base font-bold text-[#0F172A]">Product & Category</h2>
+                <Link to="/modules/products" className="text-xs font-semibold text-[#0D8252] transition hover:text-[#065F46]">View all &rarr;</Link>
+              </div>
+
+              <div className="mt-3.5 space-y-2.5">
+                {productCategories.map((item) => (
+                  <div key={item.title} className="flex items-center justify-between gap-3 rounded-xl border border-[#EAECF0] bg-[#F8F9FB] p-3 transition hover:border-[#0D8252]">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold text-[#0F172A]">{item.title}</p>
+                      <p className="mt-0.5 text-[11px] text-[#64748B]">{item.detail}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item.tone}`}>{item.status}</span>
                   </div>
-                  <p className="font-semibold text-gray-950">{module.name}</p>
-                  <p className="mt-1 text-sm leading-5 text-gray-500">{module.detail}</p>
-                </Link>
-              );
-            })}
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setProductForm(emptyProductForm);
+                setIsAddProductOpen(true);
+              }}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#EAECF0] bg-white py-2 text-xs font-bold text-[#0F172A] transition hover:border-[#0D8252] hover:text-[#0D8252]"
+            >
+              <Plus size={14} className="mr-1" /> Add Product
+            </button>
           </div>
+        </section>
+      </div>
+
+      {isAddProductOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onClick={() => setIsAddProductOpen(false)}>
+          <div className="flex h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]">
+                  <Package size={20} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-[#0F172A]">Add Product</h3>
+                  <p className="mt-1 text-xs text-[#64748B]">Add a new product with inventory stock, pricing, and category information.</p>
+                </div>
+              </div>
+
+              <button type="button" onClick={() => setIsAddProductOpen(false)} className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]" aria-label="Close product modal">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Product Name *</span>
+                  <input type="text" value={productForm.productName} onChange={(event) => updateProductField("productName", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Category *</span>
+                  <select value={productForm.category} onChange={(event) => handleProductCategoryChange(event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white">
+                    <option>Gym Apparel</option>
+                    <option>Supplements</option>
+                    <option>Equipment</option>
+                  </select>
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Brand</span>
+                  <input type="text" value={productForm.brand} onChange={(event) => updateProductField("brand", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">SKU</span>
+                  <input type="text" value={productForm.sku} onChange={(event) => updateProductField("sku", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Barcode</span>
+                  <input type="text" value={productForm.barcode} onChange={(event) => updateProductField("barcode", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Regular Price (₹)</span>
+                  <input type="text" value={productForm.regularPrice} onChange={(event) => updateProductField("regularPrice", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Sale Price (₹)</span>
+                  <input type="text" value={productForm.salePrice} onChange={(event) => updateProductField("salePrice", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569]">
+                  <span className="mb-1.5 block">Low Stock Threshold</span>
+                  <input type="text" value={productForm.lowStockThreshold} onChange={(event) => updateProductField("lowStockThreshold", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569] md:col-span-2">
+                  <span className="mb-1.5 block">Image URL</span>
+                  <input type="text" value={productForm.imageUrl} onChange={(event) => updateProductField("imageUrl", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+
+                <label className="block text-xs font-medium text-[#475569] md:col-span-2">
+                  <span className="mb-1.5 block">Description</span>
+                  <textarea rows="4" value={productForm.description} onChange={(event) => updateProductField("description", event.target.value)} className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-[#0F172A] outline-none transition focus:border-[#0D8252] focus:bg-white" />
+                </label>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-3">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-[#334155]">
+                  <input type="checkbox" checked={productForm.active} onChange={(event) => updateProductField("active", event.target.checked)} className="h-4 w-4 rounded border-[#CBD5E1] accent-[#0D8252] focus:ring-2 focus:ring-[#0D8252]" />
+                  <span>Active in store catalog</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-white px-5 py-4">
+              <button type="button" onClick={() => setIsAddProductOpen(false)} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2.5 text-sm font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Cancel</button>
+              <button type="button" onClick={() => setIsAddProductOpen(false)} className="rounded-lg bg-[#0D8252] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#0b7348]">Submit</button>
+            </div>
           </div>
-      </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DashboardMiniMetric({ label, value, detail, positive = false, danger = false }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+      <div className="mt-1 flex min-w-0 items-baseline gap-2">
+        <p className="truncate text-lg font-extrabold text-slate-950">{value}</p>
+        {detail && (
+          <span className={`truncate rounded-full px-2 py-0.5 text-[10px] font-bold ${danger ? "bg-red-50 text-red-600" : positive ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-500"}`}>
+            {detail}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { Building2, Plus, Search, X, Edit3, Trash2 } from "lucide-react";
+import { Building2, Plus, Search, X, Edit, Trash2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import StatusBadge from "../components/StatusBadge";
 import {
   createGym,
   getApiError,
@@ -92,7 +93,7 @@ function AddGymModal({ isOpen, onClose, onCreate, onUpdate, editData, creating }
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-gray-500 hover:bg-gray-100"
+            className="rounded-lg p-1 text-gray-500 hover:bg-gray-100"
             aria-label="Close"
           >
             <X size={20} />
@@ -140,7 +141,7 @@ function AddGymModal({ isOpen, onClose, onCreate, onUpdate, editData, creating }
           <button
             type="button"
             onClick={onClose}
-            className="rounded px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            className="rounded-lg px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
           >
             Cancel
           </button>
@@ -148,7 +149,7 @@ function AddGymModal({ isOpen, onClose, onCreate, onUpdate, editData, creating }
             type="button"
             onClick={handleSubmit}
             disabled={creating}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
             {editData ? "Save Changes" : creating ? "Creating..." : "Create Gym"}
           </button>
@@ -274,7 +275,7 @@ export default function PlatformGyms() {
               setEditingGym(null);
               setModalOpen(true);
             }}
-            className="flex flex-1 items-center justify-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm text-white sm:flex-none"
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white sm:flex-none"
           >
             <Plus size={18} /> Add Gym
           </button>
@@ -312,15 +313,7 @@ export default function PlatformGyms() {
                 <td className="p-3 text-sm">{gym.ownerName}</td>
                 <td className="p-3 text-sm">{gym.email}</td>
                 <td className="p-3">
-                  <span
-                    className={`rounded px-2 py-1 text-sm ${
-                      gym.status === "Active"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    {gym.status}
-                  </span>
+                  <StatusBadge status={gym.status || "UNKNOWN"} label={gym.status || "-"} />
                 </td>
                 <td className="hidden p-3 sm:table-cell">{gym.createdAt}</td>
                 <td className="p-3 text-center">
@@ -331,7 +324,7 @@ export default function PlatformGyms() {
                         setEditingGym(gym);
                         setModalOpen(true);
                       }}
-                      className="text-blue-500 hover:scale-110 transition"
+                      className="rounded-lg text-blue-500 hover:scale-110 transition"
                       aria-label="Edit gym"
                     >
                       <svg
@@ -354,7 +347,7 @@ export default function PlatformGyms() {
                     <button
                       type="button"
                       onClick={() => handleDeleteGym(gym.id)}
-                      className="text-red-500 hover:scale-110 transition"
+                      className="rounded-lg text-red-500 hover:scale-110 transition"
                       aria-label="Delete gym"
                     >
                       <svg

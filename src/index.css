@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 html,
@@ -9,8 +10,72 @@ body,
 body {
   overflow-x: hidden;
   font-size: 14px; /* Reduced from default 16px */
+  font-family: "Plus Jakarta Sans", sans-serif;
 }
 
 * {
   box-sizing: border-box;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+input[type="checkbox"] {
+  accent-color: #0d8252;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid rgba(13, 130, 82, 0.28);
+  outline-offset: 2px;
+}
+
+.nutrition-modal-body input:not([type="checkbox"]),
+.nutrition-modal-body select {
+  height: 36px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 0 12px;
+  color: #334155;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.nutrition-modal-body textarea {
+  min-height: 80px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 12px;
+  color: #334155;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.nutrition-modal-body input:not([type="checkbox"]):focus,
+.nutrition-modal-body select:focus,
+.nutrition-modal-body textarea:focus {
+  border-color: #0d8252;
+  background: white;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f8f9fb;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0d8252;
 }

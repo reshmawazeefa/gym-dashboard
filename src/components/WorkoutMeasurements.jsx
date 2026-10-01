@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Pencil, Plus, Trash, X, LineChart } from "lucide-react";
+import { Edit, Plus, Trash, X, LineChart } from "lucide-react";
 import { LineChart as RechartsLine, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import toast from "react-hot-toast";
 import {
@@ -14,9 +14,9 @@ function emptyMeasurement() { return { date: new Date().toISOString().slice(0, 1
 
 const inputClass = "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100 disabled:text-gray-500";
 const textareaClass = "min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
-const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
-const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
+const buttonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60";
+const iconButtonClass = "inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40";
 
 function Card({ children, className = "" }) {
   return <section className={`rounded-lg bg-white shadow-sm ring-1 ring-gray-200 ${className}`}>{children}</section>;
@@ -320,7 +320,7 @@ export default function WorkoutMeasurements({ user }) {
           <h3 className="text-sm font-semibold text-gray-950">Measurement History</h3>
         </div>
         {sortedMeasurements.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">
+          <div className="p-8 text-center text-xs text-gray-500">
             No measurements recorded yet.
           </div>
         ) : (
@@ -370,7 +370,7 @@ export default function WorkoutMeasurements({ user }) {
                           <td className="px-4 py-2">
                             <div className="flex items-center gap-1">
                               <button type="button" onClick={() => handleInlineSave(itemId)} disabled={saving} className={iconButtonClass} title="Save">
-                                <Pencil size={15} />
+                                <Edit size={15} />
                               </button>
                               <button type="button" onClick={cancelInlineEdit} className={iconButtonClass} title="Cancel">
                                 <X size={15} />
@@ -390,9 +390,9 @@ export default function WorkoutMeasurements({ user }) {
                           <td className="whitespace-nowrap px-4 py-3">
                             <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
                               <button type="button" onClick={() => startInlineEdit(item)} className={iconButtonClass} title="Edit">
-                                <Pencil size={15} />
+                                <Edit size={15} />
                               </button>
-                              <button type="button" onClick={() => handleDelete(itemId)} className={`${iconButtonClass} hover:text-red-600`} title="Delete">
+                              <button type="button" onClick={() => handleDelete(itemId)} className={`rounded-lg ${iconButtonClass} hover:text-red-600`} title="Delete">
                                 <Trash size={15} />
                               </button>
                             </div>

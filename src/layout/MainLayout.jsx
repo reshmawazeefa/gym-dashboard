@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { useAuth } from "../context/AuthContext";
-import { Bell, CheckCheck, ChevronDown, Loader2, Menu, User, LogOut } from "lucide-react";
+import { Bell, CheckCheck, ChevronDown, Loader2, Menu, TriangleAlert, User, LogOut, X } from "lucide-react";
 import { moduleDefinitions } from "../data/moduleDefinitions";
 import {
   getNotifications,
@@ -13,18 +13,19 @@ import {
   unregisterNotificationDeviceToken,
 } from "../services/api";
 import { getWebPushToken } from "../services/webNotifications";
+import { isSubscriptionRestricted } from "../utils/subscriptionStatus";
 
 export default function MainLayout({ children }) {
-  const { user, logout } = useAuth();
+  const { user, logout, logoutAll } = useAuth();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [subscriptionAlertOpen, setSubscriptionAlertOpen] = useState(false);
   const navigate = useNavigate();
 
-  const portalTitle = user?.role ? `${user.role} Portal` : "Gym Owner Portal";
   const initials = user?.name
     ? user.name
         .split(" ")
@@ -37,6 +38,40 @@ export default function MainLayout({ children }) {
   const location = useLocation();
 
   const sessionToken = user?.accessToken || user?.token || null;
+  const hasSubscriptionAccessAlert = Boolean(location.state?.subscriptionAccessDenied);
+
+  const showSubscriptionAlert = () => {
+    if (location.pathname.replace(/\/$/, "") !== "/modules/subscriptions") {
+      navigate("/modules/subscriptions", { replace: true, state: { subscriptionAccessDenied: true } });
+      return;
+    }
+    setSubscriptionAlertOpen(true);
+  };
+
+  const closeSubscriptionAlert = () => {
+    setSubscriptionAlertOpen(false);
+    if (hasSubscriptionAccessAlert) navigate(location.pathname, { replace: true, state: null });
+  };
+
+  const isSubscriptionAlertVisible = subscriptionAlertOpen || hasSubscriptionAccessAlert;
+
+  useEffect(() => {
+    if (!isSubscriptionAlertVisible) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isSubscriptionAlertVisible]);
+
+  const navigateWithSubscriptionGuard = (path) => {
+    const isOwner = user?.userRole === "gym_owner" || user?.loginType === "gym_owner" || user?.role === "Gym Owner";
+    if (isOwner && isSubscriptionRestricted(user?.subscriptionStatus) && path !== "/modules/subscriptions") {
+      showSubscriptionAlert();
+      return;
+    }
+    navigate(path);
+  };
 
   useEffect(() => {
     let active = true;
@@ -166,7 +201,14 @@ export default function MainLayout({ children }) {
 
     setAccountMenuOpen(false);
     setNotificationMenuOpen(false);
-    logout();
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
+  async function handleLogoutAll() {
+    setAccountMenuOpen(false);
+    await logoutAll();
+    navigate("/login", { replace: true });
   }
 
   function capitalizeParts(key) {
@@ -187,7 +229,7 @@ export default function MainLayout({ children }) {
 
     const map = {
       members: "Members",
-      payments: "Payments",
+      payments: "Payment History",
       plans: "Plans",
       trainers: "Staff",
       permissions: "Permissions",
@@ -202,175 +244,121 @@ export default function MainLayout({ children }) {
     return capitalizeParts(key);
   }
 
-  function TopBarHeader() {
-    const normalizedPath = location.pathname.replace(/\/$/, "");
-    const isDashboard = normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/dashboard";
-    const moduleName = getModuleName(location.pathname);
-
-    if (isDashboard) {
-      return (
-        <>
-          <p className="text-sm font-semibold text-gray-500">Welcome back</p>
-          <h1 className="truncate text-xl font-semibold text-gray-950">{portalTitle}</h1>
-        </>
-      );
-    }
-
-    if (!moduleName) return null;
-
-    return <h1 className="truncate text-xl font-semibold text-gray-950">{moduleName}</h1>;
-  }
+  const normalizedPath = location.pathname.replace(/\/$/, "");
+  const isDashboard = normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/dashboard";
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen min-h-0 overflow-hidden bg-[#F8F9FB]">
       <Sidebar
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
+        onBlockedNavigation={showSubscriptionAlert}
       />
 
-      <main className="min-w-0 flex-1 p-3 sm:p-4 md:p-6">
-        <div className="mb-5 rounded-[28px] bg-white p-4 shadow-sm ring-1 ring-gray-200 sticky top-0 z-50">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
+      <main className={`min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto ${isDashboard ? "p-0" : ""}`}>
+        <div className="sticky top-0 z-40 mb-4 border-b border-gray-200 bg-white px-6 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
                 onClick={() => setMobileNavOpen(true)}
-                className="rounded-full border border-gray-200 bg-white p-2 text-gray-700 shadow-sm hover:bg-gray-50 lg:hidden"
+                className="rounded-lg border border-gray-200 bg-white p-2 text-gray-700 shadow-sm hover:bg-gray-50 lg:hidden"
                 aria-label="Open navigation"
               >
-                <Menu size={20} />
+                <Menu size={18} />
               </button>
 
-              <div className="min-w-0">
-                {/* Show welcome on dashboard; show module name on other pages */}
-                <TopBarHeader />
+              <div className="min-w-0 overflow-hidden text-sm font-medium text-gray-700">
+                <span className="truncate text-gray-500">Gym Master</span>
+                <span className="mx-2 text-gray-300">|</span>
+                <span className="truncate text-gray-900">
+                  {getModuleName(location.pathname) || "Dashboard"}
+                </span>
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end md:flex-1">
-              <div className="flex-1" />
-
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNotificationMenuOpen((current) => !current);
-                      if (!notificationMenuOpen) refreshNotifications();
-                    }}
-                    className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:bg-gray-50"
-                    aria-label="Notifications"
-                  >
-                    <Bell size={18} />
-                    {unreadCount > 0 && (
-                      <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold text-white">
-                        {unreadCount > 9 ? "9+" : unreadCount}
-                      </span>
-                    )}
-                  </button>
-
-                  {notificationMenuOpen && (
-                    <div className="absolute right-0 z-20 mt-2 w-80 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg">
-                      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">Notifications</p>
-                          <p className="text-xs text-gray-500">{unreadCount} unread</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleMarkAllRead}
-                          className="text-sm font-medium text-blue-600 hover:text-blue-700"
-                        >
-                          Mark all read
-                        </button>
-                      </div>
-
-                      <div className="max-h-80 overflow-y-auto">
-                        {loadingNotifications ? (
-                          <div className="flex items-center justify-center px-4 py-6 text-sm text-gray-500">
-                            <Loader2 size={16} className="mr-2 animate-spin" />
-                            Loading notifications...
-                          </div>
-                        ) : notifications.length === 0 ? (
-                          <div className="px-4 py-6 text-center text-sm text-gray-500">
-                            No notifications yet.
-                          </div>
-                        ) : (
-                          notifications.map((notification) => (
-                            <button
-                              key={notification.id}
-                              type="button"
-                              onClick={() => handleMarkAsRead(notification.id)}
-                              className={`flex w-full flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left transition hover:bg-gray-50 ${notification.isRead ? "bg-white" : "bg-blue-50/60"}`}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-gray-900">{notification.title || "Notification"}</p>
-                                  <p className="text-sm text-gray-600">{notification.body || "You have a new update."}</p>
-                                </div>
-                                {!notification.isRead && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-600" />}
-                              </div>
-                              <div className="flex items-center justify-between text-xs text-gray-500">
-                                <span>{notification.sentAt ? new Date(notification.sentAt).toLocaleString() : "Just now"}</span>
-                                {notification.isRead ? <CheckCheck size={14} className="text-green-600" /> : <span className="font-medium text-blue-600">Tap to read</span>}
-                              </div>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                      <div className="border-t border-gray-100 px-4 py-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNotificationMenuOpen(false);
-                            navigate("/modules/notifications");
-                          }}
-                          className="w-full rounded-md px-3 py-2 text-center text-sm font-medium text-blue-600 transition hover:bg-blue-50"
-                        >
-                          View All Notifications
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setAccountMenuOpen((current) => !current)}
-                    className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
-                  >
-                    <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white">
-                      {initials}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotificationMenuOpen((current) => !current);
+                    if (!notificationMenuOpen) refreshNotifications();
+                  }}
+                  className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50"
+                  aria-label="Notifications"
+                >
+                  <Bell size={16} />
+                  {unreadCount > 0 && (
+                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                      {unreadCount > 9 ? "9+" : unreadCount}
                     </span>
-                    <span className="hidden sm:inline">{user?.name || "Owner"}</span>
-                    <ChevronDown size={16} />
-                  </button>
+                  )}
+                </button>
 
-                  {accountMenuOpen && (
-                    <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg">
+                {notificationMenuOpen && (
+                  <div className="absolute right-0 z-20 mt-2 w-80 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg">
+                    <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">Notifications</p>
+                        <p className="text-xs text-gray-500">{unreadCount} unread</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleMarkAllRead}
+                        className="rounded-lg text-sm font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        Mark all read
+                      </button>
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto">
+                      {loadingNotifications ? (
+                        <div className="flex items-center justify-center px-4 py-6 text-sm text-gray-500">
+                          <Loader2 size={16} className="mr-2 animate-spin" />
+                          Loading notifications...
+                        </div>
+                      ) : notifications.length === 0 ? (
+                        <div className="px-4 py-6 text-center text-sm text-gray-500">
+                          No notifications yet.
+                        </div>
+                      ) : (
+                        notifications.map((notification) => (
+                          <button
+                            key={notification.id}
+                            type="button"
+                            onClick={() => handleMarkAsRead(notification.id)}
+                            className={`rounded-lg flex w-full flex-col gap-1 border-b border-gray-100 px-4 py-3 text-left transition hover:bg-gray-50 ${notification.isRead ? "bg-white" : "bg-blue-50/60"}`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-gray-900">{notification.title || "Notification"}</p>
+                                <p className="text-sm text-gray-600">{notification.body || "You have a new update."}</p>
+                              </div>
+                              {!notification.isRead && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-600" />}
+                            </div>
+                            <div className="flex items-center justify-between text-xs text-gray-500">
+                              <span>{notification.sentAt ? new Date(notification.sentAt).toLocaleString() : "Just now"}</span>
+                              {notification.isRead ? <CheckCheck size={14} className="text-green-600" /> : <span className="font-medium text-blue-600">Tap to read</span>}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="border-t border-gray-100 px-4 py-2">
                       <button
                         type="button"
                         onClick={() => {
-                          setAccountMenuOpen(false);
-                          navigate("/profile");
+                          setNotificationMenuOpen(false);
+                          navigateWithSubscriptionGuard("/modules/notifications");
                         }}
-                        className="flex w-full items-center gap-2 px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50"
+                        className="w-full rounded-lg px-3 py-2 text-center text-sm font-medium text-blue-600 transition hover:bg-blue-50"
                       >
-                        <User size={16} />
-                        Profile
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleLogout}
-                        className="flex w-full items-center gap-2 px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50"
-                      >
-                        <LogOut size={16} />
-                        Logout
+                        View All Notifications
                       </button>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -378,6 +366,28 @@ export default function MainLayout({ children }) {
 
         {children}
       </main>
+      {isSubscriptionAlertVisible && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/35 p-4">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="subscription-access-title" className="w-full max-w-lg overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]">
+            <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-200 bg-amber-50 text-amber-700"><TriangleAlert size={18} /></div>
+                <div>
+                  <h2 id="subscription-access-title" className="text-base font-bold text-[#0F172A]">Subscription Required</h2>
+                  <p className="mt-0.5 text-xs text-[#64748B]">Complete your subscription payment to restore access.</p>
+                </div>
+              </div>
+              <button type="button" onClick={closeSubscriptionAlert} className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]" aria-label="Close subscription alert"><X size={17} /></button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm leading-6 text-[#475569]">Your subscription payment has not been completed. Please complete your subscription payment to access the dashboard and use all gym management features.</p>
+            </div>
+            <div className="flex items-center justify-end border-t border-[#E2E8F0] bg-white px-5 py-4">
+              <button type="button" onClick={closeSubscriptionAlert} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">Close</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

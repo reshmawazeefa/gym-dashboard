@@ -15,7 +15,7 @@ const getColor = (name) => {
 
 function CalendarToolbar({ label, onNavigate, onView, view }) {
   const viewButtonClass = (targetView) =>
-    `rounded-md px-3 py-2 text-sm font-semibold transition ${
+    `rounded-lg px-3 py-2 text-sm font-semibold transition ${
       view === targetView
         ? "bg-blue-600 text-white"
         : "border border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -27,21 +27,21 @@ function CalendarToolbar({ label, onNavigate, onView, view }) {
         <button
           type="button"
           onClick={() => onNavigate("TODAY")}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
         >
           Today
         </button>
         <button
           type="button"
           onClick={() => onNavigate("PREV")}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
         >
           Back
         </button>
         <button
           type="button"
           onClick={() => onNavigate("NEXT")}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
         >
           Next
         </button>

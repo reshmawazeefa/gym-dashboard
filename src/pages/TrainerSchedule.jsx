@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import {
   CalendarCheck,
@@ -6,7 +6,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock3,
-  Edit3,
+  Edit,
   ListChecks,
   MoreVertical,
   Plus,
@@ -17,6 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import StatusBadge from "../components/StatusBadge";
 import { canAccess, getStaffCategory, normalizeRole } from "../utils/rbac";
 import {
   bookClass,
@@ -48,12 +49,16 @@ import {
   getBookingSlotChanges,
   unwrapList,
   unwrapObject,
+  updateClassSchedule,
   updateClass,
   updateClassSlot,
 } from "../services/api";
 import ClassModal from "../components/ClassModal";
 import ScheduleModal from "../components/ScheduleModal";
 import MarkAttendanceModal from "../components/MarkAttendanceModal";
+import AssignMemberModal from "../components/AssignMemberModal";
+import ChangeSlotModal from "../components/ChangeSlotModal";
+import SlotChangesModal from "../components/SlotChangesModal";
 
 const dayNameToNumber = {
   sunday: "0",
@@ -75,16 +80,6 @@ const dayOptions = [
   { value: "6", label: "Saturday" },
 ];
 
-const statusTone = {
-  booked: "bg-blue-50 text-blue-700",
-  confirmed: "bg-emerald-50 text-emerald-700",
-  attended: "bg-emerald-50 text-emerald-700",
-  cancelled: "bg-red-50 text-red-700",
-  canceled: "bg-red-50 text-red-700",
-  absent: "bg-amber-50 text-amber-700",
-  pending: "bg-amber-50 text-amber-700",
-};
-
 function getId(item) {
   return item?.id || item?._id || item?.classId || item?.bookingId || item?.scheduleId || "";
 }
@@ -92,6 +87,8 @@ function getId(item) {
 function getUserId(user) {
   return user?.id || user?._id || user?.userId || user?.email || "";
 }
+
+const legacyBookingModalMarkupEnabled = false;
 
 function titleCase(value) {
   return String(value || "")
@@ -314,6 +311,7 @@ function normalizeSchedule(item = {}) {
     trainerId: item.trainerId || item.trainer?._id || item.trainer?.id || "",
     capacity: item.maxCapacity || item.capacity || "",
     details: item.sessionDetails || item.details || item.description || "",
+    isActive: item.isActive ?? item.active ?? String(item.status || "").toUpperCase() !== "INACTIVE",
     slots: Array.isArray(slots) ? slots.map(normalizeSlot) : [],
     raw: item,
   };
@@ -381,6 +379,14 @@ function normalizeBooking(item = {}) {
   };
 }
 
+function normalizeAttendanceStatus(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "present" || normalized === "attended") return "PRESENT";
+  if (normalized === "late") return "LATE";
+  if (normalized === "absent") return "ABSENT";
+  return "PENDING";
+}
+
 function normalizeAttendance(item = {}) {
   const booking = item.booking || {};
   const user = booking.user || item.user || {};
@@ -389,16 +395,12 @@ function normalizeAttendance(item = {}) {
     id: getId(item) || `${item.userId || item.memberId || booking.userId || ""}-${item.createdAt || item.timestamp || item.markedAt || ""}`,
     memberName: item.memberName || item.member?.name || user.name || user.fullName || "Member",
     trainerName: item.trainerName || item.trainer?.name || item.markedByUser?.name || "",
-    status: item.status || item.attendanceStatus || "Attended",
+    status: normalizeAttendanceStatus(item.status || item.attendanceStatus),
     attendanceDate: item.attendanceDate || item.markedAt || item.timestamp || "",
     timestamp: item.timestamp || item.createdAt || item.markedAt || "",
     bookingId: item.bookingId || booking.id || "",
     raw: item,
   };
-}
-
-function getStatusClass(status) {
-  return statusTone[String(status || "").toLowerCase()] || "bg-gray-100 text-gray-700";
 }
 
 function isAttendancePending(status) {
@@ -422,6 +424,8 @@ export default function TrainerSchedule() {
   const [trainers, setTrainers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState("");
+  const [scheduleSlotStates, setScheduleSlotStates] = useState({});
+  const [classSlotState, setClassSlotState] = useState({ loading: false, error: "" });
   const [activeTab, setActiveTab] = useState("classDetails");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -447,9 +451,49 @@ export default function TrainerSchedule() {
     []
   );
 
+  const fetchScheduleSlots = useCallback(async (scheduleId) => {
+    if (!scheduleId) return [];
+
+    setScheduleSlotStates((current) => ({ ...current, [scheduleId]: { loading: true, error: "" } }));
+    try {
+      const response = await getSlotsBySchedule(scheduleId, authToken);
+      const slots = unwrapMaybeList(response, ["slots", "classSlots"]).map((item) => {
+        const slot = normalizeSlot(item);
+        return { ...slot, scheduleId: slot.scheduleId || scheduleId };
+      });
+      setScheduleSlotStates((current) => ({ ...current, [scheduleId]: { loading: false, error: "" } }));
+      return slots;
+    } catch (error) {
+      const message = getApiError(error, "Unable to load slots for this schedule");
+      setScheduleSlotStates((current) => ({
+        ...current,
+        [scheduleId]: { loading: false, error: message },
+      }));
+      toast.error(message);
+      throw error;
+    }
+  }, [authToken]);
+
+  const refreshScheduleSlots = useCallback(async (schedule) => {
+    if (!schedule?.id) return;
+    try {
+      const slots = await fetchScheduleSlots(schedule.id);
+      setSelectedClass((current) => current?.id === selectedClassIdRef.current
+        ? { ...current, schedules: current.schedules.map((item) => item.id === schedule.id ? { ...item, slots } : item) }
+        : current);
+      setSelectedSchedule((current) => current?.id === schedule.id ? { ...current, slots } : current);
+    } catch {
+      setSelectedClass((current) => current?.id === selectedClassIdRef.current
+        ? { ...current, schedules: current.schedules.map((item) => item.id === schedule.id ? { ...item, slots: [] } : item) }
+        : current);
+      setSelectedSchedule((current) => current?.id === schedule.id ? { ...current, slots: [] } : current);
+    }
+  }, [fetchScheduleSlots]);
+
   const loadClassDetails = useCallback(async (classId, date) => {
     if (!classId) return;
     const queryDate = date || selectedDate;
+    setClassSlotState({ loading: true, error: "" });
 
     try {
       const [detailResponse, bookingsResponse, attendanceResponse, schedulesResponse, slotsResponse, fullClassResponse] = await Promise.allSettled([
@@ -485,6 +529,12 @@ export default function TrainerSchedule() {
         slotsResponse.status === "fulfilled"
           ? unwrapMaybeList(slotsResponse.value, ["slots", "classSlots"]).map(normalizeSlot)
           : [];
+      setClassSlotState(slotsResponse.status === "fulfilled"
+        ? { loading: false, error: "" }
+        : { loading: false, error: getApiError(slotsResponse.reason, "Unable to load class slots") });
+      if (slotsResponse.status === "rejected") {
+        toast.error(getApiError(slotsResponse.reason, "Unable to load class slots"));
+      }
 
       if (detailResponse.status === "fulfilled") {
         const detail = normalizeClass(unwrapObject(detailResponse.value));
@@ -493,16 +543,11 @@ export default function TrainerSchedule() {
         let schedulesWithSlots = await Promise.all(
           baseSchedules.map(async (schedule) => {
             if (!schedule.id) return schedule;
-            if (schedule.slots?.length) return schedule;
 
             try {
-              const slotsResponse = await getSlotsBySchedule(schedule.id, authToken);
-              return {
-                ...schedule,
-                slots: unwrapMaybeList(slotsResponse, ["slots", "classSlots"]).map(normalizeSlot),
-              };
+              return { ...schedule, slots: await fetchScheduleSlots(schedule.id) };
             } catch {
-              return schedule;
+              return { ...schedule, slots: [] };
             }
           })
         );
@@ -532,7 +577,7 @@ export default function TrainerSchedule() {
           }),
         }));
 
-        const standaloneSlots = apiSlots.length
+        const standaloneSlots = slotsResponse.status === "fulfilled"
           ? apiSlots.filter((slot) => !slot.scheduleId)
           : detail.slots || [];
 
@@ -576,10 +621,14 @@ export default function TrainerSchedule() {
         // Extract total capacity data from full class response (without date filtering)
         if (fullClassResponse.status === "fulfilled") {
           const fullDetail = normalizeClass(unwrapObject(fullClassResponse.value));
-          const fullSchedules = fullDetail.schedules || [];
-          const allSlots = fullSchedules.flatMap((schedule) => schedule.slots || []);
+          const allSlots = slotsResponse.status === "fulfilled"
+            ? apiSlots
+            : [
+                ...(fullDetail.schedules || []).flatMap((schedule) => schedule.slots || []),
+                ...(fullDetail.slots || []),
+              ];
           const totalCap = allSlots.reduce((total, slot) => total + (Number(slot.capacity) || 0), 0);
-          const totalBooked = allSlots.reduce((total, slot) => total + (Number(slot.bookedCount) || 0), 0);
+          const totalBooked = allSlots.reduce((total, slot) => total + (slotBookings[slot.id] ?? (Number(slot.bookedCount) || 0)), 0);
           setTotalCapacityData({ totalCapacity: totalCap, totalBooked });
         }
       }
@@ -633,7 +682,7 @@ export default function TrainerSchedule() {
     } catch (error) {
       toast.error(getApiError(error, "Could not load class details"));
     }
-  }, [authToken, canManageClasses, selectedDate]);
+  }, [authToken, canManageClasses, fetchScheduleSlots, selectedDate]);
 
   const loadModuleData = useCallback(async () => {
     try {
@@ -776,6 +825,7 @@ export default function TrainerSchedule() {
 
   const handleSelectClass = async (classItem) => {
     selectedClassIdRef.current = classItem.id;
+    setScheduleSlotStates({});
     setSelectedSchedule(null);
     setSelectedSlot(classItem.slots?.[0] || null);
     setSlotMembers([]);
@@ -790,6 +840,12 @@ export default function TrainerSchedule() {
     setScheduleModalOpen(true);
   };
 
+  const handleEditScheduleDay = (schedule) => {
+    setScheduleModalEdit({ ...schedule, classId: selectedClass?.id || schedule.classId });
+    setScheduleModalPurpose("schedule");
+    setScheduleModalOpen(true);
+  };
+
   const handleDeleteSchedule = async (slot) => {
     if (!slot?.id) {
       toast.error("Slot id is missing");
@@ -801,8 +857,8 @@ export default function TrainerSchedule() {
       setSaving(true);
       await deleteClassSlot(slot.id, authToken);
       toast.success("Slot deleted");
-      await loadModuleData();
-      if (selectedClassIdRef.current) await loadClassDetails(selectedClassIdRef.current);
+      const classId = selectedClassIdRef.current || selectedClass?.id;
+      if (classId) await loadClassDetails(classId);
     } catch (error) {
       toast.error(getApiError(error, "Could not delete slot"));
     } finally {
@@ -869,6 +925,8 @@ export default function TrainerSchedule() {
   const [attendanceModalEdit, setAttendanceModalEdit] = useState(null);
   const [slotMembers, setSlotMembers] = useState([]);
   const [slotMembersSlotId, setSlotMembersSlotId] = useState(null);
+  const [slotMembersLoading, setSlotMembersLoading] = useState(false);
+  const [slotMembersError, setSlotMembersError] = useState("");
   const [slotChanges, setSlotChanges] = useState([]);
   const [slotChangeTargets, setSlotChangeTargets] = useState({});
   const [showAssignPanel, setShowAssignPanel] = useState(false);
@@ -890,12 +948,20 @@ export default function TrainerSchedule() {
 
   const loadSlotMembers = async (slotId) => {
     if (!slotId) return;
+    setSlotMembersLoading(true);
+    setSlotMembersError("");
+    setSlotMembers([]);
+    setSlotMembersSlotId(slotId);
     try {
       const response = await getSlotMembers(slotId, authToken);
       setSlotMembers(unwrapMaybeList(response, ["members", "bookings"]));
       setSlotMembersSlotId(slotId);
     } catch (error) {
-      toast.error(getApiError(error, "Could not load slot members"));
+      const message = getApiError(error, "Could not load slot members");
+      setSlotMembersError(message);
+      toast.error(message);
+    } finally {
+      setSlotMembersLoading(false);
     }
   };
 
@@ -952,6 +1018,11 @@ export default function TrainerSchedule() {
   };
 
   const handleDeleteScheduleDay = async (schedule) => {
+    if (!canDeleteClass) {
+      toast.error("You do not have permission to delete class schedules");
+      return;
+    }
+
     const scheduleId = schedule?.id || schedule?.scheduleId;
     if (!scheduleId) {
       toast.error("Schedule id is missing");
@@ -1053,50 +1124,66 @@ export default function TrainerSchedule() {
     // Only trainer/owner/admin can schedule classes
     const userRole = normalizeRole(user?.role, user?.loginType);
     const allowedRoles = ["gym_owner", "staff", "trainer"];
+    const isScheduleEdit = scheduleModalPurpose === "schedule" && Boolean(scheduleModalEdit?.id);
+    const hasSchedulePermission = isScheduleEdit ? canEditClass : canCreateClass;
     
-    if (!canCreateClass || !allowedRoles.includes(userRole)) {
+    if (!hasSchedulePermission || !allowedRoles.includes(userRole)) {
       toast.error("Only trainers, admins, and owners can schedule classes");
-      return;
+      return false;
     }
 
     try {
       setSaving(true);
       if (scheduleModalPurpose === "schedule") {
-        await createClassSchedule(
-          payload.classId,
-          { dayOfWeek: payload.dayOfWeek },
-          authToken
-        );
-        toast.success("Schedule created");
-      } else {
-        const body = {
-          startTime: payload.startTime,
-          endTime: payload.endTime,
-          capacity: Number(payload.maxCapacity),
-        };
-
-        if (payload.scheduleId) {
-          body.scheduleId = payload.scheduleId;
-        }
-
-        if (scheduleModalEdit?.id && (scheduleModalEdit.startTime || scheduleModalEdit.raw?.startTime)) {
-          await updateClassSlot(scheduleModalEdit.id, {
-            startTime: body.startTime,
-            endTime: body.endTime,
-            capacity: body.capacity,
-          }, authToken);
-          toast.success("Slot updated");
+        if (scheduleModalEdit?.id) {
+          await updateClassSchedule(
+            scheduleModalEdit.id,
+            { dayOfWeek: payload.dayOfWeek },
+            authToken
+          );
+          toast.success("Schedule updated");
         } else {
+          await createClassSchedule(
+            payload.classId,
+            { dayOfWeek: payload.dayOfWeek },
+            authToken
+          );
+          toast.success("Schedule created");
+        }
+      } else {
+        if (scheduleModalEdit?.id && (scheduleModalEdit.startTime || scheduleModalEdit.raw?.startTime)) {
+          const existingSlot = [
+            ...(selectedClass?.schedules || []).flatMap((schedule) => schedule.slots || []),
+            ...(selectedClass?.slots || []),
+          ].find((slot) => slot.id === scheduleModalEdit.id) || scheduleModalEdit;
+          const changes = {};
+          if (payload.startTime !== existingSlot.startTime) changes.startTime = payload.startTime;
+          if (payload.endTime !== existingSlot.endTime) changes.endTime = payload.endTime;
+          if (Number(payload.maxCapacity) !== Number(existingSlot.capacity ?? existingSlot.maxCapacity)) {
+            changes.capacity = Number(payload.maxCapacity);
+          }
+          if (Object.keys(changes).length) {
+            await updateClassSlot(scheduleModalEdit.id, changes, authToken);
+          }
+          toast.success(Object.keys(changes).length ? "Slot updated" : "No slot changes to save");
+        } else {
+          const body = {
+            startTime: payload.startTime,
+            endTime: payload.endTime,
+            capacity: Number(payload.maxCapacity),
+            ...(payload.scheduleId && { scheduleId: payload.scheduleId }),
+          };
           await createClassSlot(payload.classId, body, authToken);
           toast.success(payload.scheduleId ? "Schedule slot created" : "Class slot created");
         }
       }
       setScheduleModalEdit(null);
       setScheduleModalOpen(false);
-      await loadModuleData();
-      await loadClassDetails(payload.classId);
+      await loadClassDetails(payload.classId || selectedClassIdRef.current);
+      return true;
     } catch (error) {
       toast.error(getApiError(error, "Could not save slot"));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1192,12 +1279,19 @@ export default function TrainerSchedule() {
     (schedule.slots || []).map((slot) => ({ ...slot, dayOfWeek: schedule.dayOfWeek }))
   );
   const visibleSlots = isRecurringClass ? allRecurringSlots : oneTimeSlots;
-  const selectedDaySlots = isRecurringClass
-    ? selectedDaySchedules.flatMap((schedule) =>
-        (schedule.slots || []).map((slot) => ({ ...slot, schedule }))
-      )
-    : oneTimeSlots.map((slot) => ({ ...slot, schedule: null }));
   const activeSlotSchedule = selectedDaySchedules.find((schedule) => schedule.id === selectedSchedule?.id) || selectedDaySchedules[0] || null;
+  const selectedDaySlots = isRecurringClass
+    ? (activeSlotSchedule?.slots || []).map((slot) => ({ ...slot, schedule: activeSlotSchedule }))
+    : oneTimeSlots.map((slot) => ({ ...slot, schedule: null }));
+  const selectedDaySlotLoading = isRecurringClass
+    ? Boolean(activeSlotSchedule && scheduleSlotStates[activeSlotSchedule.id]?.loading)
+    : classSlotState.loading;
+  const selectedDaySlotError = isRecurringClass
+    ? activeSlotSchedule ? scheduleSlotStates[activeSlotSchedule.id]?.error : ""
+    : classSlotState.error;
+  const canAddSchedule = isRecurringClass || selectedSchedules.length === 0;
+  const activeSchedules = selectedSchedules.filter((schedule) => schedule.isActive !== false);
+  const canAddSlot = !isRecurringClass || activeSchedules.length > 0;
   const totalCapacity = totalCapacityData?.totalCapacity ?? visibleSlots.reduce((total, slot) => total + (Number(slot.capacity) || 0), 0);
   const totalBookedSlots = totalCapacityData?.totalBooked ?? visibleSlots.reduce((total, slot) => total + (Number(slot.bookedCount) || 0), 0);
   const classInitial = (selectedClass?.title || "C").trim().charAt(0).toUpperCase();
@@ -1222,17 +1316,32 @@ export default function TrainerSchedule() {
     pending: managedBookings.filter((booking) => !booking.attendanceStatus || String(booking.attendanceStatus).toLowerCase() === "pending").length,
     cancelled: managedBookings.filter((booking) => ["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase())).length,
   };
+  const attendanceSummary = classAttendance.reduce((summary, record) => {
+    const status = normalizeAttendanceStatus(record.status);
+    summary[status] += 1;
+    return summary;
+  }, { PRESENT: 0, LATE: 0, ABSENT: 0, PENDING: 0 });
 
   if (hasOwnerWorkspace) {
     return (
-      <div className="grid min-h-[calc(100vh-7rem)] gap-0 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 lg:grid-cols-[16rem_minmax(0,1fr)]">
-        <aside className="border-b border-gray-200 bg-gray-50/70 p-4 lg:border-b-0 lg:border-r">
-          <div className="mb-5 flex items-center justify-between">
+      <div className="min-h-full bg-[#F7F8FA] p-3 text-[#1E293B] sm:p-4">
+        <div className="mx-auto w-full max-w-7xl space-y-3">
+          <header className="flex items-start justify-between gap-3 px-0.5">
+            <div>
+              <h1 className="text-2xl font-extrabold leading-6 tracking-tight text-[#020617]">Class Management</h1>
+              <p className="mt-1 text-xs text-[#64748B]">Browse scheduled classes, manage syllabus &amp; trainers, and monitor member enrollments.</p>
+            </div>
+          </header>
+
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(250px,0.295fr)_minmax(0,0.705fr)]">
+        <aside className="rounded-xl border border-[#E5EAF0] bg-white shadow-[0_1px_4px_rgba(15,23,42,0.06)]">
+          <div className="px-3 py-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-semibold text-gray-950">Classes</h1>
+                <h2 className="text-base font-bold leading-5 text-[#0F172A]">Classes</h2>
               </div>
-              <p className="mt-1 text-[11px] text-gray-500">
+              <p className="mt-0.5 text-[10px] text-[#64748B]">
                 {filteredClasses.length} of {visibleClasses.length} shown
               </p>
             </div>
@@ -1244,59 +1353,60 @@ export default function TrainerSchedule() {
                     setClassModalEdit(null);
                     setClassModalOpen(true);
                   }}
-                  className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#0D8252] px-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#086B43]"
                 >
-                  <Plus size={14} />
+                  <Plus size={12} />
                   Create Class
                 </button>
               )}
             </div>
           </div>
 
-          <div className="mb-4 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2">
-            <Search size={16} className="text-gray-400" />
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1.5 focus-within:border-[#0D8252] focus-within:bg-white">
+            <Search size={14} className="text-[#94A3B8]" />
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search classes..."
-              className="w-full min-w-0 bg-transparent text-sm outline-none"
+              className="h-7 w-full min-w-0 bg-transparent text-xs outline-none placeholder:text-[#94A3B8]"
             />
           </div>
 
-          <div className="space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(100vh-15rem)]">
+          <div className="max-h-[calc(100vh-18rem)] space-y-2 overflow-y-auto pr-0.5">
             {filteredClasses.map((classItem, index) => {
               const isSelected = selectedClass?.id === classItem.id;
-              const tone = ["bg-blue-100 text-blue-700", "bg-red-100 text-red-700", "bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700"][index % 4];
+              const tone = ["bg-[#EEF4FF] text-[#477BFF]", "bg-rose-50 text-rose-500", "bg-emerald-50 text-[#0D8252]", "bg-amber-50 text-amber-600"][index % 4];
               return (
                 <button
                   type="button"
                   key={classItem.id || classItem.title}
                   onClick={() => handleSelectClass(classItem)}
-                  className={`flex w-full items-center gap-3 rounded-md border bg-white p-3 text-left transition ${
-                    isSelected ? "border-blue-500 ring-1 ring-blue-500" : "border-gray-200 hover:border-blue-300"
+                  className={`flex min-h-14 w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition ${
+                    isSelected ? "border-[#0D8252] bg-emerald-50/30 shadow-[0_1px_4px_rgba(13,130,82,0.08)]" : "border-[#E4EAF1] bg-white hover:border-emerald-200 hover:bg-emerald-50/20"
                   }`}
                 >
-                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${tone}`}>
-                    <ListChecks size={18} />
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone}`}>
+                    <ListChecks size={15} />
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-xs font-medium text-gray-950">{classItem.title}</span>
-                    <span className="mt-1 block text-[11px] text-gray-500">
-                      {titleCase(classItem.type)} | {classItem.bookedCount || 0} Bookings
+                    <span className="block truncate text-xs font-semibold text-[#0F172A]">{classItem.title}</span>
+                    <span className="mt-0.5 block text-[10px] text-[#94A3B8]">
+                      {classItem.bookedCount || 0} Bookings
                     </span>
                   </span>
                 </button>
               );
             })}
             {!filteredClasses.length && (
-              <p className="rounded-md border border-dashed border-gray-300 bg-white p-4 text-center text-sm text-gray-500">
+              <p className="rounded-xl border border-dashed border-[#DDE5EF] bg-[#FBFCFD] p-4 text-center text-xs text-[#64748B]">
                 {loading ? "Loading classes..." : "No classes found"}
               </p>
             )}
           </div>
+          </div>
         </aside>
 
-        <main className="min-w-0 overflow-y-auto bg-gray-50/30 p-4 md:p-6">
+        <main className="min-w-0 space-y-3">
           {/* <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-xl font-bold text-gray-950">Classes Management</h2>
@@ -1305,25 +1415,25 @@ export default function TrainerSchedule() {
           </div> */}
 
           {!selectedClass?.id ? (
-            <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
+            <div className="rounded-2xl border border-dashed border-[#DDE5EF] bg-white p-8 text-center text-sm text-[#64748B]">
               Select a class to manage schedules and bookings.
             </div>
           ) : (
             <>
-              <section className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <section className="mb-0 rounded-tl-xl rounded-tr-xl border border-b-0 border-[#E5EAF0] bg-white p-3 shadow-[0_1px_4px_rgba(15,23,42,0.06)] sm:p-4">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
                       {/* <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xl font-bold text-white shadow-lg shadow-blue-200">
                         {classInitial}
                       </div> */}
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="truncate text-xl font-bold text-gray-950">{selectedClass.title}</h3>
-                          <span className="rounded bg-blue-50 px-2 py-1 text-[11px] font-bold uppercase text-blue-700">
+                          <h3 className="truncate text-base font-bold tracking-tight text-[#0F172A]">{selectedClass.title}</h3>
+                          <span className="rounded-full bg-[#EEF4FF] px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide text-[#477BFF]">
                             {titleCase(selectedClassType)}
                           </span>
                         </div>
-                        <p className="mt-2 max-w-3xl text-xs text-gray-500">{selectedClass.description || "No class description added."}</p>
+                        <p className="mt-1 max-w-3xl text-[10px] leading-4 text-[#64748B]">{selectedClass.description || "No class description added."}</p>
                       </div>
                     </div>
                   {!isMember && (
@@ -1332,9 +1442,10 @@ export default function TrainerSchedule() {
                         <button
                           type="button"
                           onClick={() => handleEditClass(selectedClass)}
-                          className="rounded-md border border-blue-300 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#64748B] transition hover:border-[#0D8252] hover:bg-emerald-50 hover:text-[#0D8252]"
+                          aria-label="Edit class"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line" aria-hidden="true"><path d="M13 21h8"></path><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path></svg>
+                          <Edit size={15} />
                         </button>
                       )}
                       {canDeleteClass && (
@@ -1342,9 +1453,10 @@ export default function TrainerSchedule() {
                           type="button"
                           onClick={() => handleDeleteClass(selectedClass.id)}
                           disabled={saving}
-                          className="rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-100 text-rose-500 transition hover:bg-rose-50 disabled:opacity-60"
+                          aria-label="Delete class"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 lucide-trash-2" aria-hidden="true"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                          <Trash2 size={15} />
                         </button>
                       )}
                     </div>
@@ -1354,8 +1466,8 @@ export default function TrainerSchedule() {
 
               </section>
 
-              <section className="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-                <div className="flex overflow-x-auto border-b border-gray-200 px-4">
+              <section className="overflow-hidden rounded-bl-xl rounded-br-xl border border-[#E5EAF0] bg-white shadow-[0_1px_4px_rgba(15,23,42,0.06)]">
+                <div className="grid grid-cols-2 gap-1 border-b border-[#EEF2F4] p-1 sm:grid-cols-5">
                   {[
                     { key: "classDetails", label: "Class Details", icon: ClipboardCheck },
                     { key: "schedules", label: "Schedules", icon: CalendarClock },
@@ -1368,14 +1480,19 @@ export default function TrainerSchedule() {
                       <button
                         key={tab.key}
                         type="button"
-                        onClick={() => setActiveTab(tab.key)}
-                        className={`inline-flex min-w-32 items-center justify-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold ${
+                        onClick={() => {
+                          setActiveTab(tab.key);
+                          if (tab.key === "schedules" && isRecurringClass && activeSlotSchedule) {
+                            void refreshScheduleSlots(activeSlotSchedule);
+                          }
+                        }}
+                        className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition ${
                           activeTab === tab.key
-                            ? "border-blue-600 text-blue-700"
-                            : "border-transparent text-gray-600 hover:text-gray-950"
+                            ? "bg-[#0D8252] text-white shadow-sm"
+                            : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
                         }`}
                       >
-                        <TabIcon size={16} />
+                        <TabIcon size={13} />
                         {tab.label}
                       </button>
                     );
@@ -1383,8 +1500,8 @@ export default function TrainerSchedule() {
                 </div>
 
                 {activeTab === "classDetails" && (
-                  <div className="space-y-4 p-4">
-                    <div className="grid gap-4 md:grid-cols-5">
+                  <div className="space-y-3 p-3 sm:p-4">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {[
                         ["Trainer", selectedClass.trainerName || selectedClass.trainer || "Not assigned"],
                         ["Level", selectedClass.level || "ALL"],
@@ -1393,27 +1510,40 @@ export default function TrainerSchedule() {
                         ["Date Range", `${formatDate(selectedClass.startDate)} - ${formatDate(selectedClass.endDate)}`],
                         ["Bookings", classBookings.length || 0],
                       ].map(([label, value]) => (
-                        <div key={label} className="border-gray-200 md:border-l md:pl-4 first:md:border-l-0 first:md:pl-0">
-                          <p className="text-[11px] font-medium text-gray-500">{label}</p>
-                          <p className="mt-2 truncate text-xs font-semibold text-gray-950">{value}</p>
+                        <div key={label} className="min-h-[68px] rounded-xl border border-[#E8EDF2] bg-[#FBFCFD] px-3 py-2.5">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-[#94A3B8]">{label}</p>
+                          <p className={`mt-1 truncate text-[12px] font-semibold ${label === "Status" ? (value === "Active" ? "text-[#0D8252]" : "text-rose-600") : "text-[#0F172A]"}`}>
+                            {label === "Status" && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current align-middle" />}
+                            {value}
+                          </p>
                         </div>
                       ))}
                     </div>
-                    <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Class overview</p>
-                          <p className="mt-1 text-sm text-gray-700">{selectedClass.description || "No class description added."}</p>
+                    <div className="grid gap-3 rounded-xl border border-[#E8EDF2] bg-[#FBFCFD] p-3 sm:p-4 lg:grid-cols-[minmax(0,1fr)_10rem] lg:gap-4">
+                      <div className="min-w-0">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-[#94A3B8]">Class overview</p>
+                          <p className="mt-1 text-[11px] leading-4 text-[#475569]">{selectedClass.description || "No class description added."}</p>
+                      </div>
+                      <div className="grid gap-2 border-t border-[#E8EDF2] pt-3 text-[10px] text-[#64748B] sm:grid-cols-2 lg:grid-cols-1 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+                        {selectedClass.trainerEmail ? (
+                          <div className="flex items-center justify-between gap-2 lg:block">
+                            <p className="text-[10px] uppercase text-[#94A3B8]">Trainer email:</p>
+                            <p className="truncate text-xs font-semibold text-[#0F172A]">{selectedClass.trainerEmail}</p>
+                          </div>
+                        ) : null}
+                        <div className="flex flex-row items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase text-[#94A3B8]">Schedules:</p>
+                          <p className="font-semibold text-xs text-[#0F172A]">{selectedSchedules.length}</p>
                         </div>
-                        <div className="text-sm text-gray-600">
-                          {selectedClass.trainerEmail ? <p>Trainer email: {selectedClass.trainerEmail}</p> : null}
-                          <p className="mt-1">Schedules: {selectedSchedules.length} • Slots: {visibleSlots.length}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase text-[#94A3B8]">Slots:</p>
+                          <p className="font-semibold text-xs text-[#0F172A]">{visibleSlots.length}</p>
                         </div>
                       </div>
                     </div>
-                    {isRecurringClass && (
+                    {/* {isRecurringClass && (
                       <div className="flex items-center gap-3">
-                        <label className="text-xs font-medium text-gray-500">View availability for date:</label>
+                        <label className="text-[10px] font-medium text-gray-500">View availability for date:</label>
                         <input
                           type="date"
                           value={selectedDate}
@@ -1423,30 +1553,28 @@ export default function TrainerSchedule() {
                               loadClassDetails(selectedClassIdRef.current, e.target.value);
                             }
                           }}
-                          className="h-8 rounded border border-gray-300 px-2 text-sm"
+                          className="h-7 rounded-lg border border-[#E2E8F0] px-2 text-[10px] text-[#475569]"
                         />
                       </div>
-                    )}
+                    )} */}
                   </div>
                 )}
 
                 {activeTab === "schedules" && (
                   <div className="grid min-h-[24rem] lg:grid-cols-[16rem_minmax(0,1fr)]">
-                    <div className="border-b border-gray-200 p-4 lg:border-b-0 lg:border-r">
-                      <div className="mb-4 flex items-center justify-between gap-3">
-                        <h3 className="font-semibold text-gray-950">{isRecurringClass ? "Schedules" : "Class Slots"}</h3>
+                    <div className="border-b border-[#EEF2F4] p-3 lg:border-b-0 lg:border-r lg:p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-bold text-[#0F172A]">{isRecurringClass ? "Schedules" : "Class Slots"}</h3>
                         {canCreateClass && !isMember && (
                           <button
                             type="button"
+                            disabled={!canAddSchedule}
                             onClick={() => {
-                              setScheduleModalEdit({
-                                classId: selectedClass.id,
-                                dayOfWeek: activeScheduleDay || "1",
-                              });
+                              setScheduleModalEdit(null);
                               setScheduleModalPurpose("schedule");
                               setScheduleModalOpen(true);
                             }}
-                            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#0D8252] px-2.5 text-[10px] font-bold text-white shadow-sm transition hover:bg-[#086B43] disabled:cursor-not-allowed disabled:bg-[#CBD5E1] disabled:text-white disabled:shadow-none"
                           >
                             <Plus size={14} />
                             Add Schedule
@@ -1463,49 +1591,77 @@ export default function TrainerSchedule() {
                           const slotCount = isRecurringClass
                             ? daySchedules.reduce((count, schedule) => count + (schedule.slots?.length || 0), 0)
                             : oneTimeSlots.length;
+                          const scheduleToDelete = isRecurringClass ? daySchedules[0] : selectedSchedules[0];
                           const isActive = isRecurringClass ? activeScheduleDay === day.value : true;
+                          const isScheduleActive = scheduleToDelete?.isActive !== false;
                           return (
-                            <div key={day.value} className="flex items-center gap-1">
+                            <div
+                              key={day.value}
+                              className={`flex flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 text-left ${
+                                isActive && isScheduleActive
+                                  ? "border-[#0D8252] bg-emerald-50/70 text-[#0F172A]"
+                                  : "border-[#E2E8F0] bg-white hover:border-emerald-200 hover:bg-emerald-50/30"
+                              }`}
+                            >
                               <button
                                 type="button"
-                                onClick={() => isRecurringClass && setSelectedScheduleDay(day.value)}
-                                className={`flex flex-1 items-center gap-3 rounded-md border p-3 text-left ${
-                                  isActive
-                                    ? "border-blue-500 bg-blue-50 text-blue-900"
-                                    : "border-gray-200 bg-white hover:border-blue-300"
-                                }`}
+                                onClick={() => {
+                                  if (!isRecurringClass) return;
+                                  setSelectedScheduleDay(day.value);
+                                  setSelectedSchedule(daySchedules[0] || null);
+                                  if (daySchedules[0]) void refreshScheduleSlots(daySchedules[0]);
+                                }}
+                                className="rounded-lg flex min-w-0 flex-1 items-center gap-2 text-left"
                               >
-                                <CalendarClock size={20} className={isActive ? "text-blue-600" : "text-gray-500"} />
+                                <CalendarClock size={16} className={isActive && isScheduleActive ? "text-[#0D8252]" : "text-[#94A3B8]"} />
                                 <span>
-                                  <span className="block text-sm font-semibold">{day.label}</span>
-                                  <span className="text-xs text-gray-500">{slotCount} Slot{slotCount === 1 ? "" : "s"}</span>
+                                  <span className="block text-xs font-semibold text-[#0F172A]">{day.label}</span>
+                                  <span className="text-[10px] text-[#64748B]">{slotCount} Slot{slotCount === 1 ? "" : "s"}</span>
                                 </span>
                               </button>
-
+                              {scheduleToDelete?.id && canEditClass && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditScheduleDay(scheduleToDelete)}
+                                  disabled={saving}
+                                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#64748B] transition hover:border-[#0D8252] hover:bg-white hover:text-[#0D8252] disabled:cursor-not-allowed disabled:opacity-60"
+                                  aria-label={`Edit ${day.label} schedule`}
+                                >
+                                  <Edit size={15} />
+                                </button>
+                              )}
+                              {scheduleToDelete?.id && canDeleteClass && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteScheduleDay(scheduleToDelete)}
+                                  disabled={saving}
+                                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-rose-100 text-rose-500 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  aria-label={`Delete ${day.label} schedule`}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
                             </div>
                           );
                         })}
                       </div>
                     </div>
 
-                    <div className="p-4">
-                      <div className="mb-4 flex items-center justify-between gap-3">
-                        <h3 className="font-semibold text-gray-950">
+                    <div className="p-3 sm:p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-bold text-[#0F172A]">
                           {isRecurringClass ? `${dayName(activeScheduleDay)} Slots` : "Class Slots"}
                         </h3>
                         {canCreateClass && !isMember && (
                           <button
                             type="button"
+                            disabled={!canAddSlot}
                             onClick={() => {
-                              setScheduleModalEdit({
-                                classId: selectedClass.id,
-                                scheduleId: isRecurringClass ? activeSlotSchedule?.id || "" : "",
-                                dayOfWeek: activeScheduleDay || "1",
-                              });
+                              setScheduleModalEdit(null);
                               setScheduleModalPurpose("slot");
                               setScheduleModalOpen(true);
                             }}
-                            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#0D8252] px-2.5 text-[10px] font-bold text-white shadow-sm transition hover:bg-[#086B43] disabled:cursor-not-allowed disabled:bg-[#CBD5E1] disabled:text-white disabled:shadow-none"
                           >
                             <Plus size={14} />
                             Add Slot
@@ -1514,6 +1670,8 @@ export default function TrainerSchedule() {
                       </div>
 
                       <div className="space-y-3">
+                        {selectedDaySlotLoading && <p className="text-xs text-[#64748B]">Loading slots...</p>}
+                        {selectedDaySlotError && <p role="alert" className="text-xs text-rose-600">{selectedDaySlotError}</p>}
                         {selectedDaySlots.map((slot) => {
                           const isSelectedSlot = selectedSlot?.id === slot.id;
                           return (
@@ -1522,123 +1680,131 @@ export default function TrainerSchedule() {
                               onClick={() => {
                                 setSelectedSchedule(slot.schedule || null);
                                 setSelectedSlot(slot);
+                                if (slot.schedule) void refreshScheduleSlots(slot.schedule);
                                 if (slot?.id) setAssignSlotId(slot.id);
                               }}
-                              className={`cursor-pointer rounded-lg border p-4 transition hover:bg-gray-50 ${
-                                isSelectedSlot ? "border-blue-300 bg-blue-50/40" : "border-gray-200 bg-white"
+                              className={`cursor-pointer rounded-lg border p-3 transition hover:bg-[#FBFCFD] ${
+                                isSelectedSlot ? "border-[#0D8252] bg-emerald-50/30" : "border-[#E2E8F0] bg-white"
                               }`}
                             >
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex items-start gap-3">
-                                  <Clock3 size={22} className="mt-0.5 text-gray-600" />
-                                  <div>
-                                    <p className="font-semibold text-gray-950">
-                                    {dayName(slot.dayOfWeek || slot.schedule?.dayOfWeek || activeScheduleDay || slot.raw?.dayOfWeek || "") !== "-"
-                                      ? `${dayName(slot.dayOfWeek || slot.schedule?.dayOfWeek || activeScheduleDay || slot.raw?.dayOfWeek || "")} • `
-                                      : ""}
-                                    {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
-                                  </p>
-                                    <p className="mt-2 text-sm text-gray-500">
-                                      Capacity: {slot.capacity || "-"} <span className="mx-2">|</span> Booked: {slot.bookedCount} {slot.remainingSpots !== "" ? <><span className="mx-2">|</span> Remaining: {slot.remainingSpots}</> : ""}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className={`rounded px-3 py-1 text-xs font-semibold ${slot.isFull ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{slot.isFull ? "Full" : "Active"}</span>
-                                  {isMember && (
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        handleBookClass(selectedClass.id, slot);
-                                      }}
-                                      className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-                                    >
-                                      <CalendarCheck size={14} />
-                                      Book
-                                    </button>
-                                  )}
-                                  {canManageClasses && (
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        loadSlotMembers(slot.id);
-                                      }}
-                                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                                    >
-                                      <Users size={14} />
-                                      Members
-                                    </button>
-                                  )}
-                                  { !isMember && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleEditSchedule({
-                                            ...slot,
-                                            classId: selectedClass.id,
-                                            scheduleId: slot.scheduleId || slot.schedule?.id || "",
-                                            dayOfWeek: slot.schedule?.dayOfWeek,
-                                          });
-                                        }}
-                                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-300 text-blue-700 hover:bg-blue-50"
-                                        aria-label="Edit slot"
-                                      >
-                                        <Edit3 size={16} />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleDeleteSchedule(slot);
-                                        }}
-                                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-300 text-red-600 hover:bg-red-50"
-                                        aria-label="Delete slot"
-                                      >
-                                        <Trash2 size={16} />
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
+                              <div className="flex items-start gap-2">
+                                <Clock3 size={13} className="mt-0.5 shrink-0 text-[#94A3B8]" />
+                                <p className="text-xs font-bold text-[#0F172A]">
+                                  {dayName(slot.dayOfWeek || slot.schedule?.dayOfWeek || activeScheduleDay || slot.raw?.dayOfWeek || "") !== "-"
+                                    ? `${dayName(slot.dayOfWeek || slot.schedule?.dayOfWeek || activeScheduleDay || slot.raw?.dayOfWeek || "")} • `
+                                    : ""}
+                                  {formatTime(slot.startTime)} - {formatTime(slot.endTime)}
+                                </p>
                               </div>
+
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-semibold ring-1 ${slot.isFull ? "bg-red-50 text-red-700 ring-red-200" : "bg-emerald-50 text-emerald-700 ring-emerald-200"}`}>
+                                  {slot.isFull ? "Full" : "Active"}
+                                </span>
+                                {isMember && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleBookClass(selectedClass.id, slot);
+                                    }}
+                                    className="inline-flex h-7 items-center gap-1 rounded-lg bg-[#0D8252] px-2.5 text-[10px] font-bold text-white transition hover:bg-[#086B43]"
+                                  >
+                                    <CalendarCheck size={13} />
+                                    Book
+                                  </button>
+                                )}
+                                {canManageClasses && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      loadSlotMembers(slot.id);
+                                    }}
+                                    className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#E2E8F0] px-2.5 text-[10px] font-bold text-[#475569] hover:bg-[#F8FAFC]"
+                                  >
+                                    <Users size={13} />
+                                    Members
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="mt-3 border-t border-[#EEF2F4] pt-2">
+                                <p className="text-[10px] text-[#64748B]">
+                                  Capacity: <span className="font-semibold text-[#0F172A]">{slot.capacity || "-"}</span>
+                                  <span className="mx-2 text-[#CBD5E1]">|</span>
+                                  Booked: <span className="font-semibold text-[#0F172A]">{slot.bookedCount}</span>
+                                  {slot.remainingSpots !== "" ? <><span className="mx-2 text-[#CBD5E1]">|</span> Remaining: <span className="font-semibold text-[#0D8252]">{slot.remainingSpots}</span></> : ""}
+                                </p>
+                              </div>
+
+                              {!isMember && (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleEditSchedule({
+                                        ...slot,
+                                        classId: selectedClass.id,
+                                        scheduleId: slot.scheduleId || slot.schedule?.id || "",
+                                        dayOfWeek: slot.schedule?.dayOfWeek,
+                                      });
+                                    }}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#64748B] hover:border-[#0D8252] hover:bg-emerald-50 hover:text-[#0D8252]"
+                                    aria-label="Edit slot"
+                                  >
+                                    <Edit size={15} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleDeleteSchedule(slot);
+                                    }}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-rose-100 text-rose-500 hover:bg-rose-50"
+                                    aria-label="Delete slot"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
-                        {!selectedDaySlots.length && (
+                        {!selectedDaySlots.length && !selectedDaySlotLoading && !selectedDaySlotError && (
                           <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
                             No slots found for this selection.
                           </p>
                         )}
                       </div>
 
-                      {slotMembersSlotId && slotMembers.length > 0 && (
+                      {slotMembersSlotId && (
                         <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
                           <div className="mb-3 flex items-center justify-between">
                             <h4 className="text-sm font-semibold text-gray-950">Booked Members</h4>
                             <button
                               type="button"
-                              onClick={() => { setSlotMembers([]); setSlotMembersSlotId(null); }}
-                              className="text-xs text-gray-500 hover:text-gray-700"
+                              onClick={() => { setSlotMembers([]); setSlotMembersSlotId(null); setSlotMembersError(""); }}
+                              className="rounded-lg text-xs text-gray-500 hover:text-gray-700"
                             >
                               Close
                             </button>
                           </div>
                           <div className="space-y-2">
-                            {slotMembers.map((member) => (
+                            {slotMembersLoading && <p className="py-3 text-center text-sm text-gray-500">Loading booked members...</p>}
+                            {slotMembersError && <p role="alert" className="py-3 text-center text-sm text-rose-600">{slotMembersError}</p>}
+                            {!slotMembersLoading && !slotMembersError && !slotMembers.length && <p className="py-3 text-center text-sm text-gray-500">No booked members found for this slot.</p>}
+                            {!slotMembersLoading && !slotMembersError && slotMembers.map((member) => (
                               <div key={member.id || member.userId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
                                 <div>
-                                  <p className="font-medium text-gray-950">{member.user?.name || member.name || "Member"}</p>
-                                  {member.user?.email && <p className="text-xs text-gray-500">{member.user.email}</p>}
+                                  <p className="font-medium text-gray-950">{member.user?.name || member.name || member.memberName || "Member"}</p>
+                                  {(member.user?.email || member.memberEmail) && <p className="text-xs text-gray-500">{member.user?.email || member.memberEmail}</p>}
                                 </div>
                                 <span className="text-xs text-gray-500">
                                   Booking date: {formatDate(getBookingDateValue(member))}
                                 </span>
-                                <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(member.status || member.attendanceStatus || "BOOKED")}`}>
-                                  {titleCase(member.status || member.attendanceStatus || "BOOKED")}
-                                </span>
+                                <StatusBadge status={member.status || member.attendanceStatus || "BOOKED"} label={titleCase(member.status || member.attendanceStatus || "BOOKED")} />
                               </div>
                             ))}
                           </div>
@@ -1648,8 +1814,8 @@ export default function TrainerSchedule() {
                   </div>
                 )}
                 {activeTab === "details" && (
-                  <div className="space-y-4">
-                    <div className="grid gap-3 md:grid-cols-4">
+                  <div className="space-y-3 p-3 sm:p-4">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       {[
                         { label: "Total Bookings", value: classBookings.length || 0, icon: Users, tone: "bg-blue-50 text-blue-700" },
                         { label: "Schedules", value: selectedSchedules.length, icon: CalendarClock, tone: "bg-emerald-50 text-emerald-700" },
@@ -1658,18 +1824,20 @@ export default function TrainerSchedule() {
                       ].map((metric) => {
                         const MetricIcon = metric.icon;
                         return (
-                          <div key={metric.label} className={`rounded-md p-4 text-center ${metric.tone}`}>
-                            <MetricIcon size={22} className="mx-auto mb-2" />
-                            <p className="text-2xl font-bold text-gray-950">{metric.value}</p>
-                            <p className="mt-1 text-xs text-gray-500">{metric.label}</p>
+                          <div key={metric.label} className={`min-h-[108px] rounded-xl border border-[#E2E8F0] p-3 ${metric.tone}`}>
+                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80">
+                              <MetricIcon size={15} />
+                            </span>
+                            <p className="mt-3 text-2xl font-extrabold leading-none text-[#0F172A]">{metric.value}</p>
+                            <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-[#64748B]">{metric.label}</p>
                           </div>
                         );
                       })}
                     </div>
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <h4 className="text-sm font-semibold text-gray-950">Schedule summary</h4>
-                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 ring-1 ring-gray-200">
+                    <div className="rounded-xl border border-[#E2E8F0] bg-white p-3 shadow-[0_1px_4px_rgba(15,23,42,0.04)] sm:p-4">
+                      <div className="flex items-center justify-between gap-3 border-b border-[#EEF2F4] pb-2">
+                        <h4 className="text-sm font-bold text-[#0F172A]">Schedule summary</h4>
+                        <span className="rounded-full border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1 text-[10px] font-semibold text-[#475569]">
                           {selectedSchedules.length} day{selectedSchedules.length === 1 ? "" : "s"}
                         </span>
                       </div>
@@ -1678,24 +1846,24 @@ export default function TrainerSchedule() {
                           selectedSchedules.map((schedule) => {
                             const scheduleSlots = schedule.slots || [];
                             return (
-                              <div key={schedule.id} className="flex flex-col gap-1 rounded-md bg-white p-3 text-sm text-gray-700 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                  <p className="font-semibold text-gray-950">{dayName(schedule.dayOfWeek || schedule.raw?.dayOfWeek || "")}</p>
-                                  <p className="text-xs text-gray-500">{scheduleSlots.length} slot{scheduleSlots.length === 1 ? "" : "s"}</p>
+                              <div key={schedule.id} className="flex flex-col gap-3 rounded-xl border border-[#EEF2F4] bg-[#FBFCFD] p-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-[#0F172A]">{dayName(schedule.dayOfWeek || schedule.raw?.dayOfWeek || "")}</p>
+                                  <p className="mt-0.5 text-[10px] text-[#64748B]">{scheduleSlots.length} slot{scheduleSlots.length === 1 ? "" : "s"}</p>
                                 </div>
-                                <div className="text-xs text-gray-500">
+                                <div className="w-fit rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[#475569]">
                                   {scheduleSlots.length
                                     ? scheduleSlots
-                                        .slice(0, 3)
-                                        .map((slot) => `${formatTime(slot.startTime)}-${formatTime(slot.endTime)}`)
-                                        .join(" • ")
+                                      .slice(0, 3)
+                                      .map((slot) => `${formatTime(slot.startTime)}-${formatTime(slot.endTime)}`)
+                                      .join(" • ")
                                     : "No slots"}
                                 </div>
                               </div>
                             );
                           })
                         ) : (
-                          <p className="rounded-md border border-dashed border-gray-300 bg-white p-3 text-center text-sm text-gray-500">
+                          <p className="rounded-lg border border-dashed border-[#DDE5EF] bg-[#FBFCFD] p-4 text-center text-xs text-[#64748B]">
                             No schedule details available for this class yet.
                           </p>
                         )}
@@ -1705,10 +1873,10 @@ export default function TrainerSchedule() {
                 )}
 
                 {activeTab === "bookings" && (
-                  <div className="space-y-4 p-4">
+                  <div className="space-y-3 p-3 sm:p-4">
                     <div>
-                      <h3 className="text-lg font-bold text-gray-950">Bookings</h3>
-                      <p className="mt-1 text-xs text-gray-500">Manage members enrolled in this class</p>
+                      <h3 className="text-sm font-bold text-[#0F172A]">Bookings</h3>
+                      <p className="mt-0.5 text-[10px] text-[#64748B]">Manage members enrolled in this class</p>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1719,69 +1887,105 @@ export default function TrainerSchedule() {
                         ["Cancelled", bookingSummary.cancelled, XCircle, "border-red-100 bg-red-50/40 text-red-700"],
                       ].map(([label, value, metricIcon, tone]) => {
                         const MetricIcon = metricIcon;
-                        return <div key={label} className={`flex items-center gap-3 rounded-lg border p-4 ${tone}`}>
-                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white"><MetricIcon size={18} /></span>
-                          <div><p className="text-xl font-bold text-gray-950">{value}</p><p className="text-[11px] text-gray-500">{label}</p></div>
+                        return <div key={label} className={`min-h-[108px] rounded-xl border p-3 ${tone}`}>
+                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80"><MetricIcon size={15} /></span>
+                          <p className="mt-3 text-2xl font-extrabold leading-none text-[#0F172A]">{value}</p>
+                          <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-[#64748B]">{label}</p>
                         </div>;
                       })}
                     </div>
 
-                    <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-3">
-                      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-[10rem_12rem_10rem_minmax(12rem,1fr)_auto] 2xl:items-end">
-                        <label className="grid min-w-0 gap-1 text-[11px] font-semibold text-gray-500">Date
-                          <select value={bookingDateFilter} onChange={(event) => setBookingDateFilter(event.target.value)} className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-normal text-gray-900">
-                            <option value="">All dates</option>
-                            {bookingDatesForFilter.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}
-                          </select>
-                        </label>
-                        <label className="grid min-w-0 gap-1 text-[11px] font-semibold text-gray-500">Slot
-                          <select value={bookingSlotFilter} onChange={(event) => setBookingSlotFilter(event.target.value)} className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-normal text-gray-900">
-                            <option value="">All slots</option>
-                            {visibleSlots.map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}
-                          </select>
-                        </label>
-                        <label className="grid min-w-0 gap-1 text-[11px] font-semibold text-gray-500">Status
-                          <select value={bookingStatusFilter} onChange={(event) => setBookingStatusFilter(event.target.value)} className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-normal text-gray-900">
-                            <option value="">All status</option><option value="booked">Booked</option><option value="pending">Pending</option><option value="present">Present</option><option value="late">Late</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option>
-                          </select>
-                        </label>
-                        <label className="flex h-10 min-w-0 items-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-500">
-                          <Search size={16} /><input value={bookingSearch} onChange={(event) => setBookingSearch(event.target.value)} placeholder="Search member..." className="min-w-0 flex-1 bg-transparent outline-none" />
-                        </label>
-                        {!isMember && <button type="button" onClick={() => {
-                          const defaultSlot = visibleSlots.find((slot) => slot.id === (bookingSlotFilter || selectedSlot?.id)) || visibleSlots[0];
-                          const nextDate = bookingDateFilter || selectedDate || toDateInputValue();
-                          setAssignSlotId(defaultSlot?.id || ""); setAssignBookingDate(nextDate); setAvailableMembers([]); setShowAssignPanel(true);
-                          if (defaultSlot?.id) void loadAvailableMembers(defaultSlot.id, nextDate);
-                        }} className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 xl:w-auto"><Plus size={16} />Assign Member</button>}
-                      </div>
+                    <div className="flex flex-col gap-3 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 sm:flex-row sm:items-center">
+                      <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-xs text-[#64748B]">
+                        <Search size={13} />
+                        <input value={bookingSearch} onChange={(event) => setBookingSearch(event.target.value)} placeholder="Search member..." className="min-w-0 flex-1 bg-transparent text-[10px] outline-none placeholder:text-[#94A3B8]" />
+                      </label>
+                      {!isMember && <button type="button" onClick={() => {
+                        const defaultSlot = visibleSlots.find((slot) => slot.id === (bookingSlotFilter || selectedSlot?.id)) || visibleSlots[0];
+                        const nextDate = bookingDateFilter || selectedDate || toDateInputValue();
+                        setAssignSlotId(defaultSlot?.id || ""); setAssignBookingDate(nextDate); setAvailableMembers([]); setShowAssignPanel(true);
+                        if (defaultSlot?.id) void loadAvailableMembers(defaultSlot.id, nextDate);
+                      }} className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-[#0D8252] px-3 text-[10px] font-bold text-white shadow-sm transition hover:bg-[#086B43] sm:w-auto"><Plus size={13} />Assign Member</button>}
                     </div>
 
-                    <div className="overflow-visible rounded-lg border border-gray-200 bg-white">
-                      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3"><h4 className="text-sm font-semibold text-gray-950">Booked Members ({filteredBookingRows.length})</h4><span className="text-xs text-gray-500">{isRecurringClass ? formatDate(bookingDateFilter) : "Class bookings"}</span></div>
-                      <div className="hidden overflow-x-auto md:block">
-                        <table className="w-full min-w-[760px] text-left text-xs">
-                          <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3 font-semibold">Member</th><th className="px-4 py-3 font-semibold">Slot</th><th className="px-4 py-3 font-semibold">Date</th><th className="px-4 py-3 font-semibold">Booking Status</th><th className="px-4 py-3 font-semibold">Attendance</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
+                    <div className="overflow-visible rounded-xl border border-[#E5EAF0] bg-white shadow-[0_1px_4px_rgba(15,23,42,0.06)]">
+                      <div className="flex flex-col gap-3 border-b border-[#EEF2F4] px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <h4 className="text-sm font-bold text-[#0F172A]">Booked Members ({filteredBookingRows.length})</h4>
+                          <span className="text-[10px] text-[#64748B]">{isRecurringClass ? formatDate(bookingDateFilter) : "Class bookings"}</span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <label className="grid min-w-0 gap-1 text-[9px] font-bold uppercase tracking-wide text-[#64748B]">Date
+                            <select value={bookingDateFilter} onChange={(event) => setBookingDateFilter(event.target.value)} className="h-8 min-w-28 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-[10px] font-semibold normal-case text-[#475569] outline-none">
+                              <option value="">All dates</option>
+                              {bookingDatesForFilter.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}
+                            </select>
+                          </label>
+                          <label className="grid min-w-0 gap-1 text-[9px] font-bold uppercase tracking-wide text-[#64748B]">Slot
+                            <select value={bookingSlotFilter} onChange={(event) => setBookingSlotFilter(event.target.value)} className="h-8 min-w-32 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-[10px] font-semibold normal-case text-[#475569] outline-none">
+                              <option value="">All slots</option>
+                              {visibleSlots.map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}
+                            </select>
+                          </label>
+                          <label className="grid min-w-0 gap-1 text-[9px] font-bold uppercase tracking-wide text-[#64748B]">Status
+                            <select value={bookingStatusFilter} onChange={(event) => setBookingStatusFilter(event.target.value)} className="h-8 min-w-28 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-[10px] font-semibold normal-case text-[#475569] outline-none">
+                              <option value="">All status</option><option value="booked">Booked</option><option value="pending">Pending</option><option value="present">Present</option><option value="late">Late</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="hidden overflow-hidden md:block">
+                        <table className="w-full table-fixed text-left text-[10px]">
+                          <thead className="bg-[#FBFCFD] text-[9px] font-bold uppercase tracking-wide text-[#64748B] shadow-sm">
+                            <tr>
+  <th class="w-[25%] px-3 py-4">Member</th>
+  <th class="w-[15%] px-2 py-3">Slot</th>
+  <th class="w-[15%] px-2 py-3">Date</th>
+  <th class="w-[15%] px-2 py-3">Booking</th>
+  <th class="w-[20%] px-2 py-3">Attendance</th>
+  <th class="w-[10%] px-2 py-3">Actions</th>
+</tr>
+                          </thead>
                           <tbody className="divide-y divide-gray-100">
                             {filteredBookingRows.map((booking) => {
                               const bookingKey = booking.id || booking._id || booking.bookingId || `${booking.memberName}-${booking.date}`;
                               const memberEmail = booking.memberEmail || booking.raw?.member?.email || booking.raw?.user?.email || "";
                               const isCancelled = ["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase());
-                              return <tr key={bookingKey} className="hover:bg-blue-50/30">
-                                <td className="px-4 py-3"><div className="flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[11px] font-bold text-blue-700">{(booking.memberName || "M").charAt(0).toUpperCase()}</span><div><p className="font-semibold text-gray-900">{booking.memberName || booking.classTitle || "Member"}</p>{memberEmail && <p className="mt-0.5 text-[11px] text-gray-500">{memberEmail}</p>}</div></div></td>
-                                <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</td>
-                                <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatDate(booking.date)}</td>
-                                <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus || "BOOKED")}</span></td>
-                                <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.attendanceStatus || "PENDING")}`}>{titleCase(booking.attendanceStatus || "PENDING")}</span></td>
-                                <td className="relative px-4 py-3 text-right"><button type="button" onClick={() => setOpenBookingActions(openBookingActions === bookingKey ? null : bookingKey)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-900" aria-label={`Actions for ${booking.memberName || "booking"}`}><MoreVertical size={17} /></button>
-                                  {openBookingActions === bookingKey && <div className="absolute right-4 top-11 z-20 w-48 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-xl">
-                                    {!isMember && canManageClasses && <button type="button" onClick={() => { setAttendanceModalEdit({ bookingId: bookingKey, status: booking.attendanceStatus || "PRESENT" }); setAttendanceModalOpen(true); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><ClipboardCheck size={14} />Mark Attendance</button>}
-                                    {!isMember && booking.slotId && <button type="button" onClick={() => { setChangeSlotBooking(booking); setChangeSlotTarget(""); setChangeSlotType("temporary"); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><RefreshCw size={14} />Change Slot</button>}
-                                    {!isMember && booking.slotId && <button type="button" onClick={async () => { setSlotHistoryBooking(booking); setSlotChanges([]); setOpenBookingActions(null); await loadBookingSlotChanges(bookingKey); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><CalendarClock size={14} />View Slot History</button>}
-                                    {!isCancelled && <button type="button" onClick={() => { void handleCancelBooking(booking); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-red-600 hover:bg-red-50"><XCircle size={14} />Cancel Booking</button>}
-                                  </div>}
+                              return <Fragment key={bookingKey}>
+                                <tr className="border-t border-[#EEF2F4] text-[10px] text-[#475569] transition hover:bg-[#FBFCFD]">
+                                <td className="px-2.5 py-2.5"><div className="flex min-w-0 items-center gap-2">
+                                  {/* <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[10px] font-bold text-blue-700">
+                                    {(booking.memberName || "M").charAt(0).toUpperCase()}</span> */}
+                                    <div className="min-w-0"><p className="truncate text-xs font-bold text-[#0F172A]">{booking.memberName || booking.classTitle || "Member"}</p>{memberEmail && <p className="truncate text-[9px] text-[#94A3B8] font-regular">{memberEmail}</p>}</div></div></td>
+                                <td className="truncate whitespace-nowrap px-2 py-2.5 text-[#475569]">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</td>
+                                <td className="truncate whitespace-nowrap px-2 py-2.5 text-[#475569]">{formatDate(booking.date)}</td>
+                                <td className="px-2 py-2.5"><StatusBadge status={booking.bookingStatus || "BOOKED"} label={titleCase(booking.bookingStatus || "BOOKED")} /></td>
+                                <td className="px-2 py-2.5"><StatusBadge status={booking.attendanceStatus || "PENDING"} label={titleCase(booking.attendanceStatus || "PENDING")} /></td>
+                                <td className="px-2 py-2.5 text-left">
+                                  <button type="button" onClick={() => setOpenBookingActions(openBookingActions === bookingKey ? null : bookingKey)} className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]" aria-label={`Actions for ${booking.memberName || "booking"}`}><MoreVertical size={16} /></button>
                                 </td>
-                              </tr>;
+                              </tr>
+                              {openBookingActions === bookingKey && (
+                                <tr className="bg-[#FBFCFD]">
+                                  <td colSpan={6} className="border-t border-[#EEF2F4] px-2 py-2.5">
+                                    <div className="flex flex-wrap items-center justify-start gap-2 rounded-lg border border-[#E2E8F0] bg-white p-2">
+                                      {!isMember && canManageClasses && (
+                                        <button type="button" onClick={() => { setAttendanceModalEdit({ bookingId: bookingKey, status: booking.attendanceStatus || "PRESENT" }); setAttendanceModalOpen(true); }} className="inline-flex h-7 items-center gap-1 rounded-lg bg-[#071225] px-2.5 text-[10px] font-bold text-white hover:bg-[#0F172A]"><ClipboardCheck size={12} />Attendance</button>
+                                      )}
+                                      {!isMember && booking.slotId && (
+                                        <button type="button" onClick={() => { setChangeSlotBooking(booking); setChangeSlotTarget(""); setChangeSlotType("temporary"); }} className="inline-flex h-7 items-center gap-1 rounded-lg border border-blue-200 bg-white px-2.5 text-[10px] font-bold text-blue-700 hover:bg-blue-50"><RefreshCw size={12} />Change Slot</button>
+                                      )}
+                                      {!isMember && booking.slotId && (
+                                        <button type="button" onClick={async () => { setSlotHistoryBooking(booking); setSlotChanges([]); await loadBookingSlotChanges(bookingKey); }} className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#E2E8F0] bg-white px-2.5 text-[10px] font-bold text-[#475569] hover:bg-[#F8FAFC]"><CalendarClock size={12} />Slot Changes History</button>
+                                      )}
+                                      {!isCancelled && (
+                                        <button type="button" onClick={() => void handleCancelBooking(booking)} className="inline-flex h-7 items-center gap-1 rounded-lg border border-rose-100 bg-white px-2.5 text-[10px] font-bold text-rose-500 hover:bg-rose-50"><XCircle size={12} />Cancel</button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                              </Fragment>;
                             })}
                           </tbody>
                         </table>
@@ -1795,31 +1999,69 @@ export default function TrainerSchedule() {
                             <div className="flex items-start gap-3 pr-8">
                               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(booking.memberName || "M").charAt(0).toUpperCase()}</span>
                               <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-gray-900">{booking.memberName || booking.classTitle || "Member"}</p>{memberEmail && <p className="mt-0.5 truncate text-xs text-gray-500">{memberEmail}</p>}</div>
-                              <button type="button" onClick={() => setOpenBookingActions(openBookingActions === bookingKey ? null : bookingKey)} className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100" aria-label={`Actions for ${booking.memberName || "booking"}`}><MoreVertical size={17} /></button>
+                              <button type="button" onClick={() => setOpenBookingActions(openBookingActions === bookingKey ? null : bookingKey)} className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100" aria-label={`Actions for ${booking.memberName || "booking"}`}><MoreVertical size={17} /></button>
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
                               <div><p className="text-gray-500">Slot</p><p className="mt-1 font-medium text-gray-800">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</p></div>
                               <div><p className="text-gray-500">Date</p><p className="mt-1 font-medium text-gray-800">{formatDate(booking.date)}</p></div>
-                              <div><p className="text-gray-500">Booking</p><span className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus || "BOOKED")}</span></div>
-                              <div><p className="text-gray-500">Attendance</p><span className={`mt-1 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${getStatusClass(booking.attendanceStatus || "PENDING")}`}>{titleCase(booking.attendanceStatus || "PENDING")}</span></div>
+                              <div><p className="text-gray-500">Booking</p><StatusBadge status={booking.bookingStatus || "BOOKED"} label={titleCase(booking.bookingStatus || "BOOKED")} /></div>
+                              <div><p className="text-gray-500">Attendance</p><StatusBadge status={booking.attendanceStatus || "PENDING"} label={titleCase(booking.attendanceStatus || "PENDING")} /></div>
                             </div>
                             {openBookingActions === bookingKey && <div className="absolute right-3 top-12 z-20 w-48 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-xl">
-                              {!isMember && canManageClasses && <button type="button" onClick={() => { setAttendanceModalEdit({ bookingId: bookingKey, status: booking.attendanceStatus || "PRESENT" }); setAttendanceModalOpen(true); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><ClipboardCheck size={14} />Mark Attendance</button>}
-                              {!isMember && booking.slotId && <button type="button" onClick={() => { setChangeSlotBooking(booking); setChangeSlotTarget(""); setChangeSlotType("temporary"); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><RefreshCw size={14} />Change Slot</button>}
-                              {!isMember && booking.slotId && <button type="button" onClick={async () => { setSlotHistoryBooking(booking); setSlotChanges([]); setOpenBookingActions(null); await loadBookingSlotChanges(bookingKey); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><CalendarClock size={14} />View Slot History</button>}
-                              {!isCancelled && <button type="button" onClick={() => { void handleCancelBooking(booking); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-red-600 hover:bg-red-50"><XCircle size={14} />Cancel Booking</button>}
+                              {!isMember && canManageClasses && <button type="button" onClick={() => { setAttendanceModalEdit({ bookingId: bookingKey, status: booking.attendanceStatus || "PRESENT" }); setAttendanceModalOpen(true); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><ClipboardCheck size={14} />Mark Attendance</button>}
+                              {!isMember && booking.slotId && <button type="button" onClick={() => { setChangeSlotBooking(booking); setChangeSlotTarget(""); setChangeSlotType("temporary"); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><RefreshCw size={14} />Change Slot</button>}
+                              {!isMember && booking.slotId && <button type="button" onClick={async () => { setSlotHistoryBooking(booking); setSlotChanges([]); setOpenBookingActions(null); await loadBookingSlotChanges(bookingKey); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"><CalendarClock size={14} />View Slot History</button>}
+                              {!isCancelled && <button type="button" onClick={() => { void handleCancelBooking(booking); setOpenBookingActions(null); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-red-600 hover:bg-red-50"><XCircle size={14} />Cancel Booking</button>}
                             </div>}
                           </div>;
                         })}
                       </div>
-                      {!filteredBookingRows.length && <p className="border-t border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No bookings match these filters.</p>}
+                      {!filteredBookingRows.length && <p className="border-t border-dashed border-gray-200 p-8 text-center text-xs text-gray-500">No bookings match these filters.</p>}
                     </div>
 
-                    {showAssignPanel && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4" onMouseDown={(event) => event.target === event.currentTarget && setShowAssignPanel(false)}><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Assign Member</h3><p className="mt-1 text-xs text-gray-500">Only members available for this slot and date are shown.</p></div><button type="button" onClick={() => setShowAssignPanel(false)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 grid gap-3"><label className="grid gap-1 text-xs font-semibold text-gray-600">Date<input type="date" value={assignBookingDate} onChange={(event) => setAssignBookingDate(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal" /></label><label className="grid gap-1 text-xs font-semibold text-gray-600">Time Slot<select value={assignSlotId} onChange={(event) => { setAssignSlotId(event.target.value); setAvailableMembers([]); }} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select slot</option>{visibleSlots.map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><button type="button" onClick={() => void loadAvailableMembers(assignSlotId, assignBookingDate)} disabled={!assignSlotId || saving} className="h-10 rounded-md border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">Find Available Members</button></div><div className="mt-4 max-h-64 space-y-2 overflow-y-auto">{availableMembers.map((member) => <div key={member.id || member.userId} className="flex items-center justify-between rounded-md border border-gray-200 p-3"><div><p className="text-sm font-semibold text-gray-900">{member.name || member.fullName}</p><p className="text-xs text-gray-500">{member.email}</p></div><button type="button" onClick={() => void handleAssignMember(member.id || member.userId)} disabled={saving} className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Assign</button></div>)}{assignSlotId && !availableMembers.length && <p className="py-5 text-center text-xs text-gray-500">Find available members for this slot.</p>}</div></div></div>}
+                    {legacyBookingModalMarkupEnabled && <>
+                    {showAssignPanel && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4" onMouseDown={(event) => event.target === event.currentTarget && setShowAssignPanel(false)}><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Assign Member</h3><p className="mt-1 text-xs text-gray-500">Only members available for this slot and date are shown.</p></div><button type="button" onClick={() => setShowAssignPanel(false)} className="rounded-lg text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 grid gap-3"><label className="grid gap-1 text-xs font-semibold text-gray-600">Date<input type="date" value={assignBookingDate} onChange={(event) => setAssignBookingDate(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal" /></label><label className="grid gap-1 text-xs font-semibold text-gray-600">Time Slot<select value={assignSlotId} onChange={(event) => { setAssignSlotId(event.target.value); setAvailableMembers([]); }} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select slot</option>{visibleSlots.map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><button type="button" onClick={() => void loadAvailableMembers(assignSlotId, assignBookingDate)} disabled={!assignSlotId || saving} className="h-10 rounded-lg border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">Find Available Members</button></div><div className="mt-4 max-h-64 space-y-2 overflow-y-auto">{availableMembers.map((member) => <div key={member.id || member.userId} className="flex items-center justify-between rounded-md border border-gray-200 p-3"><div><p className="text-sm font-semibold text-gray-900">{member.name || member.fullName}</p><p className="text-xs text-gray-500">{member.email}</p></div><button type="button" onClick={() => void handleAssignMember(member.id || member.userId)} disabled={saving} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Assign</button></div>)}{assignSlotId && !availableMembers.length && <p className="py-5 text-center text-xs text-gray-500">Find available members for this slot.</p>}</div></div></div>}
 
-                    {changeSlotBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Change Slot</h3><p className="mt-1 text-xs text-gray-500">{changeSlotBooking.memberName || "Member"}</p></div><button type="button" onClick={() => setChangeSlotBooking(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 space-y-4"><div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">Current slot: <span className="font-semibold text-gray-900">{formatTime(changeSlotBooking.startTime)} - {formatTime(changeSlotBooking.endTime)}</span></div><label className="grid gap-1 text-xs font-semibold text-gray-600">Change to<select value={changeSlotTarget} onChange={(event) => setChangeSlotTarget(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select new slot</option>{visibleSlots.filter((slot) => slot.id && slot.id !== changeSlotBooking.slotId).map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><div className="space-y-2"><p className="text-xs font-semibold text-gray-600">Change type</p><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "temporary"} onChange={() => setChangeSlotType("temporary")} /> <span><strong>This date only</strong><span className="block text-gray-500">Temporary change</span></span></label><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "permanent"} onChange={() => setChangeSlotType("permanent")} /> <span><strong>Permanently change slot</strong><span className="block text-gray-500">Future booking slot</span></span></label></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-md border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Cancel</button><button type="button" disabled={!changeSlotTarget || saving} onClick={async () => { await handleSlotChange(changeSlotBooking.id || changeSlotBooking.bookingId, changeSlotTarget, changeSlotType === "permanent"); setChangeSlotBooking(null); }} className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Confirm Change</button></div></div></div>}
-                    {changeSlotBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Change Slot</h3><p className="mt-1 text-xs text-gray-500">{changeSlotBooking.memberName || "Member"}</p></div><button type="button" onClick={() => setChangeSlotBooking(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 space-y-4"><div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">Current slot: <span className="font-semibold text-gray-900">{formatTime(changeSlotBooking.startTime)} - {formatTime(changeSlotBooking.endTime)}</span></div><label className="grid gap-1 text-xs font-semibold text-gray-600">Change to<select value={changeSlotTarget} onChange={(event) => setChangeSlotTarget(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select new slot</option>{visibleSlots.filter((slot) => slot.id && slot.id !== changeSlotBooking.slotId).map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><div className="space-y-2"><p className="text-xs font-semibold text-gray-600">Change type</p><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "temporary"} onChange={() => setChangeSlotType("temporary")} /> <span><strong>This date only</strong><span className="block text-gray-500">Temporary change</span></span></label><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "permanent"} onChange={() => setChangeSlotType("permanent")} /> <span><strong>Permanently change slot</strong><span className="block text-gray-500">Future booking slot</span></span></label></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-md border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Cancel</button><button type="button" disabled={!changeSlotTarget || saving} onClick={async () => { await handleSlotChange(changeSlotBooking.id || changeSlotBooking.bookingId, changeSlotTarget, changeSlotType === "permanent"); setChangeSlotBooking(null); }} className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Confirm Change</button></div></div></div>}
-                    {slotHistoryBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Slot Change History</h3><p className="mt-1 text-xs text-gray-500">{slotHistoryBooking.memberName || "Member"} · {formatDate(slotHistoryBooking.date)}</p></div><button type="button" onClick={() => { setSlotHistoryBooking(null); setSlotChanges([]); }} className="text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 max-h-80 space-y-2 overflow-y-auto">{slotChanges.length ? slotChanges.map((change) => <div key={change.id || `${change.bookingId}-${change.createdAt}`} className="rounded-md border border-gray-200 p-3 text-sm"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-900">{change.isPermanent ? "Permanent" : "Temporary"} slot change</p>{change.createdAt && <span className="text-xs text-gray-500">{formatDate(change.createdAt)}</span>}</div><p className="mt-2 text-xs text-gray-600">{formatSlotRange(change.oldSlot || change.previousSlot)} <span className="mx-1">→</span> {formatSlotRange(change.newSlot || change.nextSlot)}</p>{change.date && <p className="mt-1 text-xs text-gray-500">Booking date: {formatDate(change.date)}</p>}</div>) : <p className="py-8 text-center text-sm text-gray-500">No slot changes found for this booking.</p>}</div><div className="mt-5 flex justify-end"><button type="button" onClick={() => { setSlotHistoryBooking(null); setSlotChanges([]); }} className="rounded-md border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Close</button></div></div></div>}
+                    {changeSlotBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Change Slot</h3><p className="mt-1 text-xs text-gray-500">{changeSlotBooking.memberName || "Member"}</p></div><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-lg text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 space-y-4"><div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">Current slot: <span className="font-semibold text-gray-900">{formatTime(changeSlotBooking.startTime)} - {formatTime(changeSlotBooking.endTime)}</span></div><label className="grid gap-1 text-xs font-semibold text-gray-600">Change to<select value={changeSlotTarget} onChange={(event) => setChangeSlotTarget(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select new slot</option>{visibleSlots.filter((slot) => slot.id && slot.id !== changeSlotBooking.slotId).map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><div className="space-y-2"><p className="text-xs font-semibold text-gray-600">Change type</p><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "temporary"} onChange={() => setChangeSlotType("temporary")} /> <span><strong>This date only</strong><span className="block text-gray-500">Temporary change</span></span></label><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "permanent"} onChange={() => setChangeSlotType("permanent")} /> <span><strong>Permanently change slot</strong><span className="block text-gray-500">Future booking slot</span></span></label></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Cancel</button><button type="button" disabled={!changeSlotTarget || saving} onClick={async () => { await handleSlotChange(changeSlotBooking.id || changeSlotBooking.bookingId, changeSlotTarget, changeSlotType === "permanent"); setChangeSlotBooking(null); }} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Confirm Change</button></div></div></div>}
+                    {changeSlotBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Change Slot</h3><p className="mt-1 text-xs text-gray-500">{changeSlotBooking.memberName || "Member"}</p></div><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-lg text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 space-y-4"><div className="rounded-md bg-gray-50 p-3 text-xs text-gray-600">Current slot: <span className="font-semibold text-gray-900">{formatTime(changeSlotBooking.startTime)} - {formatTime(changeSlotBooking.endTime)}</span></div><label className="grid gap-1 text-xs font-semibold text-gray-600">Change to<select value={changeSlotTarget} onChange={(event) => setChangeSlotTarget(event.target.value)} className="h-10 rounded-md border border-gray-300 px-3 text-sm font-normal"><option value="">Select new slot</option>{visibleSlots.filter((slot) => slot.id && slot.id !== changeSlotBooking.slotId).map((slot) => <option key={slot.id} value={slot.id}>{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</option>)}</select></label><div className="space-y-2"><p className="text-xs font-semibold text-gray-600">Change type</p><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "temporary"} onChange={() => setChangeSlotType("temporary")} /> <span><strong>This date only</strong><span className="block text-gray-500">Temporary change</span></span></label><label className="flex items-start gap-2 rounded-md border border-gray-200 p-3 text-xs"><input type="radio" checked={changeSlotType === "permanent"} onChange={() => setChangeSlotType("permanent")} /> <span><strong>Permanently change slot</strong><span className="block text-gray-500">Future booking slot</span></span></label></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setChangeSlotBooking(null)} className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Cancel</button><button type="button" disabled={!changeSlotTarget || saving} onClick={async () => { await handleSlotChange(changeSlotBooking.id || changeSlotBooking.bookingId, changeSlotTarget, changeSlotType === "permanent"); setChangeSlotBooking(null); }} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Confirm Change</button></div></div></div>}
+                    {slotHistoryBooking && <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-950/40 p-4"><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold text-gray-950">Slot Change History</h3><p className="mt-1 text-xs text-gray-500">{slotHistoryBooking.memberName || "Member"} · {formatDate(slotHistoryBooking.date)}</p></div><button type="button" onClick={() => { setSlotHistoryBooking(null); setSlotChanges([]); }} className="rounded-lg text-gray-400 hover:text-gray-700" aria-label="Close"><XCircle size={18} /></button></div><div className="mt-5 max-h-80 space-y-2 overflow-y-auto">{slotChanges.length ? slotChanges.map((change) => <div key={change.id || `${change.bookingId}-${change.createdAt}`} className="rounded-md border border-gray-200 p-3 text-sm"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-900">{change.isPermanent ? "Permanent" : "Temporary"} slot change</p>{change.createdAt && <span className="text-xs text-gray-500">{formatDate(change.createdAt)}</span>}</div><p className="mt-2 text-xs text-gray-600">{formatSlotRange(change.oldSlot || change.previousSlot)} <span className="mx-1">→</span> {formatSlotRange(change.newSlot || change.nextSlot)}</p>{change.date && <p className="mt-1 text-xs text-gray-500">Booking date: {formatDate(change.date)}</p>}</div>) : <p className="py-8 text-center text-sm text-gray-500">No slot changes found for this booking.</p>}</div><div className="mt-5 flex justify-end"><button type="button" onClick={() => { setSlotHistoryBooking(null); setSlotChanges([]); }} className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Close</button></div></div></div>}
+                    </>}
+                    <AssignMemberModal
+                      isOpen={showAssignPanel}
+                      onClose={() => setShowAssignPanel(false)}
+                      assignBookingDate={assignBookingDate}
+                      setAssignBookingDate={setAssignBookingDate}
+                      assignSlotId={assignSlotId}
+                      setAssignSlotId={setAssignSlotId}
+                      setAvailableMembers={setAvailableMembers}
+                      visibleSlots={visibleSlots}
+                      formatTime={formatTime}
+                      loadAvailableMembers={loadAvailableMembers}
+                      availableMembers={availableMembers}
+                      handleAssignMember={handleAssignMember}
+                      saving={saving}
+                    />
+                    <ChangeSlotModal
+                      isOpen={Boolean(changeSlotBooking)}
+                      onClose={() => setChangeSlotBooking(null)}
+                      booking={changeSlotBooking}
+                      changeSlotTarget={changeSlotTarget}
+                      setChangeSlotTarget={setChangeSlotTarget}
+                      changeSlotType={changeSlotType}
+                      setChangeSlotType={setChangeSlotType}
+                      visibleSlots={visibleSlots}
+                      formatTime={formatTime}
+                      handleSlotChange={handleSlotChange}
+                      saving={saving}
+                    />
+                    <SlotChangesModal
+                      isOpen={Boolean(slotHistoryBooking)}
+                      onClose={() => { setSlotHistoryBooking(null); setSlotChanges([]); }}
+                      booking={slotHistoryBooking}
+                      slotChanges={slotChanges}
+                      formatDate={formatDate}
+                      formatSlotRange={formatSlotRange}
+                    />
                   </div>
                 )}
 
@@ -1871,7 +2113,7 @@ export default function TrainerSchedule() {
                                 }
                               }
                             }}
-                            className={`inline-flex h-11 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold transition ${
+                            className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
                               showAssignPanel
                                 ? "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
                                 : "bg-emerald-600 text-white hover:bg-emerald-700"
@@ -1934,7 +2176,7 @@ export default function TrainerSchedule() {
                             type="button"
                             onClick={() => loadAvailableMembers(assignSlotId, assignBookingDate)}
                             disabled={!assignSlotId || saving}
-                            className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <Users size={16} />
                             Load Available Members
@@ -1952,7 +2194,7 @@ export default function TrainerSchedule() {
                                   type="button"
                                   onClick={() => handleAssignMember(member.id || member.userId)}
                                   disabled={saving}
-                                  className="inline-flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                                 >
                                   <Plus size={14} />
                                   Assign to class
@@ -1977,7 +2219,7 @@ export default function TrainerSchedule() {
                           <button
                             type="button"
                             onClick={() => loadSlotAttendance(slotMembersSlotId)}
-                            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
                           >
                             <ClipboardCheck size={14} />
                             View Attendance
@@ -1990,9 +2232,7 @@ export default function TrainerSchedule() {
                               <span className="text-xs text-gray-500">
                                 Booking date: {formatDate(getBookingDateValue(member))}
                               </span>
-                              <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(member.status || member.attendanceStatus || "BOOKED")}`}>
-                                {titleCase(member.status || member.attendanceStatus || "BOOKED")}
-                              </span>
+                              <StatusBadge status={member.status || member.attendanceStatus || "BOOKED"} label={titleCase(member.status || member.attendanceStatus || "BOOKED")} />
                             </div>
                           ))}
                         </div>
@@ -2006,7 +2246,7 @@ export default function TrainerSchedule() {
                           <button
                             type="button"
                             onClick={() => { setSlotAttendanceRecords([]); setSlotAttendanceSlotId(null); }}
-                            className="text-xs text-gray-500 hover:text-gray-700"
+                            className="rounded-lg text-xs text-gray-500 hover:text-gray-700"
                           >
                             Close
                           </button>
@@ -2015,9 +2255,7 @@ export default function TrainerSchedule() {
                           {slotAttendanceRecords.map((record) => (
                             <div key={record.id || record.bookingId} className="grid gap-2 rounded-md bg-white p-2 text-sm md:grid-cols-[1fr_auto] md:items-center">
                               <span className="font-medium text-gray-950">{record.booking?.user?.name || record.user?.name || record.memberName || "Member"}</span>
-                              <span className={`w-fit rounded px-2 py-0.5 text-xs font-semibold ${getStatusClass(record.status)}`}>
-                                {titleCase(record.status)}
-                              </span>
+                              <StatusBadge status={record.status} label={titleCase(record.status)} />
                             </div>
                           ))}
                         </div>
@@ -2036,11 +2274,9 @@ export default function TrainerSchedule() {
                               <span className="text-gray-500">{(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) ? dayName(booking.dayOfWeek || slotDayOfWeek[booking.slotId]) + " - " : ""}{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span>
                               <span className="text-gray-500">{formatDate(booking.date)}</span>
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>{titleCase(booking.bookingStatus)}</span>
+                                <StatusBadge status={booking.bookingStatus} label={titleCase(booking.bookingStatus)} />
                                 {booking.attendanceStatus && (
-                                  <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
-                                    {titleCase(booking.attendanceStatus)}
-                                  </span>
+                                  <StatusBadge status={booking.attendanceStatus} label={titleCase(booking.attendanceStatus)} />
                                 )}
                               </div>
                             </div>
@@ -2050,7 +2286,7 @@ export default function TrainerSchedule() {
                                   <button
                                     type="button"
                                     onClick={() => handleCancelBooking(booking)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                                    className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
                                   >
                                     <XCircle size={14} />
                                     Cancel
@@ -2066,7 +2302,7 @@ export default function TrainerSchedule() {
                                       });
                                       setAttendanceModalOpen(true);
                                     }}
-                                    className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                                    className="inline-flex items-center gap-1 rounded-lg bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
                                   >
                                     <CheckCircle2 size={14} />
                                     Mark Attendance
@@ -2092,7 +2328,7 @@ export default function TrainerSchedule() {
                                       type="button"
                                       onClick={() => void handleSlotChange(bookingKey, selectedSlotChangeTarget, false)}
                                       disabled={saving || !selectedSlotChangeTarget}
-                                      className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                                      className="inline-flex items-center gap-1 rounded-lg border border-blue-300 px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-60"
                                     >
                                       Temporary
                                     </button>
@@ -2100,14 +2336,14 @@ export default function TrainerSchedule() {
                                       type="button"
                                       onClick={() => void handleSlotChange(bookingKey, selectedSlotChangeTarget, true)}
                                       disabled={saving || !selectedSlotChangeTarget}
-                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
                                     >
                                       Permanent
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => void loadBookingSlotChanges(bookingKey)}
-                                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                      className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                                     >
                                       <RefreshCw size={14} />
                                       Slot Changes
@@ -2131,7 +2367,7 @@ export default function TrainerSchedule() {
                           <button
                             type="button"
                             onClick={() => setSlotChanges([])}
-                            className="text-xs text-gray-500 hover:text-gray-700"
+                            className="rounded-lg text-xs text-gray-500 hover:text-gray-700"
                           >
                             Close
                           </button>
@@ -2178,15 +2414,40 @@ export default function TrainerSchedule() {
                 )}
 
                 {activeTab === "attendance" && (
-                  <div className="space-y-2 p-4">
-                    {classAttendance.map((record) => (
-                      <div key={record.id || `${record.memberName}-${record.timestamp}`} className="grid gap-3 rounded-lg border border-gray-200 p-3 text-sm md:grid-cols-[1fr_10rem_auto] md:items-center">
-                        <span className="font-semibold text-gray-950">{record.memberName}</span>
-                        <span className="text-gray-500">{record.attendanceDate ? formatDate(record.attendanceDate) + " " + formatTime(record.attendanceDate) : record.trainerName || "-"}</span>
-                        <span className={`w-fit rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>{titleCase(record.status)}</span>
+                  <div className="p-3 sm:p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-0.5 pb-3">
+                      <div className="flex items-center gap-2 text-xs">
+                        <h3 className="font-semibold text-[#0F172A]">Attendance Log</h3>
+                        <span className="text-[#CBD5E1]">•</span>
+                        <span className="text-[#64748B]">{classAttendance.length} Sessions tracked</span>
                       </div>
-                    ))}
-                    {!classAttendance.length && <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">No attendance returned for this class.</p>}
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 text-[10px] font-semibold">
+                        {attendanceSummary.PRESENT > 0 && <span className="rounded border border-[#A7E6C1] bg-[#F0FDF4] px-2 py-1 text-[#0D8252]">{attendanceSummary.PRESENT} Present</span>}
+                        {attendanceSummary.LATE > 0 && <span className="rounded border border-[#F8D98A] bg-[#FFF9E8] px-2 py-1 text-[#B45309]">{attendanceSummary.LATE} Late</span>}
+                        {attendanceSummary.ABSENT > 0 && <span className="rounded border border-[#F2B8B5] bg-[#FFF5F5] px-2 py-1 text-[#C2413B]">{attendanceSummary.ABSENT} Absent</span>}
+                        {attendanceSummary.PENDING > 0 && <span className="rounded border border-[#CBD5E1] bg-[#F8FAFC] px-2 py-1 text-[#64748B]">{attendanceSummary.PENDING} Pending</span>}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {classAttendance.map((record) => {
+                        const status = normalizeAttendanceStatus(record.status);
+                        return (
+                          <div key={record.id || `${record.memberName}-${record.timestamp}`} className="flex min-h-[52px] items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-3 sm:px-4">
+                            <span className="min-w-0 truncate text-xs font-bold text-[#0F172A]">{record.memberName || record.user?.name || "Member"}</span>
+                            <div className="flex shrink-0 items-center gap-3 sm:gap-5">
+                              <span className="text-right text-[10px] text-[#64748B]">
+                                {record.attendanceDate ? `${formatDate(record.attendanceDate)} ${formatTime(record.attendanceDate)}` : record.trainerName || "-"}
+                              </span>
+                              <span className={`min-w-[74px] rounded-md border px-2.5 py-1 text-center text-[10px] font-bold ${status === "PRESENT" ? "border-[#B7E8CC] bg-[#F0FDF4] text-[#0D6B43]" : status === "LATE" ? "border-[#F8D98A] bg-[#FFF9E8] text-[#B45309]" : status === "ABSENT" ? "border-[#F2B8B5] bg-[#FFF5F5] text-[#C2413B]" : "border-[#CBD5E1] bg-[#F8FAFC] text-[#64748B]"}`}>
+                                {status}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!classAttendance.length && <p className="rounded-xl border border-dashed border-[#DDE5EF] bg-[#FBFCFD] p-6 text-center text-xs text-[#64748B]">No attendance returned for this class.</p>}
+                    </div>
                   </div>
                 )}
               </section>
@@ -2208,8 +2469,12 @@ export default function TrainerSchedule() {
             onClose={() => { setScheduleModalOpen(false); setScheduleModalEdit(null); }}
             onSave={handleScheduleModalSave}
             editData={scheduleModalEdit}
+            selectedClassId={selectedClass?.id || ""}
+            selectedScheduleId={isRecurringClass ? activeSlotSchedule?.id || "" : ""}
+            initialDayOfWeek={activeScheduleDay || ""}
             classes={classes}
             purpose={scheduleModalPurpose}
+            saving={saving}
           />
 
           <MarkAttendanceModal
@@ -2220,6 +2485,8 @@ export default function TrainerSchedule() {
             bookings={myBookings}
           />
         </main>
+      </div>
+      </div>
       </div>
     );
   }
@@ -2235,7 +2502,7 @@ export default function TrainerSchedule() {
           type="button"
           onClick={loadModuleData}
           disabled={loading}
-          className="flex items-center justify-center gap-2 rounded-md bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
         >
           Reload
         </button>
@@ -2303,7 +2570,7 @@ export default function TrainerSchedule() {
                 <button
                   type="button"
                   onClick={() => loadClassDetails(selectedClass.id)}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   <RefreshCw size={15} />
                   Reload
@@ -2368,10 +2635,10 @@ export default function TrainerSchedule() {
                                     setScheduleModalPurpose("edit");
                                     setScheduleModalOpen(true);
                                   }}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50"
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50"
                                   aria-label="Edit slot"
                                 >
-                                  <Edit3 size={16} />
+                                  <Edit size={15} />
                                 </button>
                                 <button
                                   type="button"
@@ -2379,7 +2646,7 @@ export default function TrainerSchedule() {
                                     event.stopPropagation();
                                     handleDeleteSchedule(slot);
                                   }}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50"
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
                                   aria-label="Delete slot"
                                 >
                                   <Trash2 size={16} />
@@ -2401,7 +2668,12 @@ export default function TrainerSchedule() {
                       <button
                         key={dayKey}
                         type="button"
-                        onClick={() => setSelectedScheduleDay(dayKey)}
+                        onClick={() => {
+                          setSelectedScheduleDay(dayKey);
+                          const schedule = scheduleGroups[dayKey][0] || null;
+                          setSelectedSchedule(schedule);
+                          if (schedule) void refreshScheduleSlots(schedule);
+                        }}
                         className={`rounded-lg border p-3 text-left text-sm transition ${
                           activeScheduleDay === dayKey
                             ? "border-blue-500 bg-blue-50 text-blue-900"
@@ -2422,6 +2694,7 @@ export default function TrainerSchedule() {
                         {selectedDaySchedules.map((schedule) => {
                           const isSelectedSchedule = selectedSchedule?.id === schedule.id;
                           const slots = schedule.slots || [];
+                          const slotState = scheduleSlotStates[schedule.id] || {};
                           return (
                             <div
                               key={schedule.id || `${schedule.date}-${schedule.startTime}`}
@@ -2430,7 +2703,11 @@ export default function TrainerSchedule() {
                               }`}
                             >
                               <p className="text-sm font-semibold text-gray-950">{getScheduleDayLabel(schedule)}</p>
-                              {slots.length === 0 ? (
+                              {slotState.loading ? (
+                                <p className="mt-2 rounded-md bg-white p-3 text-sm text-gray-500">Loading slots...</p>
+                              ) : slotState.error ? (
+                                <p role="alert" className="mt-2 rounded-md bg-white p-3 text-sm text-rose-600">{slotState.error}</p>
+                              ) : slots.length === 0 ? (
                                 <p className="mt-2 rounded-md bg-white p-3 text-sm text-gray-500">No slots for this schedule.</p>
                               ) : (
                                 <div className="mt-3 space-y-2">
@@ -2442,6 +2719,7 @@ export default function TrainerSchedule() {
                                         onClick={() => {
                                           setSelectedSchedule(schedule);
                                           setSelectedSlot(slot);
+                                          void refreshScheduleSlots(schedule);
                                         }}
                                         className="cursor-pointer rounded-md bg-white p-3 ring-1 ring-gray-200 transition hover:bg-gray-50"
                                       >
@@ -2464,10 +2742,10 @@ export default function TrainerSchedule() {
                                                     dayOfWeek: schedule.dayOfWeek,
                                                   });
                                                 }}
-                                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50"
+                                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50"
                                                 aria-label="Edit slot"
                                               >
-                                                <Edit3 size={16} />
+                                                <Edit size={15} />
                                               </button>
                                               <button
                                                 type="button"
@@ -2475,7 +2753,7 @@ export default function TrainerSchedule() {
                                                   event.stopPropagation();
                                                   handleDeleteSchedule(slot);
                                                 }}
-                                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50"
+                                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
                                                 aria-label="Delete slot"
                                               >
                                                 <Trash2 size={16} />
@@ -2514,7 +2792,7 @@ export default function TrainerSchedule() {
                     <button
                       type="button"
                       onClick={() => handleBookClass(selectedClass.id)}
-                      className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                     >
                       <CalendarCheck size={16} />
                       Book Class
@@ -2525,7 +2803,7 @@ export default function TrainerSchedule() {
                   <button
                     type="button"
                     onClick={() => handleEditClass(selectedClass)}
-                    className="rounded-md border border-blue-200 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                    className="rounded-lg border border-blue-200 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
                   >
                     Edit Class
                   </button>
@@ -2535,7 +2813,7 @@ export default function TrainerSchedule() {
                     type="button"
                     onClick={() => handleDeleteClass(selectedClass.id)}
                     disabled={saving}
-                    className="inline-flex items-center gap-2 rounded-md border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
                   >
                     <Trash2 size={16} />
                     Delete
@@ -2561,13 +2839,9 @@ export default function TrainerSchedule() {
                       {formatDate(booking.date)} | {formatTime(booking.startTime)}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                        {titleCase(booking.bookingStatus)}
-                      </span>
+                      <StatusBadge status={booking.bookingStatus || "BOOKED"} label={titleCase(booking.bookingStatus)} />
                       {booking.attendanceStatus && (
-                        <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.attendanceStatus)}`}>
-                          {titleCase(booking.attendanceStatus)}
-                        </span>
+                        <StatusBadge status={booking.attendanceStatus} label={titleCase(booking.attendanceStatus)} />
                       )}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -2575,7 +2849,7 @@ export default function TrainerSchedule() {
                         <button
                           type="button"
                           onClick={() => handleCancelBooking(booking)}
-                          className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
                         >
                           <XCircle size={14} />
                           Cancel
@@ -2591,7 +2865,7 @@ export default function TrainerSchedule() {
                             });
                             setAttendanceModalOpen(true);
                           }}
-                          className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                          className="inline-flex items-center gap-1 rounded-lg bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
                         >
                           <CheckCircle2 size={14} />
                           Mark Attendance
@@ -2619,7 +2893,7 @@ export default function TrainerSchedule() {
                     <Plus size={20} className="text-gray-400" />
                   </div>
                   <div>
-                    <button onClick={() => { setClassModalEdit(null); setClassModalOpen(true); }} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
+                    <button onClick={() => { setClassModalEdit(null); setClassModalOpen(true); }} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
                       Create Class
                     </button>
                   </div>
@@ -2633,7 +2907,7 @@ export default function TrainerSchedule() {
                     <p className="text-sm text-gray-500">Choose the class, day, time, and capacity.</p>
                   </div>
                   <div>
-                    <button onClick={() => { setScheduleModalEdit(null); setScheduleModalPurpose("slot"); setScheduleModalOpen(true); }} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
+                    <button onClick={() => { setScheduleModalEdit(null); setScheduleModalPurpose("slot"); setScheduleModalOpen(true); }} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
                       Schedule Class
                     </button>
                   </div>
@@ -2660,7 +2934,7 @@ export default function TrainerSchedule() {
                   type="button"
                   key={classItem.id || classItem.title}
                   onClick={() => handleSelectClass(classItem)}
-                  className="flex w-full items-center justify-between rounded-md border border-gray-200 p-3 text-left hover:bg-gray-50"
+                  className="flex w-full items-center justify-between rounded-lg border border-gray-200 p-3 text-left hover:bg-gray-50"
                 >
                   <span className="font-medium text-gray-900">{classItem.title}</span>
                   <span className="text-sm text-gray-500">{classItem.bookedCount || 0} bookings</span>
@@ -2686,14 +2960,12 @@ export default function TrainerSchedule() {
                   <p className="font-medium text-gray-950 truncate">{booking.memberName || booking.classTitle}</p>
                   <p className="mt-1 truncate text-sm text-gray-500">{formatDate(booking.date)} | {formatTime(booking.startTime)}</p>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                      {titleCase(booking.bookingStatus)}
-                    </span>
+                    <StatusBadge status={booking.bookingStatus || "BOOKED"} label={titleCase(booking.bookingStatus)} />
                     {booking.id && !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
                       <button
                         type="button"
                         onClick={() => handleCancelBooking(booking)}
-                        className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
                       >
                         <XCircle size={14} />
                         Cancel
@@ -2718,9 +2990,7 @@ export default function TrainerSchedule() {
                 <div key={record.id || `${record.memberName}-${record.timestamp}`} className="rounded-md border border-gray-200 p-3">
                   <p className="font-medium text-gray-950 truncate">{record.memberName}</p>
                   <p className="mt-1 truncate text-sm text-gray-500">{record.attendanceDate ? formatDate(record.attendanceDate) + " " + formatTime(record.attendanceDate) : record.trainerName || "-"}</p>
-                  <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>
-                    {titleCase(record.status)}
-                  </span>
+                  <StatusBadge className="mt-2" status={record.status} label={titleCase(record.status)} />
                 </div>
               ))}
               {!classAttendance.length && (
@@ -2745,7 +3015,7 @@ export default function TrainerSchedule() {
                     type="button"
                     key={classItem.id || classItem.title}
                     onClick={() => handleSelectClass(classItem)}
-                    className="flex w-full items-center justify-between rounded-md border border-gray-200 p-3 text-left hover:bg-gray-50"
+                    className="flex w-full items-center justify-between rounded-lg border border-gray-200 p-3 text-left hover:bg-gray-50"
                   >
                     <span className="font-medium text-gray-900">{classItem.title}</span>
                     <span className="text-sm text-gray-500">{classItem.bookedCount || 0} bookings</span>
@@ -2773,14 +3043,12 @@ export default function TrainerSchedule() {
                       <p className="font-medium text-gray-950 truncate">{booking.memberName || booking.classTitle}</p>
                       <p className="mt-1 truncate text-sm text-gray-500">{formatDate(booking.date)} | {formatTime(booking.startTime)}</p>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className={`inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(booking.bookingStatus)}`}>
-                          {titleCase(booking.bookingStatus)}
-                        </span>
+                        <StatusBadge status={booking.bookingStatus || "BOOKED"} label={titleCase(booking.bookingStatus)} />
                         {booking.id && !["cancelled", "canceled"].includes(String(booking.bookingStatus).toLowerCase()) && (
                           <button
                             type="button"
                             onClick={() => handleCancelBooking(booking)}
-                            className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                            className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
                           >
                             <XCircle size={14} />
                             Cancel
@@ -2805,9 +3073,7 @@ export default function TrainerSchedule() {
                     <div key={record.id || `${record.memberName}-${record.timestamp}`} className="rounded-md border border-gray-200 p-3">
                       <p className="font-medium text-gray-950 truncate">{record.memberName}</p>
                       <p className="mt-1 truncate text-sm text-gray-500">{record.attendanceDate ? formatDate(record.attendanceDate) + " " + formatTime(record.attendanceDate) : record.trainerName || "-"}</p>
-                      <span className={`mt-2 inline-block rounded px-2 py-1 text-xs font-semibold ${getStatusClass(record.status)}`}>
-                        {titleCase(record.status)}
-                      </span>
+                      <StatusBadge className="mt-2" status={record.status} label={titleCase(record.status)} />
                     </div>
                   ))}
                   {!classAttendance.length && (
@@ -2832,8 +3098,12 @@ export default function TrainerSchedule() {
         onClose={() => { setScheduleModalOpen(false); setScheduleModalEdit(null); }}
         onSave={handleScheduleModalSave}
         editData={scheduleModalEdit}
+        selectedClassId={selectedClass?.id || ""}
+        selectedScheduleId={isRecurringClass ? activeSlotSchedule?.id || "" : ""}
+        initialDayOfWeek={activeScheduleDay || ""}
         classes={classes}
         purpose={scheduleModalPurpose}
+        saving={saving}
       />
 
       <MarkAttendanceModal

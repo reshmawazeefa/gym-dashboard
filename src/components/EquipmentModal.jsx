@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { Wrench, X } from "lucide-react";
 
 const maintenanceStatusOptions = ["PENDING", "COMPLETED", "CANCELLED"];
 
 const inputClass =
-  "h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  "h-9 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs text-[#334155] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252] focus:bg-white";
 const textareaClass =
-  "min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  "min-h-24 w-full rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155] outline-none transition placeholder:text-[#94A3B8] focus:border-[#0D8252] focus:bg-white";
 
 const emptyForm = {
   equipmentId: "",
@@ -75,14 +76,22 @@ export default function EquipmentModal({ isOpen, onClose, onSave, editData, equi
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
-        <h2 className="mb-4 text-base font-bold text-gray-950">
-          {editData ? "Update Maintenance" : "Add Maintenance Record"}
-        </h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[18px] border border-[#E2E8F0] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between border-b border-[#E2E8F0] px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#CFEFDB] bg-[#EAFBF3] text-[#0D8252]"><Wrench size={18} /></div>
+            <div>
+              <h2 className="text-base font-bold text-[#0F172A]">{editData ? "Update Maintenance" : "Add Maintenance Record"}</h2>
+              <p className="mt-0.5 text-xs text-[#64748B]">Track service work, costs, vendors, and maintenance schedules.</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close maintenance modal" className="rounded-lg p-2 text-[#64748B] transition hover:bg-[#F1F5F9] hover:text-[#0F172A]"><X size={17} /></button>
+        </div>
 
+        <div className="flex-1 overflow-y-auto px-5 py-4">
         <form onSubmit={handleSubmit} className="grid gap-3">
-          <label className="grid gap-1 text-sm font-medium text-gray-700">
+          <label className="grid gap-1 text-xs font-semibold text-[#334155]">
             Equipment
             <select className={inputClass} value={form.equipmentId} onChange={(e) => setForm({ ...form, equipmentId: e.target.value })}>
               <option value="">Select equipment</option>
@@ -91,35 +100,35 @@ export default function EquipmentModal({ isOpen, onClose, onSave, editData, equi
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-sm font-medium text-gray-700">
+          <label className="grid gap-1 text-xs font-semibold text-[#334155]">
             Title
             <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Lubrication & Belt Check" />
           </label>
-          <label className="grid gap-1 text-sm font-medium text-gray-700">
+          <label className="grid gap-1 text-xs font-semibold text-[#334155]">
             Description
             <textarea className={textareaClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Routine monthly maintenance" />
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1 text-sm font-medium text-gray-700">
+            <label className="grid gap-1 text-xs font-semibold text-[#334155]">
               Maintenance Date
               <input className={inputClass} type="date" value={form.maintenanceDate} onChange={(e) => setForm({ ...form, maintenanceDate: e.target.value })} />
             </label>
-            <label className="grid gap-1 text-sm font-medium text-gray-700">
+            <label className="grid gap-1 text-xs font-semibold text-[#334155]">
               Next Due Date
               <input className={inputClass} type="date" value={form.nextDueDate} onChange={(e) => setForm({ ...form, nextDueDate: e.target.value })} />
             </label>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1 text-sm font-medium text-gray-700">
+            <label className="grid gap-1 text-xs font-semibold text-[#334155]">
               Cost
               <input className={inputClass} type="number" min="0" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="150.00" />
             </label>
-            <label className="grid gap-1 text-sm font-medium text-gray-700">
+            <label className="grid gap-1 text-xs font-semibold text-[#334155]">
               Vendor
               <input className={inputClass} value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} placeholder="TechServ Solutions" />
             </label>
           </div>
-          <label className="grid gap-1 text-sm font-medium text-gray-700">
+          <label className="grid gap-1 text-xs font-semibold text-[#334155]">
             Status
             <select className={inputClass} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
               {maintenanceStatusOptions.map((opt) => (
@@ -128,15 +137,16 @@ export default function EquipmentModal({ isOpen, onClose, onSave, editData, equi
             </select>
           </label>
 
-          <div className="mt-2 flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 transition hover:bg-gray-50">
+          <div className="mt-2 flex justify-end gap-3">
+            <button type="button" onClick={onClose} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#E2E8F0] bg-white px-4 text-xs font-semibold text-[#475569] transition hover:bg-[#F8FAFC]">
               Cancel
             </button>
-            <button type="submit" disabled={saving} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+            <button type="submit" disabled={saving} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#0D8252] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#086B43] disabled:cursor-not-allowed disabled:opacity-50">
               {saving ? "Saving..." : editData ? "Update" : "Save"}
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

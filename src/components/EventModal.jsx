@@ -131,17 +131,17 @@ export default function EventModal({
                 onDelete(editEvent.id);
                 onClose();
               }}
-              className="text-red-500"
+              className="rounded-lg text-red-500"
             >
               Delete
             </button>
           )}
 
           <div className="ml-auto flex gap-2">
-            <button onClick={onClose}>Cancel</button>
+            <button onClick={onClose} className="rounded-lg">Cancel</button>
             <button
               onClick={handleSubmit}
-              className="bg-blue-500 text-white px-4 py-1 rounded"
+              className="bg-blue-500 text-white px-4 py-1 rounded-lg"
             >
               Save
             </button>
